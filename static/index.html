@@ -1,0 +1,1649 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>СТО Спецмаш — Управление сервисом, техникой и складом</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lucide Icons CDN -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link rel="stylesheet" href="/static/styles.css">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#eff6ff',
+              100: '#dbeafe',
+              500: '#3b82f6',
+              600: '#2563eb',
+              700: '#1d4ed8',
+              800: '#1e40af',
+              900: '#1e3a8a',
+            }
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="bg-slate-50 text-slate-800 flex h-screen overflow-hidden">
+
+  <!-- ==================== SIDEBAR ==================== -->
+  <aside class="w-64 bg-slate-900 text-slate-300 flex flex-col flex-shrink-0 z-20 shadow-xl">
+    <!-- Logo & Title (Top-Left) -->
+    <div class="h-20 flex items-center px-4 border-b border-slate-800 gap-3 relative group">
+      <!-- Logo Container with 1-click change -->
+      <div id="sidebar-logo-container" onclick="openLogoModal()" class="relative cursor-pointer flex-shrink-0 group/logo" title="Нажмите, чтобы установить/изменить логотип">
+        <div id="sidebar-logo-img-wrapper" class="hidden w-11 h-11 rounded-xl bg-white p-1 shadow-md border border-slate-700 flex items-center justify-center overflow-hidden">
+          <img id="sidebar-logo-img" src="" alt="Логотип" class="w-full h-full object-contain">
+        </div>
+        <div id="sidebar-logo-fallback" class="w-11 h-11 rounded-xl bg-gradient-to-br from-blue-600 to-indigo-700 flex items-center justify-center text-white shadow-md shadow-blue-500/30">
+          <i data-lucide="wrench" class="w-6 h-6"></i>
+        </div>
+        <span class="absolute -bottom-1 -right-1 bg-slate-800 border border-slate-600 text-slate-200 p-1 rounded-full text-[10px] opacity-0 group-hover/logo:opacity-100 transition-opacity">
+          <i data-lucide="camera" class="w-3 h-3"></i>
+        </span>
+      </div>
+
+      <!-- Company Title -->
+      <div class="flex-1 min-w-0">
+        <h1 id="sidebar-company-name" class="font-bold text-white text-base leading-tight truncate">СТО Спецмаш</h1>
+        <p class="text-xs text-slate-400 truncate">Сервис спецтехники</p>
+      </div>
+    </div>
+
+    <!-- Quick Action Button -->
+    <div class="p-4">
+      <button onclick="openDealModal()" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium py-2.5 px-4 rounded-lg flex items-center justify-center gap-2 shadow-lg shadow-blue-600/30 transition-all text-sm">
+        <i data-lucide="plus-circle" class="w-4 h-4"></i>
+        <span>Новая сделка / наряд</span>
+      </button>
+    </div>
+
+    <!-- Navigation Menu -->
+    <nav class="flex-1 px-3 space-y-1 overflow-y-auto">
+      <a href="#dashboard" onclick="switchTab('dashboard')" id="nav-dashboard" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-white bg-blue-600/20 border-l-4 border-blue-500">
+        <i data-lucide="layout-dashboard" class="w-4 h-4 text-blue-400"></i>
+        <span>Дашборд & Выручка</span>
+      </a>
+
+      <a href="#kanban" onclick="switchTab('kanban')" id="nav-kanban" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
+        <i data-lucide="trello" class="w-4 h-4"></i>
+        <span>Воронка & Канбан</span>
+        <span id="badge-kanban-count" class="ml-auto bg-slate-800 text-slate-300 text-xs px-2 py-0.5 rounded-full font-mono">0</span>
+      </a>
+
+      <a href="#clients" onclick="switchTab('clients')" id="nav-clients" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
+        <i data-lucide="users" class="w-4 h-4"></i>
+        <span>База клиентов</span>
+        <span id="badge-clients-count" class="ml-auto text-xs text-slate-500">0</span>
+      </a>
+
+      <a href="#equipment" onclick="switchTab('equipment')" id="nav-equipment" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
+        <i data-lucide="truck" class="w-4 h-4"></i>
+        <span>База техники</span>
+        <span id="badge-equipment-count" class="ml-auto text-xs text-slate-500">0</span>
+      </a>
+
+      <a href="#warehouse" onclick="switchTab('warehouse')" id="nav-warehouse" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
+        <i data-lucide="package" class="w-4 h-4"></i>
+        <span>Склад запчастей</span>
+        <span id="badge-lowstock-alert" class="ml-auto hidden bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs px-2 py-0.5 rounded-full font-mono">0</span>
+      </a>
+
+      <a href="#tasks" onclick="switchTab('tasks')" id="nav-tasks" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
+        <i data-lucide="calendar-check-2" class="w-4 h-4"></i>
+        <span>Задачи & Планировщик</span>
+        <span id="badge-tasks-overdue" class="ml-auto hidden bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs px-2 py-0.5 rounded-full font-mono">0</span>
+      </a>
+
+      <a href="#users" onclick="switchTab('users')" id="nav-users" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
+        <i data-lucide="user-check" class="w-4 h-4"></i>
+        <span>Сотрудники & Роли</span>
+        <span id="badge-users-count" class="ml-auto bg-slate-800 text-slate-300 text-xs px-2 py-0.5 rounded-full font-mono">3</span>
+      </a>
+
+      <a href="#export" onclick="switchTab('export')" id="nav-export" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
+        <i data-lucide="file-spreadsheet" class="w-4 h-4"></i>
+        <span>Импорт & Экспорт</span>
+      </a>
+
+      <a href="#settings" onclick="switchTab('settings')" id="nav-settings" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
+        <i data-lucide="settings" class="w-4 h-4 text-purple-400"></i>
+        <span>Настройки СТО</span>
+        <span id="badge-admin-tag" class="ml-auto bg-purple-900/60 text-purple-300 border border-purple-700/50 text-[10px] px-1.5 py-0.5 rounded font-mono">Admin</span>
+      </a>
+    </nav>
+
+    <!-- Bottom Status Panel -->
+    <div class="p-4 border-t border-slate-800 text-xs text-slate-400 space-y-2">
+      <div class="flex items-center justify-between">
+        <span class="flex items-center gap-1.5">
+          <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+          <span>База SQLite</span>
+        </span>
+        <span class="font-mono text-slate-400">crm.db</span>
+      </div>
+      <div class="text-[11px] text-slate-400 flex items-center justify-between">
+        <span>СТО Спецмаш (AMD)</span>
+        <button onclick="openLogoModal()" class="text-blue-400 hover:underline">Логотип</button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ==================== MAIN CONTENT WRAPPER ==================== -->
+  <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
+
+    <!-- Top Header Bar -->
+    <header class="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-6 z-10">
+      <!-- Search & Title -->
+      <div class="flex items-center gap-4 flex-1 max-w-xl">
+        <div class="relative w-full">
+          <i data-lucide="search" class="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2"></i>
+          <input type="text" id="global-search" oninput="handleGlobalSearch(this.value)" placeholder="Поиск по клиентам, технике CASE, нарядам, запчастям..." class="w-full bg-slate-100 hover:bg-slate-200/70 focus:bg-white border border-transparent focus:border-blue-500 rounded-lg pl-9 pr-4 py-1.5 text-sm transition-all outline-none">
+        </div>
+      </div>
+
+      <!-- Quick Metrics and User Profile -->
+      <div class="flex items-center gap-4">
+        <!-- Revenue block in AMD (hidden for mechanics) -->
+        <div id="header-finance-block" class="hidden md:flex items-center gap-4 pr-3 border-r border-slate-200 text-sm">
+          <div class="text-right">
+            <div class="text-xs text-slate-400">Выручка (закрыто)</div>
+            <div id="header-revenue" class="font-bold text-emerald-600 font-mono">0 AMD</div>
+          </div>
+          <div class="text-right">
+            <div class="text-xs text-slate-400">В работе</div>
+            <div id="header-active-deals" class="font-bold text-blue-600 font-mono">0 нарядов</div>
+          </div>
+        </div>
+
+        <!-- Quick actions buttons -->
+        <div class="hidden sm:flex items-center gap-2">
+          <button onclick="openClientModal()" class="px-2.5 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg flex items-center gap-1 transition-colors">
+            <i data-lucide="user-plus" class="w-3.5 h-3.5 text-blue-600"></i>
+            <span>+ Клиент</span>
+          </button>
+          <button onclick="openEquipmentModal()" class="px-2.5 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg flex items-center gap-1 transition-colors">
+            <i data-lucide="truck" class="w-3.5 h-3.5 text-emerald-600"></i>
+            <span>+ Техника</span>
+          </button>
+          <button onclick="openPartModal()" class="px-2.5 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg flex items-center gap-1 transition-colors">
+            <i data-lucide="box" class="w-3.5 h-3.5 text-amber-600"></i>
+            <span>+ Запчасть</span>
+          </button>
+        </div>
+
+        <!-- Current User Profile Pill -->
+        <div onclick="openLoginModal()" class="flex items-center gap-2 pl-2 cursor-pointer hover:bg-slate-100 p-1.5 rounded-lg transition-colors border border-slate-200 shadow-sm" title="Нажмите, чтобы сменить пользователя">
+          <div id="user-avatar" class="w-8 h-8 rounded-full bg-blue-600 text-white font-bold text-xs flex items-center justify-center uppercase shadow-sm">
+            АИ
+          </div>
+          <div class="text-left hidden md:block">
+            <div id="user-display-name" class="font-bold text-xs text-slate-800 leading-tight">Иванов Алексей</div>
+            <div id="user-display-role" class="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Администратор</div>
+          </div>
+          <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-slate-400 ml-0.5"></i>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Workspace Area -->
+    <main class="flex-1 overflow-y-auto p-6 bg-slate-50" id="main-container">
+
+      <!-- ================= 1. TAB: DASHBOARD ================= -->
+      <section id="tab-dashboard" class="space-y-6">
+        <!-- Top Metrics Cards (AMD) -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
+          <!-- Card 1: Revenue (Visible for Admin & Moderator) -->
+          <div id="dash-card-revenue" class="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm relative overflow-hidden">
+            <div class="flex items-center justify-between mb-3">
+              <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">Общая выручка</span>
+              <span class="p-2 rounded-lg bg-emerald-50 text-emerald-600"><i data-lucide="badge-dollar-sign" class="w-5 h-5"></i></span>
+            </div>
+            <div id="stat-revenue" class="text-2xl font-black text-slate-900 font-mono">0 AMD</div>
+            <div class="mt-2 text-xs flex items-center gap-2">
+              <span class="text-emerald-700 font-medium">Чистая прибыль:</span>
+              <span id="stat-profit" class="font-bold font-mono text-emerald-600">0 AMD</span>
+              <span id="stat-margin" class="ml-auto px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[11px] font-mono font-semibold">0% маржа</span>
+            </div>
+          </div>
+
+          <!-- Card 2: Active Pipeline -->
+          <div class="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm relative overflow-hidden">
+            <div class="flex items-center justify-between mb-3">
+              <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">Наряды в работе</span>
+              <span class="p-2 rounded-lg bg-blue-50 text-blue-600"><i data-lucide="trello" class="w-5 h-5"></i></span>
+            </div>
+            <div id="stat-active-deals" class="text-2xl font-black text-slate-900 font-mono">0</div>
+            <div class="mt-2 text-xs text-slate-500 flex items-center justify-between">
+              <span>Сумма в работе:</span>
+              <span id="stat-active-volume" class="font-bold text-blue-600 font-mono">0 AMD</span>
+            </div>
+          </div>
+
+          <!-- Card 3: Warehouse & Inventory -->
+          <div class="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm relative overflow-hidden">
+            <div class="flex items-center justify-between mb-3">
+              <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">Оценка склада запчастей</span>
+              <span class="p-2 rounded-lg bg-amber-50 text-amber-600"><i data-lucide="boxes" class="w-5 h-5"></i></span>
+            </div>
+            <div id="stat-inventory-retail" class="text-2xl font-black text-slate-900 font-mono">0 AMD</div>
+            <div class="mt-2 text-xs text-slate-500 flex items-center justify-between">
+              <span>Себестоимость: <strong id="stat-inventory-cost" class="font-mono">0 AMD</strong></span>
+              <span id="stat-low-stock-pill" class="px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 font-semibold font-mono text-[11px]">0 в дефиците</span>
+            </div>
+          </div>
+
+          <!-- Card 4: Clients & Fleet -->
+          <div class="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm relative overflow-hidden">
+            <div class="flex items-center justify-between mb-3">
+              <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">Клиенты и Парк СТО</span>
+              <span class="p-2 rounded-lg bg-indigo-50 text-indigo-600"><i data-lucide="truck" class="w-5 h-5"></i></span>
+            </div>
+            <div class="flex items-baseline gap-2">
+              <span id="stat-clients-count" class="text-2xl font-black text-slate-900 font-mono">0</span>
+              <span class="text-xs text-slate-500">клиентов /</span>
+              <span id="stat-equipment-count" class="text-2xl font-black text-indigo-600 font-mono">0</span>
+              <span class="text-xs text-slate-500">машин</span>
+            </div>
+            <div class="mt-2 text-xs text-slate-500 flex items-center justify-between">
+              <span>Просрочено задач:</span>
+              <span id="stat-overdue-tasks" class="font-bold text-rose-600 font-mono">0</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Revenue Timeline & Stage Breakdown -->
+        <div id="dash-charts-row" class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <!-- Monthly Chart -->
+          <div class="lg:col-span-2 bg-white p-6 rounded-xl border border-slate-200/80 shadow-sm flex flex-col">
+            <div class="flex items-center justify-between mb-4">
+              <div>
+                <h3 class="font-bold text-slate-900 text-base">Динамика выручки и расходов СТО Спецмаш (AMD)</h3>
+                <p class="text-xs text-slate-400">Финансовый отчет выполненных заказ-нарядов</p>
+              </div>
+              <span class="text-xs bg-slate-100 text-slate-600 px-2.5 py-1 rounded-md font-medium">Закрытые наряды</span>
+            </div>
+            <div id="revenue-bars-container" class="flex-1 min-h-[220px] flex items-end gap-6 pt-6 pb-2 px-4 border-b border-slate-100">
+              <!-- Dynamically populated -->
+            </div>
+            <div class="flex items-center justify-center gap-6 mt-4 text-xs">
+              <div class="flex items-center gap-2">
+                <span class="w-3 h-3 rounded bg-blue-600"></span>
+                <span class="text-slate-600">Выручка (AMD)</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="w-3 h-3 rounded bg-amber-500"></span>
+                <span class="text-slate-600">Себестоимость запчастей</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="w-3 h-3 rounded bg-emerald-500"></span>
+                <span class="text-slate-600">Чистая прибыль</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Top Clients -->
+          <div class="bg-white p-6 rounded-xl border border-slate-200/80 shadow-sm flex flex-col">
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="font-bold text-slate-900 text-base">Топ заказчиков СТО</h3>
+              <i data-lucide="award" class="w-5 h-5 text-amber-500"></i>
+            </div>
+            <div id="top-clients-list" class="space-y-3 flex-1 overflow-y-auto">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Critical Parts Alert & Recent Deals -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div class="bg-white p-6 rounded-xl border border-slate-200/80 shadow-sm">
+            <div class="flex items-center justify-between mb-4">
+              <div class="flex items-center gap-2">
+                <span class="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping"></span>
+                <h3 class="font-bold text-slate-900 text-base">Критические остатки на складе</h3>
+              </div>
+              <button onclick="switchTab('warehouse')" class="text-xs text-blue-600 hover:underline font-medium">Перейти на склад &rarr;</button>
+            </div>
+            <div id="critical-parts-table" class="space-y-2">
+              <!-- Populated via JS -->
+            </div>
+          </div>
+
+          <div class="bg-white p-6 rounded-xl border border-slate-200/80 shadow-sm">
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="font-bold text-slate-900 text-base">Последние заказ-наряды</h3>
+              <button onclick="switchTab('kanban')" class="text-xs text-blue-600 hover:underline font-medium">Открыть Канбан &rarr;</button>
+            </div>
+            <div id="recent-deals-list" class="space-y-3">
+              <!-- Populated via JS -->
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= 2. TAB: DEALS (KANBAN & BITRIX24 LIST) ================= -->
+      <section id="tab-kanban" class="hidden h-full flex flex-col">
+        <!-- Controls & Mode Switcher -->
+        <div class="flex flex-wrap items-center justify-between gap-4 mb-4 pb-3 border-b border-slate-200">
+          <div class="flex items-center gap-3">
+            <div>
+              <h2 class="text-xl font-bold text-slate-900">Сделки и заказ-наряды СТО</h2>
+              <p class="text-xs text-slate-500">СТО Спецмаш • Воронка ремонтов, контроль этапов и списание запчастей</p>
+            </div>
+          </div>
+
+          <div class="flex flex-wrap items-center gap-3">
+            <!-- View Mode Switcher: Kanban vs. Bitrix24 List -->
+            <div class="inline-flex p-1 bg-slate-200/90 rounded-xl shadow-inner text-xs font-semibold">
+              <button id="view-mode-kanban" type="button" onclick="setDealsViewMode('kanban')" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-slate-900 shadow-sm transition-all">
+                <i data-lucide="trello" class="w-3.5 h-3.5 text-blue-600"></i>
+                <span>Канбан</span>
+              </button>
+              <button id="view-mode-list" type="button" onclick="setDealsViewMode('list')" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-slate-600 hover:text-slate-900 transition-all">
+                <i data-lucide="list" class="w-3.5 h-3.5 text-blue-600"></i>
+                <span>Список (Bitrix24)</span>
+              </button>
+            </div>
+
+            <!-- Stage Filter for List view -->
+            <select id="deals-stage-filter" onchange="renderDeals()" class="hidden bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs outline-none focus:border-blue-500 font-medium">
+              <option value="all">Все стадии воронки</option>
+              <option value="new">📥 Новые заявки</option>
+              <option value="diagnostic">🔍 Диагностика</option>
+              <option value="estimate">📝 Согласование сметы</option>
+              <option value="in_progress">⚙️ В ремонте / работе</option>
+              <option value="parts_waiting">📦 Ожидание запчастей</option>
+              <option value="ready">✅ Готово к выдаче</option>
+              <option value="completed">💰 Оплачено / Закрыто</option>
+            </select>
+
+            <input type="text" id="kanban-filter" oninput="renderDeals()" placeholder="Поиск по сделке, клиенту, технике CASE..." class="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs outline-none focus:border-blue-500 w-56">
+
+            <button onclick="openDealModal()" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-sm transition-colors">
+              <i data-lucide="plus" class="w-4 h-4"></i>
+              <span>Создать наряд</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- VIEW 1: Kanban Board View -->
+        <div id="deals-kanban-view" class="flex-1 overflow-x-auto pb-4">
+          <div id="kanban-columns-wrapper" class="flex gap-4 min-h-[500px] h-full items-start">
+            <!-- Columns Populated via JS -->
+          </div>
+        </div>
+
+        <!-- VIEW 2: Bitrix24 Deals List View with Interactive Stage Indicator -->
+        <div id="deals-list-view" class="hidden flex-1 overflow-y-auto space-y-3 pb-6">
+          <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-x-auto">
+            <table class="w-full text-left border-collapse text-sm">
+              <thead>
+                <tr class="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 font-semibold uppercase tracking-wider">
+                  <th class="p-3.5">ID / Наряд</th>
+                  <th class="p-3.5">Клиент / Контакт</th>
+                  <th class="p-3.5">Техника CASE</th>
+                  <th class="p-3.5 min-w-[360px]">Стадия наряда (Воронка Bitrix24)</th>
+                  <th class="p-3.5 text-right font-mono">Сумма (AMD)</th>
+                  <th class="p-3.5 text-right font-mono text-slate-400">Себест. (AMD)</th>
+                  <th class="p-3.5">Ответственный</th>
+                  <th class="p-3.5">Дедлайн</th>
+                  <th class="p-3.5 text-right">Действия</th>
+                </tr>
+              </thead>
+              <tbody id="deals-table-body" class="divide-y divide-slate-100">
+                <!-- Populated via JS -->
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Summary footer for List view -->
+          <div class="flex flex-wrap items-center justify-between p-3.5 bg-slate-100 rounded-xl text-xs text-slate-600 border border-slate-200">
+            <div class="flex items-center gap-3">
+              <span>Всего нарядов: <strong id="deals-list-total-count" class="text-slate-900 font-mono">0</strong></span>
+              <span>•</span>
+              <span class="text-emerald-700 font-medium flex items-center gap-1">
+                <i data-lucide="info" class="w-3.5 h-3.5"></i>
+                Кликните на любой шеврон в строке для мгновенного изменения стадии сделки
+              </span>
+            </div>
+            <div class="flex items-center gap-4 font-mono font-bold">
+              <span>Сумма сделок: <span id="deals-list-total-amount" class="text-blue-600">0 AMD</span></span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= 3. TAB: CLIENTS ================= -->
+      <section id="tab-clients" class="hidden space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-4 pb-3 border-b border-slate-200">
+          <div>
+            <h2 class="text-xl font-bold text-slate-900">База клиентов и контрагентов</h2>
+            <p class="text-xs text-slate-500">Контакты заказчиков, привязанный парк техники и история заказ-нарядов</p>
+          </div>
+          <div class="flex items-center gap-3">
+            <input type="text" id="clients-search" oninput="loadClients(this.value)" placeholder="Поиск по ФИО, компании, телефону..." class="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs outline-none focus:border-blue-500 w-64">
+            <button onclick="openClientModal()" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-sm">
+              <i data-lucide="user-plus" class="w-4 h-4"></i>
+              <span>+ Новый клиент</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <table class="w-full text-left border-collapse text-sm">
+            <thead>
+              <tr class="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 font-semibold uppercase tracking-wider">
+                <th class="p-3.5">Клиент / Организация</th>
+                <th class="p-3.5">Контакты</th>
+                <th class="p-3.5">Парк техники</th>
+                <th class="p-3.5">Наряды</th>
+                <th class="p-3.5">Выручка (AMD)</th>
+                <th class="p-3.5 text-right">Действия</th>
+              </tr>
+            </thead>
+            <tbody id="clients-table-body" class="divide-y divide-slate-100">
+              <!-- Populated via JS -->
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ================= 4. TAB: EQUIPMENT ================= -->
+      <section id="tab-equipment" class="hidden space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-4 pb-3 border-b border-slate-200">
+          <div>
+            <h2 class="text-xl font-bold text-slate-900">База техники на обслуживании СТО</h2>
+            <p class="text-xs text-slate-500">Учет спецтехники CASE, оборудования и грузовиков с привязкой к владельцу</p>
+          </div>
+          <div class="flex items-center gap-3">
+            <select id="equipment-category-filter" onchange="loadEquipment()" class="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs outline-none focus:border-blue-500">
+              <option value="all">Все категории</option>
+              <option value="Спецтехника">Спецтехника</option>
+              <option value="Тяжелая техника">Тяжелая карьерная</option>
+              <option value="Сельхозтехника">Сельхозтехника</option>
+              <option value="Грузовые авто">Грузовые авто</option>
+              <option value="Генераторы/ДГУ">Генераторы / ДГУ</option>
+            </select>
+            <input type="text" id="equipment-search" oninput="loadEquipment(this.value)" placeholder="Поиск по марке, VIN, клиенту..." class="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs outline-none focus:border-blue-500 w-64">
+            <button onclick="openEquipmentModal()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-sm">
+              <i data-lucide="plus" class="w-4 h-4"></i>
+              <span>+ Добавить технику</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <table class="w-full text-left border-collapse text-sm">
+            <thead>
+              <tr class="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 font-semibold uppercase tracking-wider">
+                <th class="p-3.5">Техника / Марка</th>
+                <th class="p-3.5">Категория</th>
+                <th class="p-3.5">Владелец (Клиент)</th>
+                <th class="p-3.5">VIN / Серийный №</th>
+                <th class="p-3.5">Наработка / Год</th>
+                <th class="p-3.5">Текущий статус</th>
+                <th class="p-3.5 text-right">Действия</th>
+              </tr>
+            </thead>
+            <tbody id="equipment-table-body" class="divide-y divide-slate-100">
+              <!-- Populated via JS -->
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ================= 5. TAB: WAREHOUSE ================= -->
+      <section id="tab-warehouse" class="hidden space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-4 pb-3 border-b border-slate-200">
+          <div>
+            <h2 class="text-xl font-bold text-slate-900">Складской учет запчастей и ГСМ</h2>
+            <p class="text-xs text-slate-500">СТО Спецмаш • Наличие, минимальные пороги, приход и списание под наряды</p>
+          </div>
+          <div class="flex items-center gap-3">
+            <label class="flex items-center gap-2 text-xs text-slate-600 cursor-pointer bg-white border border-slate-300 px-3 py-1.5 rounded-lg">
+              <input type="checkbox" id="warehouse-filter-low" onchange="loadParts()" class="rounded text-blue-600 focus:ring-blue-500">
+              <span>Только мало на складе</span>
+            </label>
+            <input type="text" id="warehouse-search" oninput="loadParts(this.value)" placeholder="Поиск по артикулу, названию, ячейке..." class="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs outline-none focus:border-blue-500 w-64">
+            <button onclick="openStockMovementsModal()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5">
+              <i data-lucide="history" class="w-4 h-4"></i>
+              <span>История движений</span>
+            </button>
+            <button onclick="openPartModal()" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-sm">
+              <i data-lucide="plus" class="w-4 h-4"></i>
+              <span>+ Новая запчасть</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <table class="w-full text-left border-collapse text-sm">
+            <thead>
+              <tr class="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 font-semibold uppercase tracking-wider">
+                <th class="p-3.5">Артикул (SKU)</th>
+                <th class="p-3.5">Наименование</th>
+                <th class="p-3.5">Категория</th>
+                <th class="p-3.5">Склад / Ячейка</th>
+                <th class="p-3.5">Остаток</th>
+                <th class="p-3.5 text-xs font-mono">Закупка (AMD)</th>
+                <th class="p-3.5 text-xs font-mono">Продажа (AMD)</th>
+                <th class="p-3.5 text-right">Действия</th>
+              </tr>
+            </thead>
+            <tbody id="parts-table-body" class="divide-y divide-slate-100">
+              <!-- Populated via JS -->
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ================= 6. TAB: TASKS ================= -->
+      <section id="tab-tasks" class="hidden space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-4 pb-3 border-b border-slate-200">
+          <div>
+            <h2 class="text-xl font-bold text-slate-900">Задачи и Напоминания</h2>
+            <p class="text-xs text-slate-500">Контроль дедлайнов, звонков, поставок запчастей и выдачи техники клиентам</p>
+          </div>
+          <div class="flex items-center gap-3">
+            <select id="tasks-status-filter" onchange="loadTasks()" class="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs outline-none focus:border-blue-500">
+              <option value="all">Все задачи</option>
+              <option value="pending">К выполнению</option>
+              <option value="completed">Завершенные</option>
+            </select>
+            <button onclick="openTaskModal()" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-sm">
+              <i data-lucide="calendar-plus" class="w-4 h-4"></i>
+              <span>+ Новая задача</span>
+            </button>
+          </div>
+        </div>
+
+        <div id="tasks-list-container" class="space-y-3">
+          <!-- Populated via JS -->
+        </div>
+      </section>
+
+      <!-- ================= 7. TAB: USERS & ROLES ================= -->
+      <section id="tab-users" class="hidden space-y-6">
+        <!-- Branding & Logo Settings Block -->
+        <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+          <div class="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-slate-100">
+            <div class="flex items-center gap-3">
+              <div class="p-2.5 rounded-xl bg-blue-50 text-blue-600">
+                <i data-lucide="sparkles" class="w-6 h-6"></i>
+              </div>
+              <div>
+                <h3 class="font-bold text-slate-900 text-base">Брендинг и логотип сервиса</h3>
+                <p class="text-xs text-slate-500">Настройка названия компании и логотипа в левом верхнем углу программы</p>
+              </div>
+            </div>
+            <button onclick="openLogoModal()" class="bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold px-4 py-2 rounded-lg flex items-center gap-2 shadow-sm transition-colors">
+              <i data-lucide="image" class="w-4 h-4"></i>
+              <span>Установить логотип</span>
+            </button>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4 items-center">
+            <!-- Company Name Form -->
+            <form onsubmit="saveCompanyName(event)" class="space-y-3">
+              <label class="block text-xs font-bold text-slate-700 uppercase">Название сервиса / организации</label>
+              <div class="flex gap-2">
+                <input type="text" id="input-company-name" required value="СТО Спецмаш" class="flex-1 border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-semibold text-slate-800">
+                <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-4 py-2 rounded-lg transition-colors">
+                  Сохранить
+                </button>
+              </div>
+              <p class="text-[11px] text-slate-400">Отображается в заголовке, боковой панели и на печатных актах</p>
+            </form>
+
+            <!-- Current Logo Preview Card -->
+            <div class="p-3 bg-slate-50 rounded-xl border border-slate-200 flex items-center gap-4">
+              <div id="settings-logo-preview" class="w-14 h-14 rounded-xl bg-white border border-slate-200 p-1 flex items-center justify-center overflow-hidden shadow-sm">
+                <i data-lucide="wrench" class="w-7 h-7 text-blue-600"></i>
+              </div>
+              <div class="flex-1 min-w-0">
+                <div class="text-xs font-bold text-slate-800">Логотип в левом верхнем углу</div>
+                <div id="settings-logo-status" class="text-[11px] text-slate-400 mt-0.5">Используется стандартный значок</div>
+                <div class="mt-2 flex gap-2">
+                  <button type="button" onclick="openLogoModal()" class="text-xs text-blue-600 hover:underline font-semibold">Сменить фото</button>
+                  <button type="button" onclick="resetLogo()" class="text-xs text-rose-500 hover:underline">Сбросить</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Employees List Section -->
+        <div class="space-y-4">
+          <div class="flex flex-wrap items-center justify-between gap-4 pb-2">
+            <div>
+              <h2 class="text-xl font-bold text-slate-900">Управление сотрудниками и доступом</h2>
+              <p class="text-xs text-slate-500">Список мастеров, администраторов и механиков с логинами и паролями</p>
+            </div>
+            <button onclick="openUserModal()" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5 shadow-sm">
+              <i data-lucide="user-plus" class="w-4 h-4"></i>
+              <span>+ Добавить сотрудника</span>
+            </button>
+          </div>
+
+          <!-- Roles Info Cards -->
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div class="p-3.5 bg-purple-50/60 rounded-xl border border-purple-200 text-xs space-y-1">
+              <div class="font-bold text-purple-900 flex items-center gap-1.5">
+                <span>👑 Администратор</span>
+              </div>
+              <p class="text-slate-600 text-[11px]">Полный доступ ко всей системе, финансовой выручке в AMD, сотрудникам и настройкам.</p>
+            </div>
+            <div class="p-3.5 bg-blue-50/60 rounded-xl border border-blue-200 text-xs space-y-1">
+              <div class="font-bold text-blue-900 flex items-center gap-1.5">
+                <span>🛡️ Модератор (Приемщик)</span>
+              </div>
+              <p class="text-slate-600 text-[11px]">Управление клиентами, заказ-нарядами воронки, складом и планировщиком.</p>
+            </div>
+            <div class="p-3.5 bg-amber-50/60 rounded-xl border border-amber-200 text-xs space-y-1">
+              <div class="font-bold text-amber-900 flex items-center gap-1.5">
+                <span>🔧 Механик (Слесарь)</span>
+              </div>
+              <p class="text-slate-600 text-[11px]">Просмотр нарядов, перевод этапов ремонта, складские запчасти и свои задачи.</p>
+            </div>
+          </div>
+
+          <!-- Employees Table -->
+          <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            <table class="w-full text-left border-collapse text-sm">
+              <thead>
+                <tr class="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 font-semibold uppercase tracking-wider">
+                  <th class="p-3.5">Сотрудник (ФИО)</th>
+                  <th class="p-3.5">Логин</th>
+                  <th class="p-3.5">Роль в СТО</th>
+                  <th class="p-3.5">Телефон</th>
+                  <th class="p-3.5">Дата регистрации</th>
+                  <th class="p-3.5 text-right">Действия</th>
+                </tr>
+              </thead>
+              <tbody id="users-table-body" class="divide-y divide-slate-100">
+                <!-- Populated via JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= 8. TAB: EXPORT & IMPORT ================= -->
+      <section id="tab-export" class="hidden space-y-6 max-w-4xl">
+        <div>
+          <h2 class="text-xl font-bold text-slate-900">Импорт и Экспорт данных</h2>
+          <p class="text-xs text-slate-500">СТО Спецмаш • Выгрузка отчетов в Excel/CSV, резервное копирование и пакетная загрузка</p>
+        </div>
+
+        <!-- Export Section -->
+        <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">
+          <div class="flex items-center gap-3">
+            <div class="p-2.5 rounded-lg bg-emerald-50 text-emerald-600">
+              <i data-lucide="file-down" class="w-6 h-6"></i>
+            </div>
+            <div>
+              <h3 class="font-bold text-slate-900 text-base">Экспорт в Excel / CSV</h3>
+              <p class="text-xs text-slate-500">Файлы выгружаются с кодировкой UTF-8 BOM и корректно открываются в любом Excel</p>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 pt-2">
+            <a href="/api/export/clients" class="flex flex-col items-center justify-center p-4 border border-slate-200 hover:border-blue-500 hover:bg-blue-50/50 rounded-lg transition-all text-center">
+              <i data-lucide="users" class="w-5 h-5 text-blue-600 mb-2"></i>
+              <span class="text-xs font-bold text-slate-800">Клиенты</span>
+              <span class="text-[10px] text-slate-400 mt-0.5">.CSV</span>
+            </a>
+            <a href="/api/export/equipment" class="flex flex-col items-center justify-center p-4 border border-slate-200 hover:border-emerald-500 hover:bg-emerald-50/50 rounded-lg transition-all text-center">
+              <i data-lucide="truck" class="w-5 h-5 text-emerald-600 mb-2"></i>
+              <span class="text-xs font-bold text-slate-800">Техника</span>
+              <span class="text-[10px] text-slate-400 mt-0.5">.CSV</span>
+            </a>
+            <a href="/api/export/parts" class="flex flex-col items-center justify-center p-4 border border-slate-200 hover:border-amber-500 hover:bg-amber-50/50 rounded-lg transition-all text-center">
+              <i data-lucide="boxes" class="w-5 h-5 text-amber-600 mb-2"></i>
+              <span class="text-xs font-bold text-slate-800">Склад</span>
+              <span class="text-[10px] text-slate-400 mt-0.5">.CSV</span>
+            </a>
+            <a href="/api/export/deals" class="flex flex-col items-center justify-center p-4 border border-slate-200 hover:border-purple-500 hover:bg-purple-50/50 rounded-lg transition-all text-center">
+              <i data-lucide="trello" class="w-5 h-5 text-purple-600 mb-2"></i>
+              <span class="text-xs font-bold text-slate-800">Сделки</span>
+              <span class="text-[10px] text-slate-400 mt-0.5">.CSV</span>
+            </a>
+            <a href="/api/export/users" class="flex flex-col items-center justify-center p-4 border border-slate-200 hover:border-indigo-500 hover:bg-indigo-50/50 rounded-lg transition-all text-center">
+              <i data-lucide="user-check" class="w-5 h-5 text-indigo-600 mb-2"></i>
+              <span class="text-xs font-bold text-slate-800">Сотрудники</span>
+              <span class="text-[10px] text-slate-400 mt-0.5">.CSV</span>
+            </a>
+          </div>
+        </div>
+
+        <!-- Import Section -->
+        <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">
+          <div class="flex items-center gap-3">
+            <div class="p-2.5 rounded-lg bg-blue-50 text-blue-600">
+              <i data-lucide="file-up" class="w-6 h-6"></i>
+            </div>
+            <div>
+              <h3 class="font-bold text-slate-900 text-base">Импорт данных из CSV</h3>
+              <p class="text-xs text-slate-500">Быстрая загрузка контрагентов и номенклатуры склада</p>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+            <div class="p-4 border border-slate-200 rounded-lg space-y-3">
+              <span class="text-xs font-bold text-slate-800 flex items-center gap-2">
+                <i data-lucide="users" class="w-4 h-4 text-blue-600"></i>
+                Импорт базы клиентов
+              </span>
+              <input type="file" id="import-clients-file" accept=".csv" class="w-full text-xs text-slate-500 file:mr-2 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100">
+              <button onclick="handleImport('clients')" class="w-full bg-slate-800 hover:bg-slate-900 text-white text-xs font-medium py-2 rounded-lg transition-colors">
+                Загрузить клиентов
+              </button>
+            </div>
+
+            <div class="p-4 border border-slate-200 rounded-lg space-y-3">
+              <span class="text-xs font-bold text-slate-800 flex items-center gap-2">
+                <i data-lucide="box" class="w-4 h-4 text-amber-600"></i>
+                Импорт каталога запчастей
+              </span>
+              <input type="file" id="import-parts-file" accept=".csv" class="w-full text-xs text-slate-500 file:mr-2 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-semibold file:bg-amber-50 file:text-amber-700 hover:file:bg-amber-100">
+              <button onclick="handleImport('parts')" class="w-full bg-slate-800 hover:bg-slate-900 text-white text-xs font-medium py-2 rounded-lg transition-colors">
+                Загрузить запчасти
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Database Maintenance & Demo Reset -->
+        <div class="bg-rose-50/50 p-6 rounded-xl border border-rose-200 space-y-3">
+          <div class="flex items-center gap-2 text-rose-700 font-bold text-sm">
+            <i data-lucide="alert-triangle" class="w-4 h-4"></i>
+            <span>Сброс к демонстрационным данным СТО Спецмаш</span>
+          </div>
+          <p class="text-xs text-slate-600">
+            Восстанавливает начальный демонстрационный парк техники CASE, клиентов, заказ-нарядов воронки и сотрудников СТО.
+          </p>
+          <button onclick="handleResetDemo()" class="bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold px-4 py-2 rounded-lg transition-colors">
+            Сбросить базу данных к демо-данным
+          </button>
+        </div>
+      </section>
+
+      <!-- ================= 9. TAB: ADMINISTRATOR SETTINGS ================= -->
+      <section id="tab-settings" class="hidden space-y-6 max-w-5xl">
+        <!-- Settings Header -->
+        <div class="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-slate-200">
+          <div>
+            <div class="flex items-center gap-2.5">
+              <h2 class="text-xl font-bold text-slate-900">Настройки программы</h2>
+              <span class="bg-purple-100 text-purple-800 border border-purple-200 text-xs px-2.5 py-0.5 rounded-full font-semibold flex items-center gap-1 shadow-sm">
+                <span>👑</span> Панель Администратора
+              </span>
+            </div>
+            <p class="text-xs text-slate-500 mt-1">СТО Спецмаш • Централизованное управление параметрами сервиса, реквизитами, брендингом и резервным копированием</p>
+          </div>
+          <div class="flex items-center gap-3">
+            <button type="button" onclick="downloadDatabaseBackup()" class="bg-slate-800 hover:bg-slate-900 text-white text-xs font-semibold px-3.5 py-2 rounded-lg flex items-center gap-1.5 shadow-sm transition-colors">
+              <i data-lucide="download" class="w-4 h-4 text-emerald-400"></i>
+              <span>Скачать бэкап БД</span>
+            </button>
+            <button type="submit" form="form-admin-settings" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-4 py-2 rounded-lg flex items-center gap-1.5 shadow-md transition-colors">
+              <i data-lucide="check" class="w-4 h-4"></i>
+              <span>Сохранить настройки</span>
+            </button>
+          </div>
+        </div>
+
+        <form id="form-admin-settings" onsubmit="saveAdminSettings(event)" class="space-y-6">
+          <!-- Card 1: Реквизиты и данные СТО -->
+          <div class="settings-card p-6">
+            <div class="flex items-center gap-3 pb-4 border-b border-slate-100 mb-5">
+              <div class="p-2.5 rounded-xl bg-blue-50 text-blue-600">
+                <i data-lucide="building-2" class="w-5 h-5"></i>
+              </div>
+              <div>
+                <h3 class="font-bold text-slate-900 text-base">Основные реквизиты СТО Спецмаш</h3>
+                <p class="text-xs text-slate-400">Данные компании для отображения в программе, заказ-нарядах и актах выполненных работ</p>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Название сервиса / СТО *</label>
+                <input type="text" id="setting-company-name" required value="СТО Спецмаш" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-semibold text-slate-800">
+              </div>
+
+              <div>
+                <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Специализация / Слоган</label>
+                <input type="text" id="setting-company-slogan" value="Сервис спецтехники, грузовых авто и оборудования" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 text-slate-700">
+              </div>
+
+              <div>
+                <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Контактный телефон *</label>
+                <input type="text" id="setting-company-phone" required value="+374 99 999999" placeholder="+37499999999" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-mono">
+              </div>
+
+              <div>
+                <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Email сервиса</label>
+                <input type="email" id="setting-company-email" value="info@specmash-sto.am" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
+              </div>
+
+              <div>
+                <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Фактический адрес СТО</label>
+                <input type="text" id="setting-company-address" value="г. Ереван, ул. Себастия, 12" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
+              </div>
+
+              <div>
+                <label class="block text-xs font-bold text-slate-700 uppercase mb-1">ИНН / Налоговый номер (TIN)</label>
+                <input type="text" id="setting-company-tin" value="02589412" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-mono">
+              </div>
+
+              <div class="md:col-span-2">
+                <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Ответственное лицо по умолчанию</label>
+                <input type="text" id="setting-default-responsible" value="Иванов Алексей Викторович (Директор)" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
+              </div>
+            </div>
+          </div>
+
+          <!-- Card 2: Брендинг и Логотип -->
+          <div class="settings-card p-6">
+            <div class="flex items-center gap-3 pb-4 border-b border-slate-100 mb-5">
+              <div class="p-2.5 rounded-xl bg-indigo-50 text-indigo-600">
+                <i data-lucide="image" class="w-5 h-5"></i>
+              </div>
+              <div>
+                <h3 class="font-bold text-slate-900 text-base">Логотип и брендинг программы</h3>
+                <p class="text-xs text-slate-400">Настройка логотипа в левом верхнем углу интерфейса СТО Спецмаш</p>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 items-center">
+              <!-- Live Preview in Left-Top corner context -->
+              <div class="p-4 bg-slate-900 rounded-xl text-white flex items-center gap-3 border border-slate-800">
+                <div id="settings-brand-logo-preview" class="w-12 h-12 rounded-xl bg-white p-1 flex items-center justify-center overflow-hidden shadow">
+                  <i data-lucide="wrench" class="w-6 h-6 text-blue-600"></i>
+                </div>
+                <div>
+                  <div id="settings-brand-name-preview" class="font-bold text-sm text-white">СТО Спецмаш</div>
+                  <div class="text-[11px] text-slate-400">Предпросмотр в углу</div>
+                </div>
+              </div>
+
+              <div class="md:col-span-2 space-y-3">
+                <div class="flex flex-wrap gap-3">
+                  <button type="button" onclick="openLogoModal()" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-4 py-2 rounded-lg flex items-center gap-2 shadow-sm transition-colors">
+                    <i data-lucide="upload" class="w-4 h-4"></i>
+                    <span>Загрузить логотип (файл)</span>
+                  </button>
+                  <button type="button" onclick="resetLogo()" class="border border-slate-300 hover:bg-slate-100 text-slate-700 text-xs font-semibold px-3.5 py-2 rounded-lg transition-colors">
+                    <span>Сбросить к стандартному значку</span>
+                  </button>
+                </div>
+                <p class="text-xs text-slate-400">Рекомендуемый формат: квадратное изображение (PNG, SVG, JPG, WebP) размером от 120×120 px.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card 3: Финансовые настройки и условия ремонта -->
+          <div class="settings-card p-6">
+            <div class="flex items-center gap-3 pb-4 border-b border-slate-100 mb-5">
+              <div class="p-2.5 rounded-xl bg-emerald-50 text-emerald-600">
+                <i data-lucide="coins" class="w-5 h-5"></i>
+              </div>
+              <div>
+                <h3 class="font-bold text-slate-900 text-base">Финансовые параметры и гарантия</h3>
+                <p class="text-xs text-slate-400">Валюта программы, гарантийный срок на работы и условия ремонта</p>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Основная валюта учета</label>
+                <div class="flex items-center gap-2">
+                  <input type="text" id="setting-currency" value="AMD" readonly class="w-32 bg-slate-100 border border-slate-300 rounded-lg px-3 py-2 text-sm font-bold font-mono text-emerald-700 outline-none">
+                  <span class="text-xs text-slate-500 font-medium">Армянский драм (AMD) — строго</span>
+                </div>
+                <p class="text-[11px] text-slate-400 mt-1">Все финансовые расчеты, сметы, склад и выручка ведутся строго в AMD.</p>
+              </div>
+
+              <div>
+                <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Срок гарантии на выполненные работы</label>
+                <select id="setting-warranty-months" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white font-medium">
+                  <option value="1">1 месяц (30 дней)</option>
+                  <option value="3">3 месяца</option>
+                  <option value="6" selected>6 месяцев (стандарт)</option>
+                  <option value="12">12 месяцев (1 год)</option>
+                  <option value="24">24 месяца (2 года)</option>
+                </select>
+                <p class="text-[11px] text-slate-400 mt-1">Указывается в актах приема-передачи техники CASE заказчику.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card 4: База данных и Резервное копирование -->
+          <div class="settings-card p-6">
+            <div class="flex items-center gap-3 pb-4 border-b border-slate-100 mb-5">
+              <div class="p-2.5 rounded-xl bg-amber-50 text-amber-600">
+                <i data-lucide="database" class="w-5 h-5"></i>
+              </div>
+              <div>
+                <h3 class="font-bold text-slate-900 text-base">База данных SQLite и Резервные копии</h3>
+                <p class="text-xs text-slate-400">Состояние локального хранилища crm.db и создание аварийных копий</p>
+              </div>
+            </div>
+
+            <!-- Stats Grid -->
+            <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-5">
+              <div class="p-3 bg-slate-50 rounded-xl border border-slate-200 text-center">
+                <div class="text-[10px] text-slate-400 font-bold uppercase">Размер БД</div>
+                <div id="settings-db-size" class="text-base font-bold font-mono text-slate-800 mt-1">0 KB</div>
+              </div>
+              <div class="p-3 bg-slate-50 rounded-xl border border-slate-200 text-center">
+                <div class="text-[10px] text-slate-400 font-bold uppercase">Клиенты</div>
+                <div id="settings-count-clients" class="text-base font-bold font-mono text-blue-600 mt-1">0</div>
+              </div>
+              <div class="p-3 bg-slate-50 rounded-xl border border-slate-200 text-center">
+                <div class="text-[10px] text-slate-400 font-bold uppercase">Техника CASE</div>
+                <div id="settings-count-equipment" class="text-base font-bold font-mono text-emerald-600 mt-1">0</div>
+              </div>
+              <div class="p-3 bg-slate-50 rounded-xl border border-slate-200 text-center">
+                <div class="text-[10px] text-slate-400 font-bold uppercase">Склад з/ч</div>
+                <div id="settings-count-parts" class="text-base font-bold font-mono text-amber-600 mt-1">0</div>
+              </div>
+              <div class="p-3 bg-slate-50 rounded-xl border border-slate-200 text-center">
+                <div class="text-[10px] text-slate-400 font-bold uppercase">Наряды</div>
+                <div id="settings-count-deals" class="text-base font-bold font-mono text-purple-600 mt-1">0</div>
+              </div>
+              <div class="p-3 bg-slate-50 rounded-xl border border-slate-200 text-center">
+                <div class="text-[10px] text-slate-400 font-bold uppercase">Сотрудники</div>
+                <div id="settings-count-users" class="text-base font-bold font-mono text-indigo-600 mt-1">0</div>
+              </div>
+            </div>
+
+            <!-- Actions -->
+            <div class="flex flex-wrap items-center justify-between gap-4 pt-2">
+              <div class="space-y-1">
+                <div class="text-xs font-bold text-slate-800">Резервное копирование базы данных</div>
+                <p class="text-[11px] text-slate-400">Файл базы данных SQLite будет скачан прямо на ваш компьютер.</p>
+              </div>
+              <div class="flex items-center gap-3">
+                <button type="button" onclick="downloadDatabaseBackup()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-4 py-2 rounded-lg flex items-center gap-2 shadow-sm transition-colors">
+                  <i data-lucide="download" class="w-4 h-4"></i>
+                  <span>Скачать резервную копию (crm.db)</span>
+                </button>
+                <button type="button" onclick="handleResetDemo()" class="text-rose-600 hover:text-rose-700 hover:bg-rose-50 text-xs font-semibold px-3 py-2 rounded-lg border border-rose-200 transition-colors">
+                  Сбросить демо-данные
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Bottom Save Action -->
+          <div class="flex justify-end gap-3 pt-2">
+            <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold px-6 py-2.5 rounded-lg flex items-center gap-2 shadow-md transition-colors">
+              <i data-lucide="save" class="w-4 h-4"></i>
+              <span>Сохранить основные настройки</span>
+            </button>
+          </div>
+        </form>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- ==================== MODALS ==================== -->
+
+  <!-- Modal: Employee (Add / Edit) -->
+  <div id="modal-user" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4 modal-overlay">
+    <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 modal-box">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-100">
+        <h3 id="modal-user-title" class="font-bold text-slate-900 text-base">Добавить сотрудника</h3>
+        <button onclick="closeModal('modal-user')" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+
+      <form id="form-user" onsubmit="saveUser(event)" class="mt-4 space-y-4">
+        <input type="hidden" id="user-id">
+
+        <div>
+          <label class="block text-xs font-bold text-slate-700 uppercase mb-1">ФИО сотрудника *</label>
+          <input type="text" id="user-fullname" required placeholder="Николаев Андрей Сергеевич" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Логин для входа *</label>
+            <input type="text" id="user-username" required placeholder="nikolaev" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-mono">
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Роль *</label>
+            <select id="user-role" required class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white font-medium">
+              <option value="mechanic">🔧 Механик</option>
+              <option value="moderator">🛡️ Модератор</option>
+              <option value="admin">👑 Администратор</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Пароль <span id="user-pass-hint" class="font-normal text-slate-400"></span></label>
+            <input type="password" id="user-password" placeholder="••••••••" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-mono">
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Телефон</label>
+            <input type="text" id="user-phone" placeholder="+37499999999" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between pt-3 border-t border-slate-100">
+          <button type="button" id="btn-delete-user" onclick="deleteUser()" class="text-xs text-rose-600 hover:underline font-semibold hidden">Удалить сотрудника</button>
+          <div class="flex gap-2 ml-auto">
+            <button type="button" onclick="closeModal('modal-user')" class="px-3 py-1.5 border border-slate-300 rounded-lg text-xs text-slate-700 hover:bg-slate-100">Отмена</button>
+            <button type="submit" class="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg text-xs shadow-md">Сохранить</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Login / User Switcher -->
+  <div id="modal-login" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4 modal-overlay">
+    <div class="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl border border-slate-100 modal-box">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-100">
+        <h3 class="font-bold text-slate-900 text-base flex items-center gap-2">
+          <i data-lucide="lock" class="w-4 h-4 text-blue-600"></i>
+          <span>Смена пользователя / Вход</span>
+        </h3>
+        <button onclick="closeModal('modal-login')" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+
+      <!-- Quick Switcher Demo Buttons -->
+      <div class="mt-4 space-y-2">
+        <span class="text-[11px] font-bold uppercase text-slate-400 tracking-wider">Быстрый выбор для демонстрации:</span>
+        <div class="grid grid-cols-1 gap-1.5">
+          <button onclick="quickLogin('admin')" class="flex items-center justify-between p-2 rounded-lg bg-purple-50/70 hover:bg-purple-100 border border-purple-200 text-left transition-colors text-xs">
+            <div>
+              <div class="font-bold text-purple-900">👑 Иванов Алексей</div>
+              <div class="text-[10px] text-purple-700">Роль: Администратор (полный доступ)</div>
+            </div>
+            <span class="text-[10px] font-mono text-purple-600 bg-white px-1.5 py-0.5 rounded border border-purple-200">admin</span>
+          </button>
+
+          <button onclick="quickLogin('moderator')" class="flex items-center justify-between p-2 rounded-lg bg-blue-50/70 hover:bg-blue-100 border border-blue-200 text-left transition-colors text-xs">
+            <div>
+              <div class="font-bold text-blue-900">🛡️ Смирнова Елена</div>
+              <div class="text-[10px] text-blue-700">Роль: Модератор (приемка и наряды)</div>
+            </div>
+            <span class="text-[10px] font-mono text-blue-600 bg-white px-1.5 py-0.5 rounded border border-blue-200">moderator</span>
+          </button>
+
+          <button onclick="quickLogin('mechanic')" class="flex items-center justify-between p-2 rounded-lg bg-amber-50/70 hover:bg-amber-100 border border-amber-200 text-left transition-colors text-xs">
+            <div>
+              <div class="font-bold text-amber-900">🔧 Петров Сергей</div>
+              <div class="text-[10px] text-amber-700">Роль: Механик (ремонт и склад)</div>
+            </div>
+            <span class="text-[10px] font-mono text-amber-600 bg-white px-1.5 py-0.5 rounded border border-amber-200">mechanic</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="relative my-4 text-center">
+        <hr class="border-slate-200">
+        <span class="bg-white px-2 text-[11px] text-slate-400 absolute top-1/2 -translate-y-1/2 left-1/2 -translate-x-1/2">или ввод логина</span>
+      </div>
+
+      <!-- Manual login form -->
+      <form id="form-login" onsubmit="handleManualLogin(event)" class="space-y-3">
+        <div>
+          <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Логин</label>
+          <input type="text" id="login-username" required placeholder="Введите логин" class="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-xs outline-none focus:border-blue-500 font-mono">
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Пароль</label>
+          <input type="password" id="login-password" required placeholder="••••••••" class="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-xs outline-none focus:border-blue-500 font-mono">
+        </div>
+        <button type="submit" class="w-full bg-slate-900 hover:bg-slate-800 text-white font-medium py-2 rounded-lg text-xs shadow-md transition-colors mt-2">
+          Войти
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Logo Upload & Setting -->
+  <div id="modal-logo" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4 modal-overlay">
+    <div class="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl border border-slate-100 modal-box">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-100">
+        <h3 class="font-bold text-slate-900 text-base flex items-center gap-2">
+          <i data-lucide="image" class="w-4 h-4 text-blue-600"></i>
+          <span>Установить логотип СТО</span>
+        </h3>
+        <button onclick="closeModal('modal-logo')" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+
+      <div class="mt-4 space-y-4">
+        <!-- File upload box -->
+        <div class="p-4 border-2 border-dashed border-slate-300 rounded-xl text-center hover:border-blue-500 hover:bg-blue-50/30 transition-all cursor-pointer" onclick="document.getElementById('logo-file-input').click()">
+          <i data-lucide="upload-cloud" class="w-8 h-8 text-blue-600 mx-auto mb-2"></i>
+          <div class="text-xs font-bold text-slate-800">Загрузить файл изображения</div>
+          <p class="text-[11px] text-slate-400 mt-0.5">PNG, JPG, SVG, WebP (квадратный формат)</p>
+          <input type="file" id="logo-file-input" accept="image/*" class="hidden" onchange="uploadLogoFile(this.files[0])">
+        </div>
+
+        <div class="relative text-center">
+          <hr class="border-slate-200">
+          <span class="bg-white px-2 text-[11px] text-slate-400 absolute top-1/2 -translate-y-1/2 left-1/2 -translate-x-1/2">или ссылка на картинку</span>
+        </div>
+
+        <!-- URL form -->
+        <div class="space-y-2">
+          <input type="url" id="logo-url-input" placeholder="https://example.com/logo.png" class="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-xs outline-none focus:border-blue-500">
+          <button type="button" onclick="saveLogoUrl()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-1.5 rounded-lg text-xs transition-colors">
+            Применить ссылку
+          </button>
+        </div>
+
+        <div class="pt-2 border-t border-slate-100 flex justify-between items-center">
+          <button type="button" onclick="resetLogo()" class="text-xs text-rose-500 hover:underline">Сбросить к значку</button>
+          <button type="button" onclick="closeModal('modal-logo')" class="px-3 py-1.5 bg-slate-100 text-slate-700 rounded-lg text-xs font-medium hover:bg-slate-200">Закрыть</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Deal / Repair Order -->
+  <div id="modal-deal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4 overflow-y-auto modal-overlay">
+    <div class="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-slate-100 modal-box my-8">
+      <div class="flex items-center justify-between pb-4 border-b border-slate-100">
+        <h3 id="modal-deal-title" class="font-bold text-slate-900 text-lg">Заказ-наряд СТО Спецмаш</h3>
+        <button onclick="closeModal('modal-deal')" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+
+      <form id="form-deal" onsubmit="saveDeal(event)" class="mt-4 space-y-4">
+        <input type="hidden" id="deal-id">
+        
+        <div>
+          <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Тема / Название наряда *</label>
+          <input type="text" id="deal-title" required placeholder="Например: Капитальный ремонт гидравлики CASE" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Клиент / Заказчик *</label>
+            <select id="deal-client" required onchange="handleDealClientChange(this.value)" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white">
+              <!-- Populated dynamically -->
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Техника заказчика *</label>
+            <select id="deal-equipment" required class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white">
+              <!-- Filtered by selected client -->
+            </select>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Стадия воронки</label>
+            <select id="deal-stage" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white">
+              <option value="new">📥 Новая заявка</option>
+              <option value="diagnostic">🔍 Диагностика</option>
+              <option value="estimate">📝 Согласование сметы</option>
+              <option value="in_progress">⚙️ В ремонте / работе</option>
+              <option value="parts_waiting">📦 Ожидание запчастей</option>
+              <option value="ready">✅ Готово к выдаче</option>
+              <option value="completed">💰 Оплачено (Завершено)</option>
+              <option value="cancelled">❌ Отказ / Архив</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Сумма клиенту (AMD)</label>
+            <input type="number" id="deal-amount" step="1000" min="0" placeholder="0" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-mono">
+          </div>
+
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Себестоимость (AMD)</label>
+            <input type="number" id="deal-cost" step="1000" min="0" placeholder="0" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-mono">
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Приоритет</label>
+            <select id="deal-priority" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white">
+              <option value="normal">Обычный</option>
+              <option value="high">Высокий</option>
+              <option value="urgent">🔥 Срочный</option>
+              <option value="low">Низкий</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Ответственный сотрудник</label>
+            <select id="deal-responsible" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white font-medium">
+              <!-- Populated dynamically from employees -->
+            </select>
+          </div>
+
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Срок сдачи (Дедлайн)</label>
+            <input type="date" id="deal-deadline" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Описание неисправности и работ</label>
+          <textarea id="deal-description" rows="2" placeholder="Замечания заказчика, дефекты техники CASE..." class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"></textarea>
+        </div>
+
+        <!-- Attached Parts Section -->
+        <div id="deal-parts-section" class="pt-3 border-t border-slate-100 hidden">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-bold text-slate-700 uppercase flex items-center gap-1.5">
+              <i data-lucide="package" class="w-4 h-4 text-amber-600"></i>
+              Списанные запчасти под этот наряд
+            </span>
+            <button type="button" onclick="showAttachPartRow()" class="text-xs text-blue-600 hover:underline font-semibold">+ Списать запчасть со склада</button>
+          </div>
+
+          <div id="attach-part-row" class="hidden p-3 bg-amber-50/50 rounded-lg border border-amber-200 mb-3 flex items-center gap-2">
+            <select id="attach-part-select" class="flex-1 text-xs border border-slate-300 rounded px-2 py-1.5 bg-white">
+              <!-- populated -->
+            </select>
+            <input type="number" id="attach-part-qty" value="1" min="1" class="w-16 text-xs border border-slate-300 rounded px-2 py-1.5 font-mono text-center">
+            <button type="button" onclick="submitAttachPart()" class="bg-amber-600 text-white text-xs px-3 py-1.5 rounded font-medium hover:bg-amber-700">Списать</button>
+            <button type="button" onclick="hideAttachPartRow()" class="text-slate-400 hover:text-slate-600 text-xs px-1"><i data-lucide="x" class="w-4 h-4"></i></button>
+          </div>
+
+          <div id="deal-attached-parts-list" class="space-y-1.5 max-h-36 overflow-y-auto">
+            <!-- populated -->
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between pt-4 border-t border-slate-100">
+          <button type="button" id="btn-delete-deal" onclick="deleteDeal()" class="text-xs text-rose-600 hover:underline font-semibold hidden">Удалить заказ-наряд</button>
+          <div class="flex gap-2 ml-auto">
+            <button type="button" onclick="closeModal('modal-deal')" class="px-4 py-2 border border-slate-300 rounded-lg text-sm text-slate-700 hover:bg-slate-100">Отмена</button>
+            <button type="submit" class="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg text-sm shadow-md">Сохранить</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Client -->
+  <div id="modal-client" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4 modal-overlay">
+    <div class="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 modal-box">
+      <div class="flex items-center justify-between pb-4 border-b border-slate-100">
+        <h3 id="modal-client-title" class="font-bold text-slate-900 text-lg">Карточка клиента</h3>
+        <button onclick="closeModal('modal-client')" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+
+      <form id="form-client" onsubmit="saveClient(event)" class="mt-4 space-y-4">
+        <input type="hidden" id="client-id">
+        <div>
+          <label class="block text-xs font-bold text-slate-700 uppercase mb-1">ФИО / Контактное лицо *</label>
+          <input type="text" id="client-name" required placeholder="Иванов Иван Иванович" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Компания / Юрлицо</label>
+          <input type="text" id="client-company" placeholder="ООО «АвтоДорСтрой»" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
+        </div>
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Телефон *</label>
+            <input type="text" id="client-phone" required placeholder="+37499999999" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Email</label>
+            <input type="email" id="client-email" placeholder="client@example.com" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Фактический адрес</label>
+          <input type="text" id="client-address" placeholder="г. Ереван, ул. Себастия, 1" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Заметки</label>
+          <textarea id="client-notes" rows="2" placeholder="Особые условия, отсрочка платежа в AMD..." class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"></textarea>
+        </div>
+
+        <div class="flex items-center justify-between pt-4 border-t border-slate-100">
+          <button type="button" id="btn-delete-client" onclick="deleteClient()" class="text-xs text-rose-600 hover:underline font-semibold hidden">Удалить клиента</button>
+          <div class="flex gap-2 ml-auto">
+            <button type="button" onclick="closeModal('modal-client')" class="px-4 py-2 border border-slate-300 rounded-lg text-sm text-slate-700 hover:bg-slate-100">Отмена</button>
+            <button type="submit" class="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg text-sm shadow-md">Сохранить</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Equipment -->
+  <div id="modal-equipment" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4 modal-overlay">
+    <div class="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 modal-box">
+      <div class="flex items-center justify-between pb-4 border-b border-slate-100">
+        <h3 id="modal-equipment-title" class="font-bold text-slate-900 text-lg">Регистрация техники</h3>
+        <button onclick="closeModal('modal-equipment')" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+
+      <form id="form-equipment" onsubmit="saveEquipment(event)" class="mt-4 space-y-4">
+        <input type="hidden" id="equipment-id">
+        <div>
+          <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Владелец (Клиент) *</label>
+          <select id="equipment-client" required class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white">
+            <!-- populated -->
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Марка и Модель техники *</label>
+          <input type="text" id="equipment-name" required placeholder="Экскаватор CASE 580" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
+        </div>
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Категория</label>
+            <select id="equipment-category" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white">
+              <option value="Спецтехника">Спецтехника</option>
+              <option value="Тяжелая техника">Тяжелая техника</option>
+              <option value="Сельхозтехника">Сельхозтехника</option>
+              <option value="Грузовые авто">Грузовые авто</option>
+              <option value="Генераторы/ДГУ">Генераторы/ДГУ</option>
+              <option value="Другое">Другое</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Статус</label>
+            <select id="equipment-status" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white">
+              <option value="Исправна">Исправна</option>
+              <option value="В ремонте">В ремонте</option>
+              <option value="На диагностике">На диагностике</option>
+              <option value="Ожидание запчастей">Ожидание запчастей</option>
+              <option value="Готово к выдаче">Готово к выдаче</option>
+            </select>
+          </div>
+        </div>
+        <div class="grid grid-cols-3 gap-3">
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">VIN / Серийный №</label>
+            <input type="text" id="equipment-vin" placeholder="CASE12345..." class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Год выпуска</label>
+            <input type="number" id="equipment-year" placeholder="2020" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Наработка (м/ч, км)</label>
+            <input type="text" id="equipment-hours" placeholder="4 500 м/ч" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
+          </div>
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Технические примечания</label>
+          <textarea id="equipment-notes" rows="2" placeholder="Особенности комплектации CASE..." class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"></textarea>
+        </div>
+
+        <div class="flex items-center justify-between pt-4 border-t border-slate-100">
+          <button type="button" id="btn-delete-equipment" onclick="deleteEquipment()" class="text-xs text-rose-600 hover:underline font-semibold hidden">Удалить технику</button>
+          <div class="flex gap-2 ml-auto">
+            <button type="button" onclick="closeModal('modal-equipment')" class="px-4 py-2 border border-slate-300 rounded-lg text-sm text-slate-700 hover:bg-slate-100">Отмена</button>
+            <button type="submit" class="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-medium rounded-lg text-sm shadow-md">Сохранить</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Warehouse Part -->
+  <div id="modal-part" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4 modal-overlay">
+    <div class="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 modal-box">
+      <div class="flex items-center justify-between pb-4 border-b border-slate-100">
+        <h3 id="modal-part-title" class="font-bold text-slate-900 text-lg">Карточка запчасти</h3>
+        <button onclick="closeModal('modal-part')" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+
+      <form id="form-part" onsubmit="savePart(event)" class="mt-4 space-y-4">
+        <input type="hidden" id="part-id">
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Артикул (SKU) *</label>
+            <input type="text" id="part-sku" required placeholder="FL-CASE-01" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-mono">
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Категория *</label>
+            <select id="part-category" required class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white">
+              <option value="Фильтры">Фильтры</option>
+              <option value="Масла и техжидкости">Масла и техжидкости</option>
+              <option value="Гидравлика">Гидравлика</option>
+              <option value="Ходовая">Ходовая</option>
+              <option value="Двигатель">Двигатель</option>
+              <option value="Электрика">Электрика</option>
+              <option value="Расходники">Расходники</option>
+              <option value="Навесное">Навесное</option>
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Наименование запчасти *</label>
+          <input type="text" id="part-name" required placeholder="Фильтр масляный CASE (84284102)" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
+        </div>
+
+        <div class="grid grid-cols-3 gap-3">
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Количество (шт)</label>
+            <input type="number" id="part-quantity" min="0" value="0" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-mono">
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Мин. остаток</label>
+            <input type="number" id="part-min-threshold" min="0" value="2" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-mono">
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Склад / Ячейка</label>
+            <input type="text" id="part-location" placeholder="Стеллаж А-1" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Закупочная цена (AMD)</label>
+            <input type="number" id="part-purchase-price" step="500" min="0" value="0" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-mono">
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Цена продажи (AMD)</label>
+            <input type="number" id="part-selling-price" step="500" min="0" value="0" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-mono">
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between pt-4 border-t border-slate-100">
+          <button type="button" id="btn-delete-part" onclick="deletePart()" class="text-xs text-rose-600 hover:underline font-semibold hidden">Удалить позицию</button>
+          <div class="flex gap-2 ml-auto">
+            <button type="button" onclick="closeModal('modal-part')" class="px-4 py-2 border border-slate-300 rounded-lg text-sm text-slate-700 hover:bg-slate-100">Отмена</button>
+            <button type="submit" class="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg text-sm shadow-md">Сохранить</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Quick Stock Adjust -->
+  <div id="modal-stock-adjust" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4 modal-overlay">
+    <div class="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl border border-slate-100 modal-box">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-100">
+        <h3 id="adjust-part-name" class="font-bold text-slate-900 text-sm">Приход / расход запчасти</h3>
+        <button onclick="closeModal('modal-stock-adjust')" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+
+      <form id="form-stock-adjust" onsubmit="saveStockAdjust(event)" class="mt-4 space-y-4">
+        <input type="hidden" id="adjust-part-id">
+        <div>
+          <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Количество изменения</label>
+          <p class="text-[11px] text-slate-400 mb-1">Положительное — приход (+5), отрицательное — списание (-2)</p>
+          <input type="number" id="adjust-quantity" required placeholder="+10 или -2" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-mono text-center font-bold">
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Комментарий / Накладная</label>
+          <input type="text" id="adjust-comment" placeholder="Поступление от поставщика..." class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
+        </div>
+
+        <div class="flex gap-2 justify-end pt-3 border-t border-slate-100">
+          <button type="button" onclick="closeModal('modal-stock-adjust')" class="px-3 py-1.5 border border-slate-300 rounded-lg text-xs text-slate-700 hover:bg-slate-100">Отмена</button>
+          <button type="submit" class="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg text-xs shadow-md">Применить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Task -->
+  <div id="modal-task" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4 modal-overlay">
+    <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 modal-box">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-100">
+        <h3 class="font-bold text-slate-900 text-base">Новая задача / напоминание</h3>
+        <button onclick="closeModal('modal-task')" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+
+      <form id="form-task" onsubmit="saveTask(event)" class="mt-4 space-y-4">
+        <div>
+          <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Название задачи *</label>
+          <input type="text" id="task-title" required placeholder="Позвонить клиенту по согласованию сметы CASE" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Срок (Дата и время) *</label>
+            <input type="datetime-local" id="task-due" required class="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500">
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Приоритет</label>
+            <select id="task-priority" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500 bg-white">
+              <option value="normal">Обычный</option>
+              <option value="high">Высокий</option>
+              <option value="urgent">Срочно</option>
+              <option value="low">Низкий</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Клиент (опционально)</label>
+            <select id="task-client" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500 bg-white">
+              <option value="">Не привязан</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Наряд (опционально)</label>
+            <select id="task-deal" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500 bg-white">
+              <option value="">Не привязан</option>
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Заметки / Чек-лист</label>
+          <textarea id="task-notes" rows="2" placeholder="Дополнительные детали..." class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"></textarea>
+        </div>
+
+        <div class="flex gap-2 justify-end pt-3 border-t border-slate-100">
+          <button type="button" onclick="closeModal('modal-task')" class="px-3 py-1.5 border border-slate-300 rounded-lg text-xs text-slate-700 hover:bg-slate-100">Отмена</button>
+          <button type="submit" class="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg text-xs shadow-md">Создать задачу</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Client Detail Card -->
+  <div id="modal-client-view" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4 modal-overlay overflow-y-auto">
+    <div class="bg-white rounded-2xl max-w-3xl w-full p-6 shadow-2xl border border-slate-100 modal-box my-8">
+      <div class="flex items-center justify-between pb-4 border-b border-slate-100">
+        <div>
+          <h3 id="view-client-name" class="font-bold text-slate-900 text-xl">Клиент</h3>
+          <p id="view-client-company" class="text-xs text-slate-500">Компания</p>
+        </div>
+        <button onclick="closeModal('modal-client-view')" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+
+      <div class="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4 pb-4 border-b border-slate-100 text-xs">
+        <div>
+          <span class="text-slate-400 block">Телефон:</span>
+          <span id="view-client-phone" class="font-bold text-slate-800"></span>
+        </div>
+        <div>
+          <span class="text-slate-400 block">Email:</span>
+          <span id="view-client-email" class="font-bold text-slate-800"></span>
+        </div>
+        <div>
+          <span class="text-slate-400 block">Адрес:</span>
+          <span id="view-client-address" class="text-slate-800"></span>
+        </div>
+      </div>
+
+      <div class="mt-4">
+        <h4 class="font-bold text-slate-800 text-sm mb-2 flex items-center gap-2">
+          <i data-lucide="truck" class="w-4 h-4 text-emerald-600"></i>
+          Зарегистрированная техника клиента
+        </h4>
+        <div id="view-client-equipment-list" class="space-y-2 max-h-48 overflow-y-auto">
+          <!-- populated -->
+        </div>
+      </div>
+
+      <div class="mt-4 pt-4 border-t border-slate-100">
+        <h4 class="font-bold text-slate-800 text-sm mb-2 flex items-center gap-2">
+          <i data-lucide="history" class="w-4 h-4 text-blue-600"></i>
+          История ремонтов и нарядов
+        </h4>
+        <div id="view-client-deals-list" class="space-y-2 max-h-48 overflow-y-auto">
+          <!-- populated -->
+        </div>
+      </div>
+
+      <div class="flex justify-end pt-4 border-t border-slate-100 mt-4">
+        <button onclick="closeModal('modal-client-view')" class="px-4 py-1.5 bg-slate-800 text-white text-xs font-medium rounded-lg">Закрыть</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Stock Movements Log -->
+  <div id="modal-stock-movements" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4 modal-overlay overflow-y-auto">
+    <div class="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-slate-100 modal-box my-8">
+      <div class="flex items-center justify-between pb-4 border-b border-slate-100">
+        <h3 class="font-bold text-slate-900 text-lg flex items-center gap-2">
+          <i data-lucide="history" class="w-5 h-5 text-blue-600"></i>
+          Журнал движения складских остатков СТО
+        </h3>
+        <button onclick="closeModal('modal-stock-movements')" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+
+      <div class="mt-4 max-h-96 overflow-y-auto">
+        <table class="w-full text-left text-xs border-collapse">
+          <thead>
+            <tr class="bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase">
+              <th class="p-2.5">Дата / Время</th>
+              <th class="p-2.5">Запчасть (SKU)</th>
+              <th class="p-2.5">Тип</th>
+              <th class="p-2.5">Кол-во</th>
+              <th class="p-2.5">Примечание</th>
+            </tr>
+          </thead>
+          <tbody id="stock-movements-table-body" class="divide-y divide-slate-100">
+            <!-- populated -->
+          </tbody>
+        </table>
+      </div>
+
+      <div class="flex justify-end pt-4 border-t border-slate-100 mt-4">
+        <button onclick="closeModal('modal-stock-movements')" class="px-4 py-1.5 bg-slate-800 text-white text-xs font-medium rounded-lg">Закрыть</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div id="toast-container"></div>
+
+  <!-- Scripts -->
+  <script src="/static/app.js"></script>
+</body>
+</html>

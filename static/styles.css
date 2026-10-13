@@ -1,0 +1,289 @@
+/* MasterTech CRM Custom Styles */
+
+:root {
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
+  --bg-main: #f8fafc;
+  --bg-card: #ffffff;
+  --border-color: #e2e8f0;
+  --text-main: #0f172a;
+  --text-muted: #64748b;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background-color: var(--bg-main);
+  color: var(--text-main);
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Kanban Board Column & Card Styles */
+.kanban-col {
+  min-width: 290px;
+  max-width: 290px;
+  background-color: #f1f5f9;
+  border-radius: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 180px);
+}
+
+.kanban-cards-container {
+  overflow-y: auto;
+  min-height: 120px;
+  padding: 8px;
+}
+
+.kanban-card {
+  transition: all 0.15s ease-in-out;
+  cursor: grab;
+  user-select: none;
+}
+
+.kanban-card:active {
+  cursor: grabbing;
+}
+
+.kanban-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -2px rgba(0, 0, 0, 0.04);
+}
+
+.kanban-card.dragging {
+  opacity: 0.4;
+  border: 2px dashed #3b82f6;
+}
+
+.kanban-cards-container.drag-over {
+  background-color: #e2e8f0;
+  border: 2px dashed #60a5fa;
+  border-radius: 8px;
+}
+
+/* Badge helpers */
+.badge-urgent {
+  background-color: #fee2e2;
+  color: #b91c1c;
+  border: 1px solid #fecaca;
+}
+.badge-high {
+  background-color: #ffedd5;
+  color: #c2410c;
+  border: 1px solid #fed7aa;
+}
+.badge-normal {
+  background-color: #eff6ff;
+  color: #1d4ed8;
+  border: 1px solid #dbeafe;
+}
+.badge-low {
+  background-color: #f1f5f9;
+  color: #475569;
+  border: 1px solid #e2e8f0;
+}
+
+/* Modal animation */
+.modal-overlay {
+  animation: fadeIn 0.15s ease-out;
+}
+.modal-box {
+  animation: scaleIn 0.15s ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes scaleIn {
+  from { transform: scale(0.96); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+/* Toast notifications */
+#toast-container {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.toast {
+  padding: 12px 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.2);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  animation: slideInRight 0.2s ease-out;
+}
+
+@keyframes slideInRight {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.toast-success {
+  background-color: #065f46;
+  color: #ffffff;
+}
+.toast-error {
+  background-color: #991b1b;
+  color: #ffffff;
+}
+.toast-info {
+  background-color: #1e3a8a;
+  color: #ffffff;
+}
+
+/* ================= BITRIX24 STAGE INDICATOR (CHEVRONS) ================= */
+
+.b24-pipeline-container {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.04));
+  user-select: none;
+}
+
+.b24-stage-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 10px 0 14px;
+  font-size: 11px;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 0.15s ease-in-out;
+  white-space: nowrap;
+  position: relative;
+  border: none;
+  outline: none;
+  clip-path: polygon(0% 0%, calc(100% - 8px) 0%, 100% 50%, calc(100% - 8px) 100%, 0% 100%, 8px 50%);
+  margin-left: -5px;
+}
+
+.b24-stage-chevron:first-child {
+  clip-path: polygon(0% 0%, calc(100% - 8px) 0%, 100% 50%, calc(100% - 8px) 100%, 0% 100%);
+  padding-left: 10px;
+  border-top-left-radius: 6px;
+  border-bottom-left-radius: 6px;
+  margin-left: 0;
+}
+
+.b24-stage-chevron:last-child {
+  clip-path: polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%, 8px 50%);
+  padding-right: 12px;
+  border-top-right-radius: 6px;
+  border-bottom-right-radius: 6px;
+}
+
+/* Passed Stage (Completed step) */
+.b24-stage-chevron.passed {
+  background-color: #93c5fd;
+  color: #1e3a8a;
+  opacity: 0.88;
+}
+
+.b24-stage-chevron.passed:hover {
+  opacity: 1;
+  filter: brightness(0.95);
+  transform: translateY(-1px);
+}
+
+/* Active / Current Stage */
+.b24-stage-chevron.current {
+  color: #ffffff;
+  font-weight: 700;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+  z-index: 2;
+}
+
+.b24-stage-chevron.current.stage-new {
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+}
+.b24-stage-chevron.current.stage-diagnostic {
+  background: linear-gradient(135deg, #a855f7, #9333ea);
+}
+.b24-stage-chevron.current.stage-estimate {
+  background: linear-gradient(135deg, #6366f1, #4f46e5);
+}
+.b24-stage-chevron.current.stage-in_progress {
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+}
+.b24-stage-chevron.current.stage-parts_waiting {
+  background: linear-gradient(135deg, #f97316, #ea580c);
+}
+.b24-stage-chevron.current.stage-ready {
+  background: linear-gradient(135deg, #10b981, #059669);
+}
+.b24-stage-chevron.current.stage-completed {
+  background: linear-gradient(135deg, #059669, #047857);
+}
+.b24-stage-chevron.current.stage-cancelled {
+  background: linear-gradient(135deg, #ef4444, #dc2626);
+}
+
+/* Future / Inactive Stage */
+.b24-stage-chevron.future {
+  background-color: #e2e8f0;
+  color: #64748b;
+}
+
+.b24-stage-chevron.future:hover {
+  background-color: #cbd5e1;
+  color: #1e293b;
+  transform: translateY(-1px);
+}
+
+/* Bitrix24 Stage Selector Dropdown */
+.b24-stage-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+  background-repeat: no-repeat;
+  background-position: right 0.4rem center;
+  background-size: 1em;
+  padding-right: 1.5rem;
+}
+
+/* Settings Cards Styling */
+.settings-card {
+  background-color: #ffffff;
+  border-radius: 0.75rem;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
+  transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+}
+
+.settings-card:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.07);
+}
+
