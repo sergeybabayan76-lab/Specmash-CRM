@@ -106,15 +106,17 @@ python -m uvicorn server:app --host 127.0.0.1 --port 8000 --reload
 
 Проект полностью сконфигурирован для серверлесс-развертывания в **Vercel** (`@vercel/python` Serverless Functions) напрямую из репозитория GitHub:
 
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fsergeybabayan76-lab%2FSpecmash-CRM)
+
 * **Файлы конфигурации:**
   - `vercel.json` — конфигурация маршрутизации и Serverless билдера.
   - `api/index.py` — серверлесс-точка входа FastAPI для Vercel.
   - `database.py` — автоматическая поддержка серверлесс-хранилища (`/tmp/crm.db`) для предотвращения ошибок read-only файловой системы.
-  - `.github/workflows/ci.yml` — автоматическое тестирование сборки и зависимостей в GitHub Actions.
 
-### Как развернуть проект в Vercel за 1 минуту:
-1. **Загрузите репозиторий в GitHub** (инструкция ниже).
-2. Перейдите в [Vercel Dashboard](https://vercel.com/new) и нажмите **Import** напротив созданного репозитория.
+### Как развернуть проект в Vercel в 1 клик:
+1. Нажмите на кнопку выше **[Deploy with Vercel](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fsergeybabayan76-lab%2FSpecmash-CRM)** (или перейдите в [Vercel New Project](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fsergeybabayan76-lab%2FSpecmash-CRM)).
+2. Выберите репозиторий `sergeybabayan76-lab/Specmash-CRM` и нажмите **Import**.
 3. Нажмите **Deploy** — Vercel автоматически установит зависимости из `requirements.txt` и запустит приложение.
 4. **Автоматический CD (Continuous Deployment):** Каждый `git push` в ветку `main` на GitHub будет автоматически запускать новую сборку и обновлять работающее приложение в Vercel без простоев.
+
 
