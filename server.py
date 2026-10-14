@@ -140,7 +140,7 @@ class TaskCreate(BaseModel):
 def login(req: LoginRequest):
     conn = database.get_connection()
     c = conn.cursor()
-    c.execute("SELECT * FROM users WHERE username = ?", (req.username.strip(),))
+    c.execute("SELECT * FROM users WHERE LOWER(username) = ?", (req.username.strip().lower(),))
     user = c.fetchone()
     conn.close()
 
@@ -173,14 +173,15 @@ def create_user(u: UserCreate):
     if u.role not in valid_roles:
         raise HTTPException(status_code=400, detail="Недопустимая роль. Доступны: admin, moderator, mechanic")
 
-    if len(u.username.strip()) < 3:
+    clean_username = u.username.strip().lower()
+    if len(clean_username) < 3:
         raise HTTPException(status_code=400, detail="Логин должен быть не короче 3 символов")
     if len(u.password) < 4:
         raise HTTPException(status_code=400, detail="Пароль должен быть не короче 4 символов")
 
     conn = database.get_connection()
     c = conn.cursor()
-    c.execute("SELECT id FROM users WHERE username = ?", (u.username.strip(),))
+    c.execute("SELECT id FROM users WHERE LOWER(username) = ?", (clean_username,))
     if c.fetchone():
         conn.close()
         raise HTTPException(status_code=400, detail="Пользователь с таким логином уже существует")
@@ -191,11 +192,19 @@ def create_user(u: UserCreate):
     c.execute("""
         INSERT INTO users (username, password_hash, salt, full_name, role, phone, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (u.username.strip(), p_hash, salt, u.full_name.strip(), u.role, u.phone.strip(), now_str))
+    """, (clean_username, p_hash, salt, u.full_name.strip(), u.role, (u.phone or "").strip(), now_str))
     user_id = c.lastrowid
     conn.commit()
     conn.close()
-    return {"id": user_id, "message": "Сотрудник успешно добавлен"}
+    return {
+        "id": user_id,
+        "username": clean_username,
+        "full_name": u.full_name.strip(),
+        "role": u.role,
+        "phone": (u.phone or "").strip(),
+        "created_at": now_str,
+        "message": "Сотрудник успешно добавлен"
+    }
 
 @app.put("/api/users/{user_id}")
 def update_user(user_id: int, u: UserUpdate):
@@ -217,6 +226,9 @@ def update_user(user_id: int, u: UserUpdate):
             conn.close()
             raise HTTPException(status_code=400, detail="В системе должен оставаться хотя бы один администратор!")
 
+    clean_phone = (u.phone or "").strip()
+    clean_fullname = u.full_name.strip()
+
     if u.password and len(u.password.strip()) > 0:
         if len(u.password.strip()) < 4:
             conn.close()
@@ -225,16 +237,23 @@ def update_user(user_id: int, u: UserUpdate):
         c.execute("""
             UPDATE users SET full_name = ?, role = ?, phone = ?, password_hash = ?, salt = ?
             WHERE id = ?
-        """, (u.full_name.strip(), u.role, u.phone.strip(), p_hash, salt, user_id))
+        """, (clean_fullname, u.role, clean_phone, p_hash, salt, user_id))
     else:
         c.execute("""
             UPDATE users SET full_name = ?, role = ?, phone = ?
             WHERE id = ?
-        """, (u.full_name.strip(), u.role, u.phone.strip(), user_id))
+        """, (clean_fullname, u.role, clean_phone, user_id))
 
     conn.commit()
     conn.close()
-    return {"message": "Данные сотрудника обновлены"}
+    return {
+        "id": user_id,
+        "username": existing["username"],
+        "full_name": clean_fullname,
+        "role": u.role,
+        "phone": clean_phone,
+        "message": "Данные сотрудника обновлены"
+    }
 
 @app.delete("/api/users/{user_id}")
 def delete_user(user_id: int):
@@ -343,6 +362,39 @@ def download_database_backup():
         media_type="application/octet-stream",
         filename=filename
     )
+
+@app.get("/api/backup/json")
+def export_json_backup():
+    """Exports full database state (all tables) as a clean JSON document."""
+    try:
+        data = database.dump_all_data()
+        data["exported_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        data["app"] = "СТО Спецмаш CRM"
+        data["version"] = "1.2.0"
+        return data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка экспорта базы: {str(e)}")
+
+@app.post("/api/backup/restore")
+async def restore_json_backup(req: Dict[str, Any]):
+    """Restores full database state from JSON."""
+    try:
+        counts = database.restore_all_data(req)
+        return {
+            "message": "База данных успешно восстановлена",
+            "restored_counts": counts
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка восстановления базы: {str(e)}")
+
+@app.post("/api/sync/hydrate")
+def sync_hydrate_records(payload: Dict[str, Any]):
+    """Syncs client-side persisted records to ensure Vercel serverless has all rows."""
+    try:
+        counts = database.restore_all_data(payload)
+        return {"status": "ok", "synced": counts}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 @app.post("/api/settings/logo")
 async def upload_logo(file: UploadFile = File(...)):
@@ -559,15 +611,37 @@ def list_equipment(q: Optional[str] = None, category: Optional[str] = None):
 def create_equipment(eq: EquipmentCreate):
     conn = database.get_connection()
     c = conn.cursor()
+    
+    # Check client_id
+    client_id = eq.client_id
+    if client_id and client_id > 0:
+        c.execute("SELECT id FROM clients WHERE id = ?", (client_id,))
+        if not c.fetchone():
+            client_id = None
+    else:
+        client_id = None
+
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     c.execute("""
         INSERT INTO equipment (client_id, name, category, serial_vin, year, operating_hours, status, notes, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (eq.client_id, eq.name, eq.category, eq.serial_vin, eq.year, eq.operating_hours, eq.status, eq.notes, now_str))
+    """, (client_id, eq.name.strip(), eq.category, (eq.serial_vin or "").strip(), eq.year, (eq.operating_hours or "").strip(), eq.status or "Исправна", (eq.notes or "").strip(), now_str))
     eq_id = c.lastrowid
     conn.commit()
     conn.close()
-    return {"id": eq_id, "message": "Единица техники успешно зарегистрирована"}
+    return {
+        "id": eq_id,
+        "client_id": client_id,
+        "name": eq.name.strip(),
+        "category": eq.category,
+        "serial_vin": (eq.serial_vin or "").strip(),
+        "year": eq.year,
+        "operating_hours": (eq.operating_hours or "").strip(),
+        "status": eq.status or "Исправна",
+        "notes": (eq.notes or "").strip(),
+        "created_at": now_str,
+        "message": "Единица техники успешно зарегистрирована"
+    }
 
 @app.get("/api/equipment/{eq_id}")
 def get_equipment_detail(eq_id: int):
@@ -596,17 +670,37 @@ def get_equipment_detail(eq_id: int):
 def update_equipment(eq_id: int, eq: EquipmentCreate):
     conn = database.get_connection()
     c = conn.cursor()
+
+    client_id = eq.client_id
+    if client_id and client_id > 0:
+        c.execute("SELECT id FROM clients WHERE id = ?", (client_id,))
+        if not c.fetchone():
+            client_id = None
+    else:
+        client_id = None
+
     c.execute("""
         UPDATE equipment 
         SET client_id = ?, name = ?, category = ?, serial_vin = ?, year = ?, operating_hours = ?, status = ?, notes = ?
         WHERE id = ?
-    """, (eq.client_id, eq.name, eq.category, eq.serial_vin, eq.year, eq.operating_hours, eq.status, eq.notes, eq_id))
+    """, (client_id, eq.name.strip(), eq.category, (eq.serial_vin or "").strip(), eq.year, (eq.operating_hours or "").strip(), eq.status or "Исправна", (eq.notes or "").strip(), eq_id))
     if c.rowcount == 0:
         conn.close()
         raise HTTPException(status_code=404, detail="Техника не найдена")
     conn.commit()
     conn.close()
-    return {"message": "Данные по технике обновлены"}
+    return {
+        "id": eq_id,
+        "client_id": client_id,
+        "name": eq.name.strip(),
+        "category": eq.category,
+        "serial_vin": (eq.serial_vin or "").strip(),
+        "year": eq.year,
+        "operating_hours": (eq.operating_hours or "").strip(),
+        "status": eq.status or "Исправна",
+        "notes": (eq.notes or "").strip(),
+        "message": "Данные по технике обновлены"
+    }
 
 @app.delete("/api/equipment/{eq_id}")
 def delete_equipment(eq_id: int):
@@ -652,16 +746,50 @@ def list_deals(stage: Optional[str] = None, q: Optional[str] = None):
 def create_deal(deal: DealCreate):
     conn = database.get_connection()
     c = conn.cursor()
+    
+    # Validate client_id
+    client_id = deal.client_id
+    if client_id and client_id > 0:
+        c.execute("SELECT id FROM clients WHERE id = ?", (client_id,))
+        if not c.fetchone():
+            client_id = None
+    else:
+        client_id = None
+
+    # Validate equipment_id
+    equipment_id = deal.equipment_id
+    if equipment_id and equipment_id > 0:
+        c.execute("SELECT id FROM equipment WHERE id = ?", (equipment_id,))
+        if not c.fetchone():
+            equipment_id = None
+    else:
+        equipment_id = None
+
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     completed_at = now_str if deal.stage == "completed" else None
     c.execute("""
         INSERT INTO deals (title, client_id, equipment_id, stage, amount, cost, priority, responsible, description, deadline, created_at, completed_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (deal.title, deal.client_id, deal.equipment_id, deal.stage, deal.amount, deal.cost, deal.priority, deal.responsible, deal.description, deal.deadline, now_str, completed_at))
+    """, (deal.title.strip(), client_id, equipment_id, deal.stage, deal.amount or 0.0, deal.cost or 0.0, deal.priority or "normal", deal.responsible or "Мастер-приемщик", (deal.description or "").strip(), deal.deadline or None, now_str, completed_at))
     deal_id = c.lastrowid
     conn.commit()
     conn.close()
-    return {"id": deal_id, "message": "Сделка/наряд успешно создан"}
+    return {
+        "id": deal_id,
+        "title": deal.title.strip(),
+        "client_id": client_id,
+        "equipment_id": equipment_id,
+        "stage": deal.stage,
+        "amount": deal.amount or 0.0,
+        "cost": deal.cost or 0.0,
+        "priority": deal.priority or "normal",
+        "responsible": deal.responsible or "Мастер-приемщик",
+        "description": (deal.description or "").strip(),
+        "deadline": deal.deadline or None,
+        "created_at": now_str,
+        "completed_at": completed_at,
+        "message": "Сделка/наряд успешно создан"
+    }
 
 @app.get("/api/deals/{deal_id}")
 def get_deal(deal_id: int):
@@ -717,18 +845,49 @@ def update_deal_stage(deal_id: int, update: DealStageUpdate):
 def update_deal(deal_id: int, deal: DealCreate):
     conn = database.get_connection()
     c = conn.cursor()
+
+    client_id = deal.client_id
+    if client_id and client_id > 0:
+        c.execute("SELECT id FROM clients WHERE id = ?", (client_id,))
+        if not c.fetchone():
+            client_id = None
+    else:
+        client_id = None
+
+    equipment_id = deal.equipment_id
+    if equipment_id and equipment_id > 0:
+        c.execute("SELECT id FROM equipment WHERE id = ?", (equipment_id,))
+        if not c.fetchone():
+            equipment_id = None
+    else:
+        equipment_id = None
+
     completed_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S") if deal.stage == "completed" else None
     c.execute("""
         UPDATE deals 
         SET title = ?, client_id = ?, equipment_id = ?, stage = ?, amount = ?, cost = ?, priority = ?, responsible = ?, description = ?, deadline = ?, completed_at = ?
         WHERE id = ?
-    """, (deal.title, deal.client_id, deal.equipment_id, deal.stage, deal.amount, deal.cost, deal.priority, deal.responsible, deal.description, deal.deadline, completed_at, deal_id))
+    """, (deal.title.strip(), client_id, equipment_id, deal.stage, deal.amount or 0.0, deal.cost or 0.0, deal.priority or "normal", deal.responsible or "Мастер-приемщик", (deal.description or "").strip(), deal.deadline or None, completed_at, deal_id))
     if c.rowcount == 0:
         conn.close()
         raise HTTPException(status_code=404, detail="Сделка не найдена")
     conn.commit()
     conn.close()
-    return {"message": "Сделка обновлена"}
+    return {
+        "id": deal_id,
+        "title": deal.title.strip(),
+        "client_id": client_id,
+        "equipment_id": equipment_id,
+        "stage": deal.stage,
+        "amount": deal.amount or 0.0,
+        "cost": deal.cost or 0.0,
+        "priority": deal.priority or "normal",
+        "responsible": deal.responsible or "Мастер-приемщик",
+        "description": (deal.description or "").strip(),
+        "deadline": deal.deadline or None,
+        "completed_at": completed_at,
+        "message": "Сделка обновлена"
+    }
 
 @app.delete("/api/deals/{deal_id}")
 def delete_deal(deal_id: int):
@@ -1113,6 +1272,7 @@ def reset_demo_data():
         DELETE FROM parts;
         DELETE FROM clients;
         DELETE FROM users;
+        DELETE FROM sqlite_sequence;
     """)
     database.seed_default_users(conn)
     database.seed_demo_data(conn)

@@ -4,6 +4,83 @@
  * Currency: AMD
  */
 
+// LocalStorage Persistence & Auto-Hydration Layer for СТО Спецмаш CRM
+const crmStore = {
+  KEY_PREFIX: 'specmash_crm_',
+
+  saveItem(entity, item) {
+    if (!item) return;
+    try {
+      const list = this.getList(entity);
+      const existingIdx = list.findIndex(x => (item.id && x.id == item.id) || (item.username && x.username === item.username));
+      if (existingIdx >= 0) {
+        list[existingIdx] = { ...list[existingIdx], ...item, _updated_at: Date.now() };
+      } else {
+        list.unshift({ ...item, _created_at: Date.now() });
+      }
+      localStorage.setItem(this.KEY_PREFIX + entity, JSON.stringify(list));
+    } catch (e) {
+      console.warn('LocalStorage save error:', e);
+    }
+  },
+
+  removeItem(entity, id) {
+    try {
+      const list = this.getList(entity).filter(x => x.id != id);
+      localStorage.setItem(this.KEY_PREFIX + entity, JSON.stringify(list));
+    } catch (e) {}
+  },
+
+  getList(entity) {
+    try {
+      const raw = localStorage.getItem(this.KEY_PREFIX + entity);
+      return raw ? JSON.parse(raw) : [];
+    } catch (e) {
+      return [];
+    }
+  },
+
+  mergeWithServer(entity, serverItems) {
+    const localItems = this.getList(entity);
+    if (!localItems || localItems.length === 0) return serverItems;
+
+    const serverMap = new Map();
+    serverItems.forEach(item => {
+      const key = item.id ? String(item.id) : (item.username ? item.username : null);
+      if (key) serverMap.set(key, item);
+    });
+
+    // Check if any local item is missing on server (e.g. serverless cold restart)
+    const missingOnServer = [];
+    localItems.forEach(localItem => {
+      const key = localItem.id ? String(localItem.id) : (localItem.username ? localItem.username : null);
+      if (key && !serverMap.has(key)) {
+        serverMap.set(key, localItem);
+        missingOnServer.push(localItem);
+      }
+    });
+
+    // If there are missing items on server, sync them in background
+    if (missingOnServer.length > 0) {
+      this.syncToServer(entity, missingOnServer);
+    }
+
+    return Array.from(serverMap.values());
+  },
+
+  async syncToServer(entity, items) {
+    try {
+      const payload = {};
+      payload[entity] = items;
+      await fetch('/api/sync/hydrate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+    } catch (e) {}
+  }
+};
+
 // Global State Cache
 const state = {
   currentTab: 'dashboard',
@@ -83,21 +160,155 @@ function initAuth() {
     } catch (e) {
       state.currentUser = null;
     }
+  } else {
+    state.currentUser = null;
   }
 
-  // Default fallback user (Admin)
-  if (!state.currentUser) {
-    state.currentUser = {
-      id: 1,
-      username: 'admin',
-      full_name: 'Иванов Алексей (Директор)',
-      role: 'admin',
-      phone: '+37499112233'
-    };
+  // Enforce auth: if no logged-in user, strictly show auth screen and block all views
+  if (!state.currentUser || !state.currentUser.id) {
+    showAuthScreen();
+    return;
   }
 
+  showAppLayout();
   applyUserPermissions();
+  loadSettings();
+  switchTab(state.currentTab || 'dashboard');
 }
+
+function showAuthScreen() {
+  const authScreen = document.getElementById('auth-screen');
+  const appLayout = document.getElementById('app-layout');
+  if (authScreen) authScreen.classList.remove('hidden');
+  if (appLayout) appLayout.classList.add('hidden');
+  hideAuthError();
+  if (window.lucide) lucide.createIcons();
+}
+
+function showAppLayout() {
+  const authScreen = document.getElementById('auth-screen');
+  const appLayout = document.getElementById('app-layout');
+  if (authScreen) authScreen.classList.add('hidden');
+  if (appLayout) appLayout.classList.remove('hidden');
+  if (window.lucide) lucide.createIcons();
+}
+
+function showAuthError(msg) {
+  const alertEl = document.getElementById('auth-error-alert');
+  const textEl = document.getElementById('auth-error-text');
+  if (textEl) textEl.textContent = msg;
+  if (alertEl) alertEl.classList.remove('hidden');
+}
+
+function hideAuthError() {
+  const alertEl = document.getElementById('auth-error-alert');
+  if (alertEl) alertEl.classList.add('hidden');
+}
+
+function toggleAuthPasswordVisibility() {
+  const p = document.getElementById('auth-password');
+  const icon = document.getElementById('auth-password-toggle-icon');
+  if (!p) return;
+  if (p.type === 'password') {
+    p.type = 'text';
+    if (icon) icon.setAttribute('data-lucide', 'eye-off');
+  } else {
+    p.type = 'password';
+    if (icon) icon.setAttribute('data-lucide', 'eye');
+  }
+  if (window.lucide) lucide.createIcons();
+}
+
+async function handleAuthScreenLogin(e) {
+  if (e) e.preventDefault();
+  hideAuthError();
+
+  const usernameInput = document.getElementById('auth-username');
+  const passwordInput = document.getElementById('auth-password');
+  const submitBtn = document.getElementById('auth-submit-btn');
+
+  const username = usernameInput ? usernameInput.value.trim().toLowerCase() : '';
+  const password = passwordInput ? passwordInput.value : '';
+
+  if (!username || !password) {
+    showAuthError('Пожалуйста, введите логин и пароль сотрудника');
+    return;
+  }
+
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<span>Проверка доступа...</span>';
+  }
+
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.message || 'Неверный логин или пароль');
+
+    state.currentUser = data;
+    localStorage.setItem('specmash_user', JSON.stringify(data));
+    showAppLayout();
+    applyUserPermissions();
+    await loadSettings();
+    await switchTab('dashboard');
+    showToast(`Добро пожаловать, ${data.full_name}!`);
+    if (usernameInput) usernameInput.value = '';
+    if (passwordInput) passwordInput.value = '';
+  } catch (err) {
+    showAuthError(err.message || 'Ошибка входа');
+  } finally {
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.innerHTML = '<i data-lucide="log-in" class="w-4 h-4"></i><span>Войти в программу</span>';
+      if (window.lucide) lucide.createIcons();
+    }
+  }
+}
+
+function quickFillAndLogin(u, p) {
+  const usernameInput = document.getElementById('auth-username');
+  const passwordInput = document.getElementById('auth-password');
+  if (usernameInput) usernameInput.value = u;
+  if (passwordInput) passwordInput.value = p;
+  handleAuthScreenLogin();
+}
+
+function handleLogout() {
+  localStorage.removeItem('specmash_user');
+  state.currentUser = null;
+  closeUserDropdown();
+  showAuthScreen();
+  showToast('Вы вышли из системы СТО Спецмаш');
+}
+
+function toggleUserDropdown(event) {
+  if (event) event.stopPropagation();
+  const menu = document.getElementById('user-dropdown-menu');
+  if (menu) {
+    menu.classList.toggle('hidden');
+    if (window.lucide) lucide.createIcons();
+  }
+}
+
+function closeUserDropdown() {
+  const menu = document.getElementById('user-dropdown-menu');
+  if (menu) menu.classList.add('hidden');
+}
+
+// Global listener to close dropdown on outside clicks
+document.addEventListener('click', (e) => {
+  const menu = document.getElementById('user-dropdown-menu');
+  const btn = document.getElementById('user-profile-btn');
+  if (menu && !menu.classList.contains('hidden')) {
+    if (btn && !btn.contains(e.target) && !menu.contains(e.target)) {
+      menu.classList.add('hidden');
+    }
+  }
+});
 
 function applyUserPermissions() {
   const u = state.currentUser;
@@ -106,11 +317,15 @@ function applyUserPermissions() {
   const nameEl = document.getElementById('user-display-name');
   const roleEl = document.getElementById('user-display-role');
   const avatarEl = document.getElementById('user-avatar');
+  const ddNameEl = document.getElementById('dropdown-user-name');
+  const ddRoleEl = document.getElementById('dropdown-user-role');
 
   const roleInfo = ROLE_DEFINITIONS[u.role] || { label: u.role, icon: '' };
 
   if (nameEl) nameEl.textContent = u.full_name.split(' (')[0];
   if (roleEl) roleEl.textContent = `${roleInfo.icon} ${roleInfo.label}`;
+  if (ddNameEl) ddNameEl.textContent = u.full_name;
+  if (ddRoleEl) ddRoleEl.textContent = `${roleInfo.icon} ${roleInfo.label}`;
   
   if (avatarEl) {
     const initials = u.full_name.split(' ').map(n => n[0]).slice(0, 2).join('');
@@ -155,8 +370,8 @@ async function quickLogin(role) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(cred)
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || 'Ошибка входа');
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка входа');
 
     state.currentUser = data;
     localStorage.setItem('specmash_user', JSON.stringify(data));
@@ -171,7 +386,7 @@ async function quickLogin(role) {
 
 async function handleManualLogin(e) {
   e.preventDefault();
-  const username = document.getElementById('login-username').value.trim();
+  const username = document.getElementById('login-username').value.trim().toLowerCase();
   const password = document.getElementById('login-password').value;
 
   try {
@@ -180,8 +395,8 @@ async function handleManualLogin(e) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password })
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || 'Неверный логин или пароль');
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.message || 'Неверный логин или пароль');
 
     state.currentUser = data;
     localStorage.setItem('specmash_user', JSON.stringify(data));
@@ -427,6 +642,10 @@ function downloadDatabaseBackup() {
 // ================= TAB MANAGEMENT =================
 
 function switchTab(tabName) {
+  if (!state.currentUser || !state.currentUser.id) {
+    showAuthScreen();
+    return;
+  }
   state.currentTab = tabName;
   const tabs = ['dashboard', 'kanban', 'clients', 'equipment', 'warehouse', 'tasks', 'users', 'export', 'settings'];
   
@@ -477,6 +696,7 @@ function handleGlobalSearch(query) {
 // ================= 1. DASHBOARD & ANALYTICS =================
 
 async function loadDashboard() {
+  if (!state.currentUser || !state.currentUser.id) return;
   try {
     const res = await fetch('/api/dashboard');
     const data = await res.json();
@@ -703,12 +923,16 @@ function setDealsViewMode(mode) {
 }
 
 async function loadDeals() {
+  if (!state.currentUser || !state.currentUser.id) return;
   try {
     const res = await fetch('/api/deals');
-    state.deals = await res.json();
+    const serverDeals = await res.json();
+    state.deals = crmStore.mergeWithServer('deals', serverDeals);
     renderDeals();
   } catch (err) {
     console.error('Error loading deals:', err);
+    state.deals = crmStore.getList('deals');
+    renderDeals();
   }
 }
 
@@ -1033,13 +1257,17 @@ async function handleDrop(e, newStage) {
 // ================= 3. CLIENTS LOGIC =================
 
 async function loadClients(searchQuery = '') {
+  if (!state.currentUser || !state.currentUser.id) return;
   try {
     const url = searchQuery ? `/api/clients?q=${encodeURIComponent(searchQuery)}` : '/api/clients';
     const res = await fetch(url);
-    state.clients = await res.json();
+    const serverClients = await res.json();
+    state.clients = crmStore.mergeWithServer('clients', serverClients);
     renderClientsTable();
   } catch (err) {
     console.error('Error loading clients:', err);
+    state.clients = crmStore.getList('clients');
+    renderClientsTable();
   }
 }
 
@@ -1144,16 +1372,20 @@ async function viewClientDetails(clientId) {
 // ================= 4. EQUIPMENT LOGIC =================
 
 async function loadEquipment(searchQuery = '') {
+  if (!state.currentUser || !state.currentUser.id) return;
   try {
     const category = document.getElementById('equipment-category-filter')?.value || 'all';
     let url = `/api/equipment?category=${category}`;
     if (searchQuery) url += `&q=${encodeURIComponent(searchQuery)}`;
 
     const res = await fetch(url);
-    state.equipment = await res.json();
+    const serverEq = await res.json();
+    state.equipment = crmStore.mergeWithServer('equipment', serverEq);
     renderEquipmentTable();
   } catch (err) {
     console.error('Error loading equipment:', err);
+    state.equipment = crmStore.getList('equipment');
+    renderEquipmentTable();
   }
 }
 
@@ -1209,16 +1441,20 @@ function renderEquipmentTable() {
 // ================= 5. WAREHOUSE & PARTS =================
 
 async function loadParts(searchQuery = '') {
+  if (!state.currentUser || !state.currentUser.id) return;
   try {
     const lowStock = document.getElementById('warehouse-filter-low')?.checked || false;
     let url = `/api/parts?low_stock=${lowStock}`;
     if (searchQuery) url += `&q=${encodeURIComponent(searchQuery)}`;
 
     const res = await fetch(url);
-    state.parts = await res.json();
+    const serverParts = await res.json();
+    state.parts = crmStore.mergeWithServer('parts', serverParts);
     renderPartsTable();
   } catch (err) {
     console.error('Error loading warehouse:', err);
+    state.parts = crmStore.getList('parts');
+    renderPartsTable();
   }
 }
 
@@ -1345,6 +1581,7 @@ async function openStockMovementsModal() {
 // ================= 6. TASKS & PLANNER =================
 
 async function loadTasks() {
+  if (!state.currentUser || !state.currentUser.id) return;
   try {
     const status = document.getElementById('tasks-status-filter')?.value || 'all';
     const res = await fetch(`/api/tasks?status=${status}`);
@@ -1433,12 +1670,16 @@ async function deleteTaskItem(taskId) {
 // ================= 7. USERS & ROLES MANAGEMENT =================
 
 async function loadUsers() {
+  if (!state.currentUser || !state.currentUser.id) return;
   try {
     const res = await fetch('/api/users');
-    state.users = await res.json();
+    const serverUsers = await res.json();
+    state.users = crmStore.mergeWithServer('users', serverUsers);
     renderUsersTable();
   } catch (err) {
     console.error('Error loading users:', err);
+    state.users = crmStore.getList('users');
+    renderUsersTable();
   }
 }
 
@@ -1497,14 +1738,16 @@ function openUserModal(userId = null) {
   document.getElementById('btn-delete-user').classList.add('hidden');
   document.getElementById('user-username').disabled = false;
   document.getElementById('user-pass-hint').textContent = '';
+  document.getElementById('user-password').required = false;
 
   if (userId) {
     document.getElementById('modal-user-title').textContent = 'Редактировать сотрудника';
     document.getElementById('btn-delete-user').classList.remove('hidden');
     document.getElementById('user-username').disabled = true;
     document.getElementById('user-pass-hint').textContent = '(оставьте пустым, если не меняете)';
+    document.getElementById('user-password').required = false;
 
-    const u = state.users.find(item => item.id === userId);
+    const u = state.users.find(item => item.id == userId);
     if (u) {
       document.getElementById('user-id').value = u.id;
       document.getElementById('user-fullname').value = u.full_name;
@@ -1515,6 +1758,7 @@ function openUserModal(userId = null) {
   } else {
     document.getElementById('modal-user-title').textContent = 'Добавить сотрудника';
     document.getElementById('user-password').required = true;
+    document.getElementById('user-pass-hint').textContent = '(мин. 4 символа)';
   }
 
   openModal('modal-user');
@@ -1556,12 +1800,32 @@ async function saveUser(e) {
       });
     }
 
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || 'Ошибка сохранения');
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка сохранения');
 
-    showToast(data.message);
+    // Save into crmStore
+    if (userId) {
+      crmStore.saveItem('users', {
+        id: parseInt(userId),
+        full_name: fullName,
+        role: role,
+        phone: phone
+      });
+    } else {
+      crmStore.saveItem('users', {
+        id: data.id,
+        username: document.getElementById('user-username').value.trim().toLowerCase(),
+        full_name: fullName,
+        role: role,
+        phone: phone,
+        created_at: data.created_at || new Date().toISOString()
+      });
+    }
+
+    showToast(data.message || 'Данные сотрудника сохранены');
     closeModal('modal-user');
-    loadUsers();
+    await loadUsers();
+    await loadEmployeesSelectOptions();
     loadDashboard();
   } catch (err) {
     showToast(err.message, 'error');
@@ -1574,12 +1838,14 @@ async function deleteUser() {
 
   try {
     const res = await fetch(`/api/users/${userId}`, { method: 'DELETE' });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || 'Ошибка удаления');
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка удаления');
 
-    showToast(data.message);
+    crmStore.removeItem('users', parseInt(userId));
+    showToast(data.message || 'Сотрудник удален');
     closeModal('modal-user');
-    loadUsers();
+    await loadUsers();
+    await loadEmployeesSelectOptions();
     loadDashboard();
   } catch (err) {
     showToast(err.message, 'error');
@@ -1663,28 +1929,30 @@ async function loadClientsListOptions() {
   `).join('');
 
   if (select) select.innerHTML = options;
-  if (eqClientSelect) eqClientSelect.innerHTML = options;
+  if (eqClientSelect) eqClientSelect.innerHTML = `<option value="">— Без привязки / На балансе СТО —</option>` + options;
   if (taskClientSelect) taskClientSelect.innerHTML = `<option value="">Не привязан</option>` + options;
 }
 
 async function handleDealClientChange(clientId, selectedEqId = null) {
   const eqSelect = document.getElementById('deal-equipment');
+  const defaultOption = '<option value="">(Без привязки к технике / Запчасти / Консультация)</option>';
   if (!clientId) {
-    eqSelect.innerHTML = '<option value="">Нет техники</option>';
+    eqSelect.innerHTML = defaultOption;
     return;
   }
   try {
     const res = await fetch(`/api/clients/${clientId}`);
     const client = await res.json();
     if (client.equipment && client.equipment.length > 0) {
-      eqSelect.innerHTML = client.equipment.map(eq => `
-        <option value="${eq.id}" ${selectedEqId === eq.id ? 'selected' : ''}>${eq.name} (${eq.serial_vin || 'б/н'})</option>
+      eqSelect.innerHTML = defaultOption + client.equipment.map(eq => `
+        <option value="${eq.id}" ${selectedEqId == eq.id ? 'selected' : ''}>${eq.name} (${eq.serial_vin || 'б/н'})</option>
       `).join('');
     } else {
-      eqSelect.innerHTML = '<option value="">Техника отсутствует (зарегистрируйте во вкладке Техника)</option>';
+      eqSelect.innerHTML = defaultOption + '<option value="" disabled>— У клиента нет зарегистрированной техники —</option>';
     }
   } catch (err) {
     console.error(err);
+    eqSelect.innerHTML = defaultOption;
   }
 }
 
@@ -1777,7 +2045,7 @@ async function saveDeal(e) {
   e.preventDefault();
   const dealId = document.getElementById('deal-id').value;
   const payload = {
-    title: document.getElementById('deal-title').value,
+    title: document.getElementById('deal-title').value.trim(),
     client_id: parseInt(document.getElementById('deal-client').value) || null,
     equipment_id: parseInt(document.getElementById('deal-equipment').value) || null,
     stage: document.getElementById('deal-stage').value,
@@ -1786,7 +2054,7 @@ async function saveDeal(e) {
     priority: document.getElementById('deal-priority').value,
     responsible: document.getElementById('deal-responsible').value,
     deadline: document.getElementById('deal-deadline').value || null,
-    description: document.getElementById('deal-description').value,
+    description: document.getElementById('deal-description').value.trim(),
   };
 
   try {
@@ -1804,13 +2072,29 @@ async function saveDeal(e) {
         body: JSON.stringify(payload)
       });
     }
-    if (!res.ok) throw new Error();
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка сохранения наряда');
+
+    const savedId = dealId ? parseInt(dealId) : data.id;
+    const clientObj = state.clients.find(c => c.id === payload.client_id);
+    const eqObj = state.equipment.find(eq => eq.id === payload.equipment_id);
+    crmStore.saveItem('deals', {
+      ...payload,
+      id: savedId,
+      client_name: clientObj ? clientObj.name : '',
+      client_company: clientObj ? clientObj.company : '',
+      client_phone: clientObj ? clientObj.phone : '',
+      equipment_name: eqObj ? eqObj.name : '',
+      equipment_vin: eqObj ? eqObj.serial_vin : ''
+    });
+
     showToast(dealId ? 'Сделка обновлена' : 'Сделка создана');
     closeModal('modal-deal');
-    loadDeals();
+    await loadDeals();
     loadDashboard();
   } catch (err) {
-    showToast('Ошибка при сохранении наряда', 'error');
+    showToast(err.message, 'error');
   }
 }
 
@@ -1818,13 +2102,17 @@ async function deleteDeal() {
   const dealId = document.getElementById('deal-id').value;
   if (!dealId || !confirm('Удалить эту сделку?')) return;
   try {
-    await fetch(`/api/deals/${dealId}`, { method: 'DELETE' });
+    const res = await fetch(`/api/deals/${dealId}`, { method: 'DELETE' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка удаления');
+
+    crmStore.removeItem('deals', parseInt(dealId));
     showToast('Сделка удалена');
     closeModal('modal-deal');
-    loadDeals();
+    await loadDeals();
     loadDashboard();
   } catch (err) {
-    showToast('Ошибка удаления', 'error');
+    showToast(err.message, 'error');
   }
 }
 
@@ -1838,7 +2126,7 @@ function openClientModal(clientId = null) {
   if (clientId) {
     document.getElementById('modal-client-title').textContent = 'Редактировать клиента';
     document.getElementById('btn-delete-client').classList.remove('hidden');
-    const client = state.clients.find(c => c.id === clientId);
+    const client = state.clients.find(c => c.id == clientId);
     if (client) {
       document.getElementById('client-id').value = client.id;
       document.getElementById('client-name').value = client.name;
@@ -1859,12 +2147,12 @@ async function saveClient(e) {
   e.preventDefault();
   const clientId = document.getElementById('client-id').value;
   const payload = {
-    name: document.getElementById('client-name').value,
-    company: document.getElementById('client-company').value,
-    phone: document.getElementById('client-phone').value,
-    email: document.getElementById('client-email').value,
-    address: document.getElementById('client-address').value,
-    notes: document.getElementById('client-notes').value,
+    name: document.getElementById('client-name').value.trim(),
+    company: document.getElementById('client-company').value.trim(),
+    phone: document.getElementById('client-phone').value.trim(),
+    email: document.getElementById('client-email').value.trim(),
+    address: document.getElementById('client-address').value.trim(),
+    notes: document.getElementById('client-notes').value.trim(),
   };
 
   try {
@@ -1882,13 +2170,25 @@ async function saveClient(e) {
         body: JSON.stringify(payload)
       });
     }
-    if (!res.ok) throw new Error();
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка сохранения клиента');
+
+    const savedId = clientId ? parseInt(clientId) : data.id;
+    crmStore.saveItem('clients', {
+      ...payload,
+      id: savedId,
+      equipment_count: 0,
+      deals_count: 0,
+      total_revenue: 0
+    });
+
     showToast(clientId ? 'Клиент обновлен' : 'Клиент добавлен');
     closeModal('modal-client');
-    loadClients();
+    await loadClients();
     loadDashboard();
   } catch (err) {
-    showToast('Ошибка при сохранении клиента', 'error');
+    showToast(err.message, 'error');
   }
 }
 
@@ -1896,13 +2196,17 @@ async function deleteClient() {
   const clientId = document.getElementById('client-id').value;
   if (!clientId || !confirm('Удалить клиента? Вся техника и сделки сохранятся без привязки.')) return;
   try {
-    await fetch(`/api/clients/${clientId}`, { method: 'DELETE' });
+    const res = await fetch(`/api/clients/${clientId}`, { method: 'DELETE' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка удаления');
+
+    crmStore.removeItem('clients', parseInt(clientId));
     showToast('Клиент удален');
     closeModal('modal-client');
-    loadClients();
+    await loadClients();
     loadDashboard();
   } catch (err) {
-    showToast('Ошибка', 'error');
+    showToast(err.message, 'error');
   }
 }
 
@@ -1917,7 +2221,7 @@ async function openEquipmentModal(eqId = null) {
   if (eqId) {
     document.getElementById('modal-equipment-title').textContent = 'Редактировать технику';
     document.getElementById('btn-delete-equipment').classList.remove('hidden');
-    const eq = state.equipment.find(e => e.id === eqId);
+    const eq = state.equipment.find(e => e.id == eqId);
     if (eq) {
       document.getElementById('equipment-id').value = eq.id;
       document.getElementById('equipment-client').value = eq.client_id || '';
@@ -1941,13 +2245,13 @@ async function saveEquipment(e) {
   const eqId = document.getElementById('equipment-id').value;
   const payload = {
     client_id: parseInt(document.getElementById('equipment-client').value) || null,
-    name: document.getElementById('equipment-name').value,
+    name: document.getElementById('equipment-name').value.trim(),
     category: document.getElementById('equipment-category').value,
     status: document.getElementById('equipment-status').value,
-    serial_vin: document.getElementById('equipment-vin').value,
+    serial_vin: document.getElementById('equipment-vin').value.trim(),
     year: parseInt(document.getElementById('equipment-year').value) || null,
-    operating_hours: document.getElementById('equipment-hours').value,
-    notes: document.getElementById('equipment-notes').value,
+    operating_hours: document.getElementById('equipment-hours').value.trim(),
+    notes: document.getElementById('equipment-notes').value.trim(),
   };
 
   try {
@@ -1965,13 +2269,26 @@ async function saveEquipment(e) {
         body: JSON.stringify(payload)
       });
     }
-    if (!res.ok) throw new Error();
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка сохранения техники');
+
+    const savedId = eqId ? parseInt(eqId) : data.id;
+    const clientObj = state.clients.find(c => c.id === payload.client_id);
+    crmStore.saveItem('equipment', {
+      ...payload,
+      id: savedId,
+      client_name: clientObj ? clientObj.name : 'Не привязан',
+      client_company: clientObj ? clientObj.company : '',
+      client_phone: clientObj ? clientObj.phone : ''
+    });
+
     showToast(eqId ? 'Техника обновлена' : 'Техника зарегистрирована');
     closeModal('modal-equipment');
-    loadEquipment();
+    await loadEquipment();
     loadDashboard();
   } catch (err) {
-    showToast('Ошибка при сохранении техники', 'error');
+    showToast(err.message, 'error');
   }
 }
 
@@ -1979,13 +2296,17 @@ async function deleteEquipment() {
   const eqId = document.getElementById('equipment-id').value;
   if (!eqId || !confirm('Удалить единицу техники?')) return;
   try {
-    await fetch(`/api/equipment/${eqId}`, { method: 'DELETE' });
-    showToast('Техника удалена');
+    const res = await fetch(`/api/equipment/${eqId}`, { method: 'DELETE' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка удаления');
+
+    crmStore.removeItem('equipment', parseInt(eqId));
+    showToast(data.message || 'Техника удалена');
     closeModal('modal-equipment');
-    loadEquipment();
+    await loadEquipment();
     loadDashboard();
   } catch (err) {
-    showToast('Ошибка', 'error');
+    showToast(err.message, 'error');
   }
 }
 
@@ -2047,12 +2368,18 @@ async function savePart(e) {
         body: JSON.stringify(payload)
       });
     }
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || 'Ошибка');
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка сохранения');
+
+    const savedId = partId ? parseInt(partId) : data.id;
+    crmStore.saveItem('parts', {
+      ...payload,
+      id: savedId
+    });
 
     showToast(partId ? 'Запчасть обновлена' : 'Запчасть добавлена на склад');
     closeModal('modal-part');
-    loadParts();
+    await loadParts();
     loadDashboard();
   } catch (err) {
     showToast(err.message, 'error');
@@ -2063,10 +2390,14 @@ async function deletePart() {
   const partId = document.getElementById('part-id').value;
   if (!partId || !confirm('Удалить эту позицию со склада?')) return;
   try {
-    await fetch(`/api/parts/${partId}`, { method: 'DELETE' });
-    showToast('Позиция удалена');
+    const res = await fetch(`/api/parts/${partId}`, { method: 'DELETE' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка удаления');
+
+    crmStore.removeItem('parts', parseInt(partId));
+    showToast('Позиция удалена со склада');
     closeModal('modal-part');
-    loadParts();
+    await loadParts();
     loadDashboard();
   } catch (err) {
     showToast('Ошибка удаления', 'error');
@@ -2106,13 +2437,14 @@ async function saveTask(e) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
-    if (!res.ok) throw new Error();
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка создания задачи');
     showToast('Задача создана');
     closeModal('modal-task');
-    loadTasks();
+    await loadTasks();
     loadDashboard();
   } catch (err) {
-    showToast('Ошибка при создании задачи', 'error');
+    showToast(err.message, 'error');
   }
 }
 
@@ -2147,20 +2479,99 @@ async function handleImport(type) {
   }
 }
 
+async function exportJsonBackup() {
+  try {
+    showToast('Подготовка резервной копии базы данных...', 'info');
+    const res = await fetch('/api/backup/json');
+    if (!res.ok) throw new Error('Ошибка создания резервной копии');
+    const data = await res.json();
+
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    a.href = url;
+    a.download = `specmash_crm_backup_${timestamp}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast('Резервная копия базы данных успешно выгружена (JSON)');
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function handleRestoreJsonFile(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
+
+  if (!confirm(`Вы действительно хотите восстановить базу данных из файла "${file.name}"? Записи будут синхронизированы и обновлены.`)) {
+    event.target.value = '';
+    return;
+  }
+
+  try {
+    showToast('Восстановление базы данных...', 'info');
+    const text = await file.text();
+    const json = JSON.parse(text);
+
+    const res = await fetch('/api/backup/restore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(json)
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Ошибка восстановления');
+
+    // Update local store
+    if (json.users) json.users.forEach(u => crmStore.saveItem('users', u));
+    if (json.clients) json.clients.forEach(c => crmStore.saveItem('clients', c));
+    if (json.equipment) json.equipment.forEach(e => crmStore.saveItem('equipment', e));
+    if (json.deals) json.deals.forEach(d => crmStore.saveItem('deals', d));
+    if (json.parts) json.parts.forEach(p => crmStore.saveItem('parts', p));
+
+    showToast(data.message || 'База успешно восстановлена!', 'success');
+    event.target.value = '';
+
+    await Promise.all([
+      loadSettings(),
+      loadDashboard(),
+      loadDeals(),
+      loadClients(),
+      loadEquipment(),
+      loadParts(),
+      loadTasks(),
+      loadUsers()
+    ]);
+  } catch (err) {
+    showToast('Ошибка при чтении файла: ' + err.message, 'error');
+    event.target.value = '';
+  }
+}
+
 async function handleResetDemo() {
   if (!confirm('Вы уверены? Это сбросит базу данных к демонстрационному набору техники CASE, клиентов, склада и сотрудников СТО Спецмаш.')) return;
   try {
     const res = await fetch('/api/reset-demo', { method: 'POST' });
     const data = await res.json();
+
+    // Clear local storage cache for CRM entities
+    ['users', 'clients', 'equipment', 'deals', 'parts'].forEach(k => {
+      localStorage.removeItem(crmStore.KEY_PREFIX + k);
+    });
+
     showToast(data.message, 'success');
-    loadSettings();
-    loadDashboard();
-    loadDeals();
-    loadClients();
-    loadEquipment();
-    loadParts();
-    loadTasks();
-    loadUsers();
+    await Promise.all([
+      loadSettings(),
+      loadDashboard(),
+      loadDeals(),
+      loadClients(),
+      loadEquipment(),
+      loadParts(),
+      loadTasks(),
+      loadUsers()
+    ]);
   } catch (err) {
     showToast('Ошибка при сбросе базы', 'error');
   }
@@ -2169,6 +2580,4 @@ async function handleResetDemo() {
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
   initAuth();
-  loadSettings();
-  switchTab('dashboard');
 });
