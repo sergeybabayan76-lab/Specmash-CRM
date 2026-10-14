@@ -1,22 +1,14 @@
 """
-FastAPI Backend Server for СТО Спецмаш CRM.
-Handles REST API for Users/Auth, Administrator Settings/Branding, Deals/Kanban & List views, Clients, Equipment, Warehouse, Tasks, Analytics, and CSV Import/Export.
+FastAPI Backend Server for СТО Спецмаш CRM with Supabase Backend.
 """
 
 import os
-import csv
-import io
-import json
-import base64
-import shutil
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 
-from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Form, Response
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import FastAPI, HTTPException, Query, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 import database
 
@@ -30,47 +22,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-STATIC_DIR = os.path.join(BASE_DIR, "static")
-UPLOADS_DIR = os.path.join(STATIC_DIR, "uploads")
-try:
-    os.makedirs(STATIC_DIR, exist_ok=True)
-    os.makedirs(UPLOADS_DIR, exist_ok=True)
-except Exception:
-    pass
-
 # ----------------- Pydantic Models -----------------
 
 class LoginRequest(BaseModel):
     username: str
     password: str
-
-class UserCreate(BaseModel):
-    username: str
-    password: str
-    full_name: str
-    role: str = "mechanic"
-    phone: Optional[str] = ""
-
-class UserUpdate(BaseModel):
-    full_name: str
-    role: str
-    phone: Optional[str] = ""
-    password: Optional[str] = None
-
-class FullSettingsUpdate(BaseModel):
-    company_name: Optional[str] = None
-    company_slogan: Optional[str] = None
-    company_phone: Optional[str] = None
-    company_email: Optional[str] = None
-    company_address: Optional[str] = None
-    company_tin: Optional[str] = None
-    currency: Optional[str] = None
-    default_responsible: Optional[str] = None
-    warranty_months: Optional[str] = None
-    logo_url: Optional[str] = None
-    auth_icon: Optional[str] = "wrench"
-    auth_logo_url: Optional[str] = None
 
 class ClientCreate(BaseModel):
     name: str
@@ -89,16 +45,6 @@ class EquipmentCreate(BaseModel):
     operating_hours: Optional[str] = ""
     status: Optional[str] = "Исправна"
     notes: Optional[str] = ""
-
-class PartCreate(BaseModel):
-    sku: str
-    name: str
-    category: str
-    quantity: int = 0
-    min_threshold: int = 2
-    purchase_price: float = 0.0
-    selling_price: float = 0.0
-    location: Optional[str] = ""
 
 class DealCreate(BaseModel):
     title: str
@@ -146,6 +92,8 @@ def get_settings():
 def get_dashboard():
     return database.get_dashboard_metrics()
 
+# ----------------- Deals / Kanban Pipeline -----------------
+
 @app.get("/api/deals")
 def list_deals(stage: Optional[str] = None, q: Optional[str] = None):
     db = database.get_supabase()
@@ -160,6 +108,34 @@ def list_deals(stage: Optional[str] = None, q: Optional[str] = None):
     except Exception:
         return []
 
+@app.post("/api/deals")
+def create_deal(deal: DealCreate):
+    db = database.get_supabase()
+    if not db:
+        raise HTTPException(status_code=500, detail="Нет подключения к базе данных")
+    try:
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        completed_at = now_str if deal.stage == "completed" else None
+        
+        deal_data = {
+            "title": deal.title.strip(),
+            "client_id": deal.client_id if deal.client_id and deal.client_id > 0 else None,
+            "equipment_id": deal.equipment_id if deal.equipment_id and deal.equipment_id > 0 else None,
+            "stage": deal.stage,
+            "amount": deal.amount or 0.0,
+            "cost": deal.cost or 0.0,
+            "priority": deal.priority or "normal",
+            "responsible": deal.responsible or "Мастер-приемщик",
+            "description": (deal.description or "").strip(),
+            "deadline": deal.deadline or None,
+            "created_at": now_str,
+            "completed_at": completed_at
+        }
+        res = db.table("deals").insert(deal_data).execute()
+        return {"message": "Сделка успешно создана", "data": res.data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.patch("/api/deals/{deal_id}/stage")
 @app.post("/api/deals/{deal_id}/stage")
 def update_deal_stage(deal_id: int, update: DealStageUpdate):
@@ -171,8 +147,80 @@ def update_deal_stage(deal_id: int, update: DealStageUpdate):
         update_data = {"stage": update.stage}
         if update.stage == "completed":
             update_data["completed_at"] = now_str
+        else:
+            update_data["completed_at"] = None
         
         res = db.table("deals").update(update_data).eq("id", deal_id).execute()
         return {"message": "Статус сделки обновлен", "data": res.data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ----------------- Clients -----------------
+
+@app.get("/api/clients")
+def list_clients(q: Optional[str] = None):
+    db = database.get_supabase()
+    if not db:
+        return []
+    try:
+        res = db.table("clients").select("*").order("id", desc=True).execute()
+        return res.data or []
+    except Exception:
+        return []
+
+@app.post("/api/clients")
+def create_client(client: ClientCreate):
+    db = database.get_supabase()
+    if not db:
+        raise HTTPException(status_code=500, detail="Нет подключения к базе данных")
+    try:
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        client_data = {
+            "name": client.name.strip(),
+            "company": (client.company or "").strip(),
+            "phone": client.phone.strip(),
+            "email": (client.email or "").strip(),
+            "address": (client.address or "").strip(),
+            "notes": (client.notes or "").strip(),
+            "created_at": now_str
+        }
+        res = db.table("clients").insert(client_data).execute()
+        return {"message": "Клиент добавлен", "data": res.data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ----------------- Equipment -----------------
+
+@app.get("/api/equipment")
+def list_equipment(q: Optional[str] = None, category: Optional[str] = None):
+    db = database.get_supabase()
+    if not db:
+        return []
+    try:
+        res = db.table("equipment").select("*, clients(name, company, phone)").order("id", desc=True).execute()
+        return res.data or []
+    except Exception:
+        return []
+
+@app.post("/api/equipment")
+def create_equipment(eq: EquipmentCreate):
+    db = database.get_supabase()
+    if not db:
+        raise HTTPException(status_code=500, detail="Нет подключения к базе данных")
+    try:
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        eq_data = {
+            "client_id": eq.client_id if eq.client_id and eq.client_id > 0 else None,
+            "name": eq.name.strip(),
+            "category": eq.category,
+            "serial_vin": (eq.serial_vin or "").strip(),
+            "year": eq.year,
+            "operating_hours": (eq.operating_hours or "").strip(),
+            "status": eq.status or "Исправна",
+            "notes": (eq.notes or "").strip(),
+            "created_at": now_str
+        }
+        res = db.table("equipment").insert(eq_data).execute()
+        return {"message": "Техника зарегистрирована", "data": res.data}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
