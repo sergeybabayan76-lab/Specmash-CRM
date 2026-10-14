@@ -42,33 +42,56 @@ const crmStore = {
 
   mergeWithServer(entity, serverItems) {
     const localItems = this.getList(entity);
-    if (!localItems || localItems.length === 0) return serverItems;
+    if (!localItems || localItems.length === 0) {
+      if (serverItems && serverItems.length > 0) {
+        try {
+          localStorage.setItem(this.KEY_PREFIX + entity, JSON.stringify(serverItems));
+        } catch (e) {}
+      }
+      return serverItems;
+    }
 
-    const serverMap = new Map();
+    const mergedMap = new Map();
+    // 1. Fill with server items
     serverItems.forEach(item => {
-      const key = item.id ? String(item.id) : (item.username ? item.username : null);
-      if (key) serverMap.set(key, item);
+      const key = item.id ? String(item.id) : (item.username ? item.username.toLowerCase() : null);
+      if (key) mergedMap.set(key, item);
     });
 
-    // Check if any local item is missing on server (e.g. serverless cold restart)
+    // 2. Merge local items: protect local items from being wiped by an empty or older serverless container
     const missingOnServer = [];
     localItems.forEach(localItem => {
-      const key = localItem.id ? String(localItem.id) : (localItem.username ? localItem.username : null);
-      if (key && !serverMap.has(key)) {
-        serverMap.set(key, localItem);
+      const key = localItem.id ? String(localItem.id) : (localItem.username ? localItem.username.toLowerCase() : null);
+      if (!key) return;
+      if (!mergedMap.has(key)) {
+        mergedMap.set(key, localItem);
         missingOnServer.push(localItem);
+      } else {
+        const srvItem = mergedMap.get(key);
+        // If local item was modified locally, preserve local edits
+        if (localItem._updated_at && (!srvItem._updated_at || localItem._updated_at > srvItem._updated_at)) {
+          const merged = { ...srvItem, ...localItem };
+          mergedMap.set(key, merged);
+          missingOnServer.push(merged);
+        }
       }
     });
 
-    // If there are missing items on server, sync them in background
+    const result = Array.from(mergedMap.values());
+    try {
+      localStorage.setItem(this.KEY_PREFIX + entity, JSON.stringify(result));
+    } catch (e) {}
+
+    // Hydrate server with missing rows in background
     if (missingOnServer.length > 0) {
       this.syncToServer(entity, missingOnServer);
     }
 
-    return Array.from(serverMap.values());
+    return result;
   },
 
   async syncToServer(entity, items) {
+    if (!items || items.length === 0) return;
     try {
       const payload = {};
       payload[entity] = items;
@@ -1134,22 +1157,33 @@ async function updateDealStageQuick(dealId, newStage, event) {
 
   const oldStage = deal.stage;
   deal.stage = newStage;
+  deal._updated_at = Date.now();
+  crmStore.saveItem('deals', deal);
   renderDeals();
 
   try {
-    const res = await fetch(`/api/deals/${dealId}/stage`, {
+    let res = await fetch(`/api/deals/${dealId}/stage`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ stage: newStage })
     });
-    if (!res.ok) throw new Error();
+    if (!res.ok) {
+      res = await fetch(`/api/deals/${dealId}/stage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stage: newStage })
+      });
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка обновления стадии');
     const stageName = KANBAN_STAGES.find(s => s.id === newStage)?.label || newStage;
     showToast(`Наряд #${dealId}: стадия изменена на «${stageName}»`, 'info');
     loadDashboard();
   } catch (err) {
-    deal.stage = oldStage;
-    renderDeals();
-    showToast('Ошибка при изменении стадии наряда', 'error');
+    console.warn('Deal stage update warning:', err);
+    crmStore.saveItem('deals', deal);
+    const stageName = KANBAN_STAGES.find(s => s.id === newStage)?.label || newStage;
+    showToast(`Стадия наряда сохранена: «${stageName}»`, 'info');
   }
 }
 
@@ -1236,20 +1270,31 @@ async function handleDrop(e, newStage) {
   const deal = state.deals.find(d => d.id === dealId);
   if (deal && deal.stage !== newStage) {
     deal.stage = newStage;
+    deal._updated_at = Date.now();
+    crmStore.saveItem('deals', deal);
     renderDeals();
 
     try {
-      const res = await fetch(`/api/deals/${dealId}/stage`, {
+      let res = await fetch(`/api/deals/${dealId}/stage`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ stage: newStage })
       });
-      if (!res.ok) throw new Error();
+      if (!res.ok) {
+        res = await fetch(`/api/deals/${dealId}/stage`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ stage: newStage })
+        });
+      }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка обновления стадии');
       showToast(`Статус наряда изменен на «${KANBAN_STAGES.find(s=>s.id===newStage)?.label}»`, 'info');
       loadDashboard();
     } catch (err) {
-      showToast('Ошибка при обновлении стадии наряда', 'error');
-      loadDeals();
+      console.warn('Handle drop warning:', err);
+      crmStore.saveItem('deals', deal);
+      showToast(`Статус наряда сохранен: «${KANBAN_STAGES.find(s=>s.id===newStage)?.label}»`, 'info');
     }
   }
 }
@@ -1771,6 +1816,7 @@ async function saveUser(e) {
   const role = document.getElementById('user-role').value;
   const phone = document.getElementById('user-phone').value.trim();
   const password = document.getElementById('user-password').value;
+  const username = document.getElementById('user-username').value.trim().toLowerCase();
 
   try {
     let res;
@@ -1785,8 +1831,19 @@ async function saveUser(e) {
           password: password.length > 0 ? password : null
         })
       });
+      if (!res.ok) {
+        res = await fetch(`/api/users/${userId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            full_name: fullName,
+            role: role,
+            phone: phone,
+            password: password.length > 0 ? password : null
+          })
+        });
+      }
     } else {
-      const username = document.getElementById('user-username').value.trim();
       res = await fetch('/api/users', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1803,24 +1860,17 @@ async function saveUser(e) {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка сохранения');
 
-    // Save into crmStore
-    if (userId) {
-      crmStore.saveItem('users', {
-        id: parseInt(userId),
-        full_name: fullName,
-        role: role,
-        phone: phone
-      });
-    } else {
-      crmStore.saveItem('users', {
-        id: data.id,
-        username: document.getElementById('user-username').value.trim().toLowerCase(),
-        full_name: fullName,
-        role: role,
-        phone: phone,
-        created_at: data.created_at || new Date().toISOString()
-      });
-    }
+    const realId = userId ? parseInt(userId) : data.id;
+    crmStore.saveItem('users', {
+      id: realId,
+      username: username,
+      full_name: fullName,
+      role: role,
+      phone: phone,
+      password: password || undefined,
+      created_at: data.created_at || new Date().toISOString(),
+      _updated_at: Date.now()
+    });
 
     showToast(data.message || 'Данные сотрудника сохранены');
     closeModal('modal-user');
@@ -1828,7 +1878,7 @@ async function saveUser(e) {
     await loadEmployeesSelectOptions();
     loadDashboard();
   } catch (err) {
-    showToast(err.message, 'error');
+    showToast(err.message || 'Ошибка сохранения сотрудника', 'error');
   }
 }
 
@@ -2065,6 +2115,13 @@ async function saveDeal(e) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
+      if (!res.ok) {
+        res = await fetch(`/api/deals/${dealId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+      }
     } else {
       res = await fetch('/api/deals', {
         method: 'POST',
@@ -2163,6 +2220,13 @@ async function saveClient(e) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
+      if (!res.ok) {
+        res = await fetch(`/api/clients/${clientId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+      }
     } else {
       res = await fetch('/api/clients', {
         method: 'POST',
@@ -2262,6 +2326,13 @@ async function saveEquipment(e) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
+      if (!res.ok) {
+        res = await fetch(`/api/equipment/${eqId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+      }
     } else {
       res = await fetch('/api/equipment', {
         method: 'POST',

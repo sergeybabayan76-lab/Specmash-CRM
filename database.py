@@ -15,14 +15,26 @@ import shutil
 IS_VERCEL = bool(os.environ.get("VERCEL"))
 if IS_VERCEL:
     DB_PATH = "/tmp/crm.db"
-    SEED_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "crm.db")
-    if not os.path.exists(DB_PATH) and os.path.exists(SEED_DB):
-        try:
-            shutil.copy2(SEED_DB, DB_PATH)
-        except Exception:
-            pass
 else:
     DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "crm.db")
+
+def ensure_db_file():
+    """Ensures /tmp/crm.db exists and has full read-write permissions (0o666)."""
+    if not IS_VERCEL:
+        return
+    SEED_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "crm.db")
+    if not os.path.exists(DB_PATH) or os.path.getsize(DB_PATH) == 0:
+        if os.path.exists(SEED_DB) and os.path.getsize(SEED_DB) > 0:
+            try:
+                # Use copyfile (NOT copy2) so read-only permissions from Lambda image are NOT copied!
+                shutil.copyfile(SEED_DB, DB_PATH)
+            except Exception:
+                pass
+    try:
+        if os.path.exists(DB_PATH):
+            os.chmod(DB_PATH, 0o666)
+    except Exception:
+        pass
 
 def hash_password(password: str, salt: Optional[str] = None) -> tuple[str, str]:
     if not salt:
@@ -41,23 +53,39 @@ def verify_password(password: str, hashed: str, salt: str) -> bool:
 
 def get_connection() -> sqlite3.Connection:
     if IS_VERCEL:
-        SEED_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "crm.db")
-        if not os.path.exists(DB_PATH) and os.path.exists(SEED_DB):
-            try:
-                shutil.copy2(SEED_DB, DB_PATH)
-            except Exception:
-                pass
+        ensure_db_file()
+
     conn = sqlite3.connect(DB_PATH, timeout=30.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON;")
+    if IS_VERCEL:
+        try:
+            # Lambda /tmp filesystems can have locking issues with WAL mode; DELETE mode is safe
+            conn.execute("PRAGMA journal_mode = DELETE;")
+        except Exception:
+            pass
+    else:
+        try:
+            conn.execute("PRAGMA journal_mode = WAL;")
+        except Exception:
+            pass
+
+    # Ensure tables exist even on fresh ephemeral start
     try:
-        conn.execute("PRAGMA journal_mode = WAL;")
+        c = conn.cursor()
+        c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
+        if not c.fetchone():
+            init_db_schema(conn)
     except Exception:
         pass
+
     return conn
 
 def init_db():
     conn = get_connection()
+    conn.close()
+
+def init_db_schema(conn: sqlite3.Connection):
     cursor = conn.cursor()
 
     cursor.executescript("""
@@ -201,7 +229,7 @@ def init_db():
     if cursor.fetchone()[0] == 0:
         seed_demo_data(conn)
 
-    conn.close()
+    conn.commit()
 
 def seed_default_users(conn: sqlite3.Connection):
     cursor = conn.cursor()

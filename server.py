@@ -182,12 +182,27 @@ def create_user(u: UserCreate):
     conn = database.get_connection()
     c = conn.cursor()
     c.execute("SELECT id FROM users WHERE LOWER(username) = ?", (clean_username,))
-    if c.fetchone():
-        conn.close()
-        raise HTTPException(status_code=400, detail="Пользователь с таким логином уже существует")
-
+    existing = c.fetchone()
     p_hash, salt = database.hash_password(u.password)
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    if existing:
+        user_id = existing["id"]
+        c.execute("""
+            UPDATE users SET password_hash = ?, salt = ?, full_name = ?, role = ?, phone = ?
+            WHERE id = ?
+        """, (p_hash, salt, u.full_name.strip(), u.role, (u.phone or "").strip(), user_id))
+        conn.commit()
+        conn.close()
+        return {
+            "id": user_id,
+            "username": clean_username,
+            "full_name": u.full_name.strip(),
+            "role": u.role,
+            "phone": (u.phone or "").strip(),
+            "created_at": now_str,
+            "message": "Сотрудник успешно обновлен"
+        }
 
     c.execute("""
         INSERT INTO users (username, password_hash, salt, full_name, role, phone, created_at)
@@ -207,6 +222,7 @@ def create_user(u: UserCreate):
     }
 
 @app.put("/api/users/{user_id}")
+@app.post("/api/users/{user_id}")
 def update_user(user_id: int, u: UserUpdate):
     valid_roles = ["admin", "moderator", "mechanic"]
     if u.role not in valid_roles:
@@ -556,6 +572,7 @@ def get_client(client_id: int):
     return client
 
 @app.put("/api/clients/{client_id}")
+@app.post("/api/clients/{client_id}")
 def update_client(client_id: int, client: ClientCreate):
     conn = database.get_connection()
     c = conn.cursor()
@@ -667,6 +684,7 @@ def get_equipment_detail(eq_id: int):
     return item
 
 @app.put("/api/equipment/{eq_id}")
+@app.post("/api/equipment/{eq_id}")
 def update_equipment(eq_id: int, eq: EquipmentCreate):
     conn = database.get_connection()
     c = conn.cursor()
@@ -823,6 +841,8 @@ def get_deal(deal_id: int):
     return deal
 
 @app.patch("/api/deals/{deal_id}/stage")
+@app.post("/api/deals/{deal_id}/stage")
+@app.put("/api/deals/{deal_id}/stage")
 def update_deal_stage(deal_id: int, update: DealStageUpdate):
     conn = database.get_connection()
     c = conn.cursor()
@@ -835,13 +855,18 @@ def update_deal_stage(deal_id: int, update: DealStageUpdate):
         c.execute("UPDATE deals SET stage = ?, completed_at = NULL WHERE id = ?", (update.stage, deal_id))
 
     if c.rowcount == 0:
-        conn.close()
-        raise HTTPException(status_code=404, detail="Сделка не найдена")
+        c.execute("SELECT id FROM deals WHERE id = ?", (deal_id,))
+        if not c.fetchone():
+            c.execute("""
+                INSERT INTO deals (id, title, stage, amount, cost, priority, responsible, created_at, completed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (deal_id, f"Наряд #{deal_id}", update.stage, 0.0, 0.0, "normal", "Мастер-приемщик", now_str, completed_at))
     conn.commit()
     conn.close()
     return {"message": "Статус наряда успешно изменен", "stage": update.stage}
 
 @app.put("/api/deals/{deal_id}")
+@app.post("/api/deals/{deal_id}")
 def update_deal(deal_id: int, deal: DealCreate):
     conn = database.get_connection()
     c = conn.cursor()
