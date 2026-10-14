@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>СТО Спецмаш — Управление сервисом, техникой и складом</title>
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -17,6 +17,7 @@
             brand: {
               50: '#eff6ff',
               100: '#dbeafe',
+              200: '#bfdbfe',
               500: '#3b82f6',
               600: '#2563eb',
               700: '#1d4ed8',
@@ -29,7 +30,7 @@
     }
   </script>
 </head>
-<body class="bg-slate-950 text-slate-800 h-screen overflow-hidden">
+<body class="bg-slate-950 text-slate-800 h-screen overflow-hidden smooth-scroll">
 
   <!-- ==================== AUTH SCREEN (DEDICATED FULLSCREEN) ==================== -->
   <div id="auth-screen" class="fixed inset-0 z-50 bg-slate-950 flex flex-col items-center justify-center p-4 overflow-y-auto">
@@ -39,11 +40,12 @@
     <div class="relative w-full max-w-md bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl p-8 z-10 text-slate-200">
       <!-- Branding & Title -->
       <div class="flex flex-col items-center text-center mb-6">
-        <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-700 flex items-center justify-center text-white shadow-xl shadow-blue-500/30 mb-3.5 ring-4 ring-blue-500/20">
-          <i data-lucide="wrench" class="w-8 h-8 text-white"></i>
+        <div id="auth-screen-logo-container" class="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-700 flex items-center justify-center text-white shadow-xl shadow-blue-500/30 mb-3.5 ring-4 ring-blue-500/20 overflow-hidden">
+          <img id="auth-screen-logo-img" class="w-full h-full object-cover hidden" alt="Logo">
+          <i id="auth-screen-icon" data-lucide="wrench" class="w-8 h-8 text-white"></i>
         </div>
-        <h1 class="text-2xl font-black text-white tracking-tight">СТО Спецмаш</h1>
-        <p class="text-xs text-blue-400 font-medium mt-1">Сервис спецтехники CASE • Доступ к CRM</p>
+        <h1 id="auth-screen-company-name" class="text-2xl font-black text-white tracking-tight">СТО Спецмаш</h1>
+        <p id="auth-screen-company-slogan" class="text-xs text-blue-400 font-medium mt-1">Сервис спецтехники CASE • Доступ к CRM</p>
         <div class="mt-3 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-800/90 border border-slate-700 text-[11px] text-slate-300">
           <i data-lucide="shield-alert" class="w-3.5 h-3.5 text-amber-400"></i>
           <span>Вход только для зарегистрированных сотрудников</span>
@@ -148,10 +150,13 @@
   </div>
 
   <!-- ==================== MAIN APPLICATION CONTAINER ==================== -->
-  <div id="app-layout" class="hidden flex h-screen w-full overflow-hidden bg-slate-50">
+  <div id="app-layout" class="hidden flex h-screen w-full overflow-hidden bg-slate-50 relative">
+
+  <!-- Mobile Backdrop Overlay -->
+  <div id="sidebar-backdrop" onclick="toggleMobileSidebar(false)" class="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-30 hidden transition-opacity lg:hidden"></div>
 
   <!-- ==================== SIDEBAR ==================== -->
-  <aside class="w-64 bg-slate-900 text-slate-300 flex flex-col flex-shrink-0 z-20 shadow-xl">
+  <aside id="app-sidebar" class="fixed inset-y-0 left-0 z-40 w-64 bg-slate-900 text-slate-300 flex flex-col flex-shrink-0 shadow-2xl transition-transform duration-300 -translate-x-full lg:translate-x-0 lg:static lg:z-20">
     <!-- Logo & Title (Top-Left) -->
     <div class="h-20 flex items-center px-4 border-b border-slate-800 gap-3 relative group">
       <!-- Logo Container with 1-click change -->
@@ -172,6 +177,11 @@
         <h1 id="sidebar-company-name" class="font-bold text-white text-base leading-tight truncate">СТО Спецмаш</h1>
         <p class="text-xs text-slate-400 truncate">Сервис спецтехники</p>
       </div>
+
+      <!-- Mobile Close Button -->
+      <button type="button" onclick="toggleMobileSidebar(false)" class="lg:hidden text-slate-400 hover:text-white p-1 rounded-lg focus:outline-none" aria-label="Закрыть меню">
+        <i data-lucide="x" class="w-5 h-5"></i>
+      </button>
     </div>
 
     <!-- Quick Action Button -->
@@ -261,12 +271,15 @@
   <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
 
     <!-- Top Header Bar -->
-    <header class="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-6 z-10">
+    <header class="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-3 sm:px-6 z-10">
       <!-- Search & Title -->
-      <div class="flex items-center gap-4 flex-1 max-w-xl">
+      <div class="flex items-center gap-2 sm:gap-4 flex-1 max-w-xl">
+        <button type="button" id="mobile-menu-btn" onclick="toggleMobileSidebar(true)" class="lg:hidden p-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg focus:outline-none flex-shrink-0" aria-label="Открыть меню">
+          <i data-lucide="menu" class="w-5 h-5"></i>
+        </button>
         <div class="relative w-full">
           <i data-lucide="search" class="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2"></i>
-          <input type="text" id="global-search" oninput="handleGlobalSearch(this.value)" placeholder="Поиск по клиентам, технике CASE, нарядам, запчастям..." class="w-full bg-slate-100 hover:bg-slate-200/70 focus:bg-white border border-transparent focus:border-blue-500 rounded-lg pl-9 pr-4 py-1.5 text-sm transition-all outline-none">
+          <input type="text" id="global-search" oninput="handleGlobalSearch(this.value)" placeholder="Поиск по клиентам, технике CASE, нарядам, запчастям..." class="w-full bg-slate-100 hover:bg-slate-200/70 focus:bg-white border border-transparent focus:border-blue-500 rounded-lg pl-9 pr-4 py-1.5 text-xs sm:text-sm transition-all outline-none">
         </div>
       </div>
 
@@ -376,7 +389,7 @@
             </div>
             <div id="stat-inventory-retail" class="text-2xl font-black text-slate-900 font-mono">0 AMD</div>
             <div class="mt-2 text-xs text-slate-500 flex items-center justify-between">
-              <span>Себестоимость: <strong id="stat-inventory-cost" class="font-mono">0 AMD</strong></span>
+              <span id="stat-inventory-cost-wrapper">Себестоимость: <strong id="stat-inventory-cost" class="font-mono">0 AMD</strong></span>
               <span id="stat-low-stock-pill" class="px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 font-semibold font-mono text-[11px]">0 в дефиците</span>
             </div>
           </div>
@@ -532,7 +545,7 @@
                   <th class="p-3.5">Техника CASE</th>
                   <th class="p-3.5 min-w-[360px]">Стадия наряда (Воронка Bitrix24)</th>
                   <th class="p-3.5 text-right font-mono">Сумма (AMD)</th>
-                  <th class="p-3.5 text-right font-mono text-slate-400">Себест. (AMD)</th>
+                  <th class="p-3.5 text-right font-mono text-slate-400 col-deal-cost">Себест. (AMD)</th>
                   <th class="p-3.5">Ответственный</th>
                   <th class="p-3.5">Дедлайн</th>
                   <th class="p-3.5 text-right">Действия</th>
@@ -673,7 +686,7 @@
                 <th class="p-3.5">Категория</th>
                 <th class="p-3.5">Склад / Ячейка</th>
                 <th class="p-3.5">Остаток</th>
-                <th class="p-3.5 text-xs font-mono">Закупка (AMD)</th>
+                <th class="p-3.5 text-xs font-mono col-purchase-price">Закупка (AMD)</th>
                 <th class="p-3.5 text-xs font-mono">Продажа (AMD)</th>
                 <th class="p-3.5 text-right">Действия</th>
               </tr>
@@ -1029,6 +1042,69 @@
                 <p class="text-xs text-slate-400">Рекомендуемый формат: квадратное изображение (PNG, SVG, JPG, WebP) размером от 120×120 px.</p>
               </div>
             </div>
+
+            <!-- Login Screen Icon / Logo Setting (Requirement #9) -->
+            <div class="mt-6 pt-5 border-t border-slate-100">
+              <h4 class="text-xs font-bold text-slate-800 uppercase tracking-wider mb-2 flex items-center gap-2">
+                <i data-lucide="log-in" class="w-4 h-4 text-blue-600"></i>
+                <span>Значок и логотип экрана входа (Авторизация)</span>
+              </h4>
+              <p class="text-xs text-slate-500 mb-4">Выберите иконку или загрузите изображение, которое отображается на странице входа в систему.</p>
+
+              <div class="grid grid-cols-1 md:grid-cols-3 gap-6 items-center">
+                <!-- Auth screen live preview -->
+                <div class="p-4 bg-slate-950 rounded-2xl text-center border border-slate-800 flex flex-col items-center justify-center">
+                  <div id="settings-auth-icon-preview" class="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-700 flex items-center justify-center text-white shadow-xl shadow-blue-500/30 mb-2 overflow-hidden ring-2 ring-blue-500/30">
+                    <img id="settings-auth-logo-img" class="w-full h-full object-cover hidden" alt="Auth Logo">
+                    <i id="settings-auth-icon-i" data-lucide="wrench" class="w-7 h-7 text-white"></i>
+                  </div>
+                  <span class="text-[11px] text-slate-400 font-medium">Экран входа</span>
+                </div>
+
+                <div class="md:col-span-2 space-y-3">
+                  <div>
+                    <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Выбор стандартного значка</label>
+                    <div class="flex flex-wrap gap-2" id="auth-icon-options">
+                      <button type="button" onclick="selectAuthIcon('wrench')" class="auth-icon-btn px-3 py-1.5 rounded-lg border border-slate-200 hover:border-blue-500 text-xs flex items-center gap-1.5 bg-slate-50" data-icon="wrench">
+                        <i data-lucide="wrench" class="w-4 h-4 text-blue-600"></i>
+                        <span>Ключ</span>
+                      </button>
+                      <button type="button" onclick="selectAuthIcon('truck')" class="auth-icon-btn px-3 py-1.5 rounded-lg border border-slate-200 hover:border-blue-500 text-xs flex items-center gap-1.5 bg-slate-50" data-icon="truck">
+                        <i data-lucide="truck" class="w-4 h-4 text-emerald-600"></i>
+                        <span>Техника</span>
+                      </button>
+                      <button type="button" onclick="selectAuthIcon('cog')" class="auth-icon-btn px-3 py-1.5 rounded-lg border border-slate-200 hover:border-blue-500 text-xs flex items-center gap-1.5 bg-slate-50" data-icon="cog">
+                        <i data-lucide="cog" class="w-4 h-4 text-amber-600"></i>
+                        <span>Шестерня</span>
+                      </button>
+                      <button type="button" onclick="selectAuthIcon('shield-check')" class="auth-icon-btn px-3 py-1.5 rounded-lg border border-slate-200 hover:border-blue-500 text-xs flex items-center gap-1.5 bg-slate-50" data-icon="shield-check">
+                        <i data-lucide="shield-check" class="w-4 h-4 text-indigo-600"></i>
+                        <span>Щит</span>
+                      </button>
+                      <button type="button" onclick="selectAuthIcon('hammer')" class="auth-icon-btn px-3 py-1.5 rounded-lg border border-slate-200 hover:border-blue-500 text-xs flex items-center gap-1.5 bg-slate-50" data-icon="hammer">
+                        <i data-lucide="hammer" class="w-4 h-4 text-purple-600"></i>
+                        <span>Молоток</span>
+                      </button>
+                      <button type="button" onclick="selectAuthIcon('car')" class="auth-icon-btn px-3 py-1.5 rounded-lg border border-slate-200 hover:border-blue-500 text-xs flex items-center gap-1.5 bg-slate-50" data-icon="car">
+                        <i data-lucide="car" class="w-4 h-4 text-cyan-600"></i>
+                        <span>Авто</span>
+                      </button>
+                    </div>
+                    <input type="hidden" id="setting-auth-icon" value="wrench">
+                    <input type="hidden" id="setting-auth-logo-url" value="">
+                  </div>
+
+                  <div class="flex items-center gap-3 pt-1">
+                    <label class="cursor-pointer bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5 border border-slate-300 transition-colors">
+                      <i data-lucide="image-plus" class="w-4 h-4 text-blue-600"></i>
+                      <span>Загрузить фото для входа</span>
+                      <input type="file" id="auth-logo-file-input" accept="image/*" onchange="handleAuthLogoUpload(event)" class="hidden">
+                    </label>
+                    <button type="button" onclick="resetAuthIcon()" class="text-xs text-rose-500 hover:underline">Сбросить фото</button>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
 
           <!-- Card 3: Финансовые настройки и условия ремонта -->
@@ -1361,12 +1437,12 @@
 
           <div>
             <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Сумма клиенту (AMD)</label>
-            <input type="number" id="deal-amount" step="1000" min="0" placeholder="0" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-mono">
+            <input type="number" id="deal-amount" step="any" min="0" placeholder="0" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-mono">
           </div>
 
-          <div>
+          <div id="deal-cost-group">
             <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Себестоимость (AMD)</label>
-            <input type="number" id="deal-cost" step="1000" min="0" placeholder="0" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-mono">
+            <input type="number" id="deal-cost" step="any" min="0" placeholder="0" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-mono">
           </div>
         </div>
 
@@ -1606,13 +1682,13 @@
         </div>
 
         <div class="grid grid-cols-2 gap-4">
-          <div>
+          <div id="part-purchase-price-group">
             <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Закупочная цена (AMD)</label>
-            <input type="number" id="part-purchase-price" step="500" min="0" value="0" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-mono">
+            <input type="number" id="part-purchase-price" step="any" min="0" value="0" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-mono">
           </div>
           <div>
             <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Цена продажи (AMD)</label>
-            <input type="number" id="part-selling-price" step="500" min="0" value="0" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-mono">
+            <input type="number" id="part-selling-price" step="any" min="0" value="0" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-mono">
           </div>
         </div>
 

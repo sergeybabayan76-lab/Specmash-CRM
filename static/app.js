@@ -26,7 +26,11 @@ const crmStore = {
 
   removeItem(entity, id) {
     try {
-      const list = this.getList(entity).filter(x => x.id != id);
+      const list = this.getList(entity).filter(x => {
+        if (x.id && id && String(x.id) === String(id)) return false;
+        if (x.username && id && String(x.username).toLowerCase() === String(id).toLowerCase()) return false;
+        return true;
+      });
       localStorage.setItem(this.KEY_PREFIX + entity, JSON.stringify(list));
     } catch (e) {}
   },
@@ -34,95 +38,52 @@ const crmStore = {
   getList(entity) {
     try {
       const raw = localStorage.getItem(this.KEY_PREFIX + entity);
-      return raw ? JSON.parse(raw) : [];
+      const list = raw ? JSON.parse(raw) : [];
+      if (entity === 'users') {
+        return list.filter(u => {
+          if (!u) return false;
+          const un = String(u.username || '').trim().toLowerCase();
+          return un && un !== 'undefined' && un !== 'null' && un.length >= 3;
+        });
+      }
+      return list;
     } catch (e) {
       return [];
     }
   },
 
   mergeWithServer(entity, serverItems) {
-    const localItems = this.getList(entity);
-    if (!localItems || localItems.length === 0) {
-      if (serverItems && serverItems.length > 0) {
-        try {
-          localStorage.setItem(this.KEY_PREFIX + entity, JSON.stringify(serverItems));
-        } catch (e) {}
-      }
-      return serverItems;
+    if (!Array.isArray(serverItems)) {
+      return this.getList(entity);
     }
 
-    const mergedMap = new Map();
-    // 1. Fill with server items
-    serverItems.forEach(item => {
-      const key = item.id ? String(item.id) : (item.username ? item.username.toLowerCase() : null);
-      if (key) mergedMap.set(key, item);
-    });
+    // Sanitize and filter
+    let cleanItems = serverItems;
+    if (entity === 'users') {
+      cleanItems = serverItems.filter(u => {
+        if (!u) return false;
+        const un = String(u.username || '').trim().toLowerCase();
+        return un && un !== 'undefined' && un !== 'null' && un.length >= 3;
+      });
+    } else if (entity === 'deals') {
+      cleanItems = serverItems.map(d => ({
+        ...d,
+        parts_count: Number(d.parts_count || 0),
+        amount: Number(d.amount || 0),
+        cost: Number(d.cost || 0),
+      })).sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0));
+    }
 
-    // 2. Merge local items: protect local items from being wiped by an empty or older serverless container
-    const missingOnServer = [];
-    localItems.forEach(localItem => {
-      const key = localItem.id ? String(localItem.id) : (localItem.username ? localItem.username.toLowerCase() : null);
-      if (!key) return;
-      if (!mergedMap.has(key)) {
-        mergedMap.set(key, localItem);
-        missingOnServer.push(localItem);
-      } else {
-        const srvItem = mergedMap.get(key);
-        if (entity === 'parts') {
-          // Warehouse server quantity is authoritative after deductions/movements
-          const merged = { ...localItem, ...srvItem };
-          mergedMap.set(key, merged);
-        } else if (entity === 'deals') {
-          const merged = { ...srvItem, ...localItem };
-          // Preserve equipment information if server had cold start
-          if (srvItem.equipment_name) {
-            merged.equipment_name = srvItem.equipment_name;
-            merged.equipment_vin = srvItem.equipment_vin;
-            merged.equipment_id = srvItem.equipment_id;
-          } else if (localItem.equipment_id) {
-            merged.equipment_id = localItem.equipment_id;
-            merged.equipment_name = localItem.equipment_name || '';
-            merged.equipment_vin = localItem.equipment_vin || '';
-          }
-          mergedMap.set(key, merged);
-        } else if (localItem._updated_at && (!srvItem._updated_at || localItem._updated_at > srvItem._updated_at)) {
-          const merged = { ...srvItem, ...localItem };
-          mergedMap.set(key, merged);
-          missingOnServer.push(merged);
-        }
-      }
-    });
-
-    const result = Array.from(mergedMap.values());
     try {
-      localStorage.setItem(this.KEY_PREFIX + entity, JSON.stringify(result));
+      localStorage.setItem(this.KEY_PREFIX + entity, JSON.stringify(cleanItems));
     } catch (e) {}
 
-    // Hydrate server with missing rows in background
-    if (missingOnServer.length > 0) {
-      this.syncToServer(entity, missingOnServer);
-    }
-
-    return result;
+    return cleanItems;
   },
 
-  async syncToServer(entity, items) {
-    if (!items || items.length === 0) return;
-    try {
-      const payload = {};
-      payload[entity] = items;
-      if (entity === 'deals') {
-        const eqList = this.getList('equipment');
-        if (eqList && eqList.length > 0) payload.equipment = eqList;
-        const clList = this.getList('clients');
-        if (clList && clList.length > 0) payload.clients = clList;
-      }
-      await fetch('/api/sync/hydrate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-    } catch (e) {}
+  syncToServer(entity, items) {
+    // Authoritative Server Mode: prevent resurrecting deleted records or reverting stages across devices
+    return Promise.resolve();
   }
 };
 
@@ -384,8 +345,9 @@ function applyUserPermissions() {
     else avatarEl.className = 'w-8 h-8 rounded-full bg-amber-600 text-white font-bold text-xs flex items-center justify-center uppercase shadow-sm';
   }
 
-  // Role visibility: Hide finance details from mechanic
+  // Role visibility: Hide finance details & cost from mechanic
   const isMechanic = u.role === 'mechanic';
+  const isAdmin = u.role === 'admin';
   const financeBlock = document.getElementById('header-finance-block');
   const revCard = document.getElementById('dash-card-revenue');
   const chartsRow = document.getElementById('dash-charts-row');
@@ -394,8 +356,17 @@ function applyUserPermissions() {
   if (revCard) revCard.classList.toggle('hidden', isMechanic);
   if (chartsRow) chartsRow.classList.toggle('hidden', isMechanic);
 
+  // Settings: strictly visible to Admin only (Requirement #10)
   const navSettings = document.getElementById('nav-settings');
-  if (navSettings) navSettings.classList.toggle('hidden', isMechanic);
+  if (navSettings) navSettings.classList.toggle('hidden', !isAdmin);
+
+  // Employees tab: hidden for mechanic
+  const navUsers = document.getElementById('nav-users');
+  if (navUsers) navUsers.classList.toggle('hidden', isMechanic);
+
+  // Body classes for global CSS role hiding (e.g. .role-mechanic .col-deal-cost)
+  document.body.classList.toggle('role-mechanic', isMechanic);
+  document.body.classList.toggle('role-admin', isAdmin);
 }
 
 function openLoginModal() {
@@ -498,10 +469,101 @@ async function loadSettings() {
       if (statusText) statusText.textContent = 'Используется стандартный значок сервиса';
     }
 
+    // Apply login screen branding & icon (Requirement #9)
+    applyAuthScreenBranding(data);
+
     if (window.lucide) lucide.createIcons();
   } catch (err) {
     console.error('Error loading settings:', err);
   }
+}
+
+function applyAuthScreenBranding(settings) {
+  if (!settings) return;
+  const nameEl = document.getElementById('auth-screen-company-name');
+  if (nameEl && settings.company_name) nameEl.textContent = settings.company_name;
+
+  const sloganEl = document.getElementById('auth-screen-company-slogan');
+  if (sloganEl && settings.company_slogan) sloganEl.textContent = settings.company_slogan;
+
+  const authImg = document.getElementById('auth-screen-logo-img');
+  const authIcon = document.getElementById('auth-screen-icon');
+
+  if (settings.auth_logo_url && settings.auth_logo_url.trim().length > 0) {
+    if (authImg) {
+      authImg.src = settings.auth_logo_url;
+      authImg.classList.remove('hidden');
+    }
+    if (authIcon) authIcon.classList.add('hidden');
+  } else {
+    if (authImg) authImg.classList.add('hidden');
+    if (authIcon) {
+      authIcon.classList.remove('hidden');
+      authIcon.setAttribute('data-lucide', settings.auth_icon || 'wrench');
+    }
+  }
+  if (window.lucide) lucide.createIcons();
+}
+
+function selectAuthIcon(iconName) {
+  const iconInput = document.getElementById('setting-auth-icon');
+  const logoInput = document.getElementById('setting-auth-logo-url');
+  if (iconInput) iconInput.value = iconName;
+  if (logoInput) logoInput.value = '';
+
+  updateAuthIconPreview(iconName, '');
+}
+
+function handleAuthLogoUpload(e) {
+  const file = e.target.files?.[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = function(evt) {
+    const dataUrl = evt.target.result;
+    const logoInput = document.getElementById('setting-auth-logo-url');
+    if (logoInput) logoInput.value = dataUrl;
+    updateAuthIconPreview('', dataUrl);
+  };
+  reader.readAsDataURL(file);
+}
+
+function resetAuthIcon() {
+  const iconInput = document.getElementById('setting-auth-icon');
+  const logoInput = document.getElementById('setting-auth-logo-url');
+  if (iconInput) iconInput.value = 'wrench';
+  if (logoInput) logoInput.value = '';
+  updateAuthIconPreview('wrench', '');
+}
+
+function updateAuthIconPreview(iconName, logoUrl) {
+  const imgEl = document.getElementById('settings-auth-logo-img');
+  const iconEl = document.getElementById('settings-auth-icon-i');
+
+  if (logoUrl && logoUrl.trim().length > 0) {
+    if (imgEl) {
+      imgEl.src = logoUrl;
+      imgEl.classList.remove('hidden');
+    }
+    if (iconEl) iconEl.classList.add('hidden');
+  } else {
+    if (imgEl) imgEl.classList.add('hidden');
+    if (iconEl) {
+      iconEl.classList.remove('hidden');
+      iconEl.setAttribute('data-lucide', iconName || 'wrench');
+    }
+  }
+
+  // Highlight active button in options
+  document.querySelectorAll('#auth-icon-options .auth-icon-btn').forEach(btn => {
+    const isSelected = !logoUrl && btn.getAttribute('data-icon') === iconName;
+    btn.classList.toggle('border-blue-500', isSelected);
+    btn.classList.toggle('bg-blue-50', isSelected);
+    btn.classList.toggle('ring-1', isSelected);
+    btn.classList.toggle('ring-blue-500', isSelected);
+  });
+
+  if (window.lucide) lucide.createIcons();
 }
 
 function openLogoModal() {
@@ -612,6 +674,13 @@ async function loadAdminSettings() {
     setVal('setting-warranty-months', settingsData.warranty_months || '6');
     setVal('setting-currency', settingsData.currency || 'AMD');
 
+    // Login screen icon & logo preview and inputs (Requirement #9)
+    const authIcon = settingsData.auth_icon || 'wrench';
+    const authLogoUrl = settingsData.auth_logo_url || '';
+    setVal('setting-auth-icon', authIcon);
+    setVal('setting-auth-logo-url', authLogoUrl);
+    updateAuthIconPreview(authIcon, authLogoUrl);
+
     // Live preview card in Admin tab
     const previewName = document.getElementById('settings-brand-name-preview');
     if (previewName) previewName.textContent = settingsData.company_name || 'СТО Спецмаш';
@@ -663,6 +732,8 @@ async function saveAdminSettings(e) {
     default_responsible: document.getElementById('setting-default-responsible')?.value.trim() || '',
     warranty_months: document.getElementById('setting-warranty-months')?.value || '6',
     currency: 'AMD',
+    auth_icon: document.getElementById('setting-auth-icon')?.value || 'wrench',
+    auth_logo_url: document.getElementById('setting-auth-logo-url')?.value || '',
   };
 
   try {
@@ -688,6 +759,25 @@ function downloadDatabaseBackup() {
 }
 
 
+// ================= MOBILE NAVIGATION & SIDEBAR DRAWER =================
+
+function toggleMobileSidebar(force) {
+  const sidebar = document.getElementById('app-sidebar');
+  const backdrop = document.getElementById('sidebar-backdrop');
+  if (!sidebar) return;
+
+  const isOpen = sidebar.classList.contains('sidebar-open');
+  const shouldOpen = typeof force === 'boolean' ? force : !isOpen;
+
+  if (shouldOpen) {
+    sidebar.classList.add('sidebar-open');
+    if (backdrop) backdrop.classList.remove('hidden');
+  } else {
+    sidebar.classList.remove('sidebar-open');
+    if (backdrop) backdrop.classList.add('hidden');
+  }
+}
+
 // ================= TAB MANAGEMENT =================
 
 function switchTab(tabName) {
@@ -695,6 +785,22 @@ function switchTab(tabName) {
     showAuthScreen();
     return;
   }
+
+  // Security check: Only Admin can access Settings (Requirement #10)
+  if (tabName === 'settings' && state.currentUser.role !== 'admin') {
+    showToast('Настройки СТО доступны исключительно Администратору', 'warning');
+    return switchTab('dashboard');
+  }
+
+  // Security check: Mechanics do not access Users tab
+  if (tabName === 'users' && state.currentUser.role === 'mechanic') {
+    showToast('Раздел недоступен для роли Механик', 'warning');
+    return switchTab('dashboard');
+  }
+
+  // Auto-close mobile drawer on navigation
+  toggleMobileSidebar(false);
+
   state.currentTab = tabName;
   const tabs = ['dashboard', 'kanban', 'clients', 'equipment', 'warehouse', 'tasks', 'users', 'export', 'settings'];
   
@@ -771,7 +877,10 @@ async function loadDashboard() {
     document.getElementById('stat-equipment-count').textContent = data.total_equipment;
     document.getElementById('stat-overdue-tasks').textContent = data.overdue_tasks;
 
-    document.getElementById('badge-kanban-count').textContent = data.active_deals_count;
+    const kanbanCount = (typeof data.total_deals_count === 'number') 
+      ? data.total_deals_count 
+      : (state.deals && state.deals.length > 0 ? state.deals.length : data.active_deals_count);
+    document.getElementById('badge-kanban-count').textContent = kanbanCount;
     document.getElementById('badge-clients-count').textContent = data.total_clients;
     document.getElementById('badge-equipment-count').textContent = data.total_equipment;
     const userBadge = document.getElementById('badge-users-count');
@@ -986,6 +1095,9 @@ async function loadDeals() {
 }
 
 function renderDeals() {
+  const badgeKanban = document.getElementById('badge-kanban-count');
+  if (badgeKanban) badgeKanban.textContent = state.deals ? state.deals.length : 0;
+
   if (state.dealsViewMode === 'list') {
     renderDealsList();
   } else {
@@ -1107,7 +1219,7 @@ function renderDealsList() {
               </button>
               <div class="mt-1 flex items-center gap-1.5">
                 ${priorityBadge}
-                ${deal.parts_count > 0 ? `<span class="bg-amber-50 text-amber-700 border border-amber-200 text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold" title="Списано со склада">${deal.parts_count} з/ч</span>` : ''}
+                ${Number(deal.parts_count || 0) > 0 ? `<span class="bg-amber-50 text-amber-700 border border-amber-200 text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold" title="Списано со склада">${deal.parts_count} з/ч</span>` : ''}
               </div>
             </div>
           </div>
@@ -1149,7 +1261,7 @@ function renderDealsList() {
           ${formatMoney(deal.amount)}
         </td>
 
-        <td class="p-3.5 text-xs font-mono text-slate-500 text-right">
+        <td class="p-3.5 text-xs font-mono text-slate-500 text-right col-deal-cost">
           ${formatMoney(deal.cost)}
         </td>
 
@@ -1560,7 +1672,7 @@ function renderPartsTable() {
           </span>
           ${isLow ? '<span class="text-[10px] text-rose-500 block font-normal mt-0.5">Дефицит! (мин ' + p.min_threshold + ')</span>' : ''}
         </td>
-        <td class="p-3.5 text-xs font-mono text-slate-600">
+        <td class="p-3.5 text-xs font-mono text-slate-600 col-purchase-price">
           ${formatMoney(p.purchase_price)}
         </td>
         <td class="p-3.5 text-xs font-mono font-bold text-emerald-600">
@@ -1751,12 +1863,23 @@ async function loadUsers() {
   if (!state.currentUser || !state.currentUser.id) return;
   try {
     const res = await fetch('/api/users');
-    const serverUsers = await res.json();
+    let serverUsers = await res.json();
+    if (Array.isArray(serverUsers)) {
+      serverUsers = serverUsers.filter(u => {
+        if (!u) return false;
+        const un = String(u.username || '').trim().toLowerCase();
+        return un && un !== 'undefined' && un !== 'null' && un.length >= 3;
+      });
+    }
     state.users = crmStore.mergeWithServer('users', serverUsers);
     renderUsersTable();
   } catch (err) {
     console.error('Error loading users:', err);
-    state.users = crmStore.getList('users');
+    state.users = crmStore.getList('users').filter(u => {
+      if (!u) return false;
+      const un = String(u.username || '').trim().toLowerCase();
+      return un && un !== 'undefined' && un !== 'null' && un.length >= 3;
+    });
     renderUsersTable();
   }
 }
@@ -1797,10 +1920,14 @@ function renderUsersTable() {
         <td class="p-3.5 text-xs text-slate-400">
           ${formatDate(u.created_at)}
         </td>
-        <td class="p-3.5 text-right space-x-1">
+        <td class="p-3.5 text-right space-x-1 whitespace-nowrap">
           <button onclick="openUserModal(${u.id})" class="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded" title="Редактировать сотрудника">
             <i data-lucide="edit-3" class="w-4 h-4"></i>
           </button>
+          ${!isCurrent ? `
+          <button onclick="deleteUser('${u.id || u.username}')" class="p-1.5 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded" title="Удалить сотрудника">
+            <i data-lucide="trash-2" class="w-4 h-4"></i>
+          </button>` : ''}
         </td>
       </tr>
     `;
@@ -1915,23 +2042,29 @@ async function saveUser(e) {
   }
 }
 
-async function deleteUser() {
-  const userId = document.getElementById('user-id').value;
+async function deleteUser(directId = null) {
+  const userId = directId || document.getElementById('user-id').value;
   if (!userId || !confirm('Удалить этого сотрудника из системы СТО Спецмаш?')) return;
 
   try {
-    const res = await fetch(`/api/users/${userId}`, { method: 'DELETE' });
+    let res = await fetch(`/api/users/${encodeURIComponent(userId)}`, { method: 'DELETE' });
+    if (!res.ok) {
+      res = await fetch(`/api/users/${encodeURIComponent(userId)}/delete`, { method: 'POST' });
+    }
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка удаления');
+    if (!res.ok && res.status >= 400 && res.status !== 404) {
+      throw new Error(data.detail || data.message || 'Ошибка удаления');
+    }
 
-    crmStore.removeItem('users', parseInt(userId));
-    showToast(data.message || 'Сотрудник удален');
+    crmStore.removeItem('users', userId);
+    state.users = state.users.filter(u => String(u.id) !== String(userId) && u.username !== userId);
+    showToast(data.message || 'Сотрудник успешно удален');
     closeModal('modal-user');
     await loadUsers();
     await loadEmployeesSelectOptions();
     loadDashboard();
   } catch (err) {
-    showToast(err.message, 'error');
+    showToast(err.message || 'Ошибка удаления сотрудника', 'error');
   }
 }
 
@@ -2130,10 +2263,12 @@ async function submitAttachPart() {
       crmStore.saveItem('parts', partObj);
     }
 
-    // Update deal cost in state and crmStore
+    // Update deal cost & parts_count in state and crmStore
     const dealObj = state.deals.find(d => d.id == dealId);
-    if (dealObj && data.parts_cost) {
-      dealObj.cost = Math.max(dealObj.cost || 0, data.parts_cost);
+    if (dealObj) {
+      if (typeof data.parts_cost === 'number') dealObj.cost = data.parts_cost;
+      if (typeof data.parts_count === 'number') dealObj.parts_count = data.parts_count;
+      else dealObj.parts_count = (dealObj.parts_count || 0) + qty;
       dealObj._updated_at = Date.now();
       crmStore.saveItem('deals', dealObj);
     }
@@ -2142,6 +2277,7 @@ async function submitAttachPart() {
     hideAttachPartRow();
     await openDealModal(dealId);
     renderPartsTable();
+    renderDeals();
     loadDashboard();
   } catch (err) {
     showToast(err.message || 'Ошибка при списании запчасти', 'error');
@@ -2165,9 +2301,19 @@ async function removeAttachedPart(dealId, dealPartId) {
       }
     }
 
+    // Update deal cost & parts_count in state and crmStore
+    const dealObj = state.deals.find(d => d.id == dealId);
+    if (dealObj) {
+      if (typeof data.parts_cost === 'number') dealObj.cost = data.parts_cost;
+      if (typeof data.parts_count === 'number') dealObj.parts_count = data.parts_count;
+      dealObj._updated_at = Date.now();
+      crmStore.saveItem('deals', dealObj);
+    }
+
     showToast('Запчасть возвращена на склад');
     await openDealModal(dealId);
     renderPartsTable();
+    renderDeals();
     loadDashboard();
   } catch (err) {
     showToast('Ошибка при возврате запчасти', 'error');

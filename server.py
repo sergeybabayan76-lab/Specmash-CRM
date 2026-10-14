@@ -72,6 +72,8 @@ class FullSettingsUpdate(BaseModel):
     default_responsible: Optional[str] = None
     warranty_months: Optional[str] = None
     logo_url: Optional[str] = None
+    auth_icon: Optional[str] = "wrench"
+    auth_logo_url: Optional[str] = None
 
 class ClientCreate(BaseModel):
     name: str
@@ -174,8 +176,8 @@ def create_user(u: UserCreate):
         raise HTTPException(status_code=400, detail="Недопустимая роль. Доступны: admin, moderator, mechanic")
 
     clean_username = u.username.strip().lower()
-    if len(clean_username) < 3:
-        raise HTTPException(status_code=400, detail="Логин должен быть не короче 3 символов")
+    if len(clean_username) < 3 or clean_username in ('undefined', 'null'):
+        raise HTTPException(status_code=400, detail="Логин сотрудника должен быть не короче 3 символов и не содержать 'undefined'")
     if len(u.password) < 4:
         raise HTTPException(status_code=400, detail="Пароль должен быть не короче 4 символов")
 
@@ -272,14 +274,31 @@ def update_user(user_id: int, u: UserUpdate):
     }
 
 @app.delete("/api/users/{user_id}")
-def delete_user(user_id: int):
+@app.post("/api/users/{user_id}/delete")
+def delete_user(user_id: str):
     conn = database.get_connection()
     c = conn.cursor()
-    c.execute("SELECT role FROM users WHERE id = ?", (user_id,))
+
+    # Automatically clean up any corrupted or undefined users
+    c.execute("DELETE FROM users WHERE username IS NULL OR username = '' OR LOWER(username) IN ('undefined', 'null')")
+
+    if user_id in ('undefined', 'null', '0'):
+        conn.commit()
+        conn.close()
+        return {"message": "Некорректный сотрудник удален"}
+
+    try:
+        numeric_id = int(user_id)
+        c.execute("SELECT role FROM users WHERE id = ?", (numeric_id,))
+    except ValueError:
+        numeric_id = None
+        c.execute("SELECT role FROM users WHERE LOWER(username) = ?", (user_id.lower(),))
+
     row = c.fetchone()
     if not row:
+        conn.commit()
         conn.close()
-        raise HTTPException(status_code=404, detail="Сотрудник не найден")
+        return {"message": "Сотрудник уже удален"}
 
     if row["role"] == "admin":
         c.execute("SELECT COUNT(*) FROM users WHERE role = 'admin'")
@@ -287,10 +306,14 @@ def delete_user(user_id: int):
             conn.close()
             raise HTTPException(status_code=400, detail="Нельзя удалить последнего администратора системы!")
 
-    c.execute("DELETE FROM users WHERE id = ?", (user_id,))
+    if numeric_id is not None:
+        c.execute("DELETE FROM users WHERE id = ?", (numeric_id,))
+    else:
+        c.execute("DELETE FROM users WHERE LOWER(username) = ?", (user_id.lower(),))
+
     conn.commit()
     conn.close()
-    return {"message": "Сотрудник удален"}
+    return {"message": "Сотрудник успешно удален"}
 
 # ----------------- Settings & Branding & Backup -----------------
 
@@ -313,6 +336,8 @@ def get_settings():
         "default_responsible": "Иванов Алексей Викторович (Директор)",
         "warranty_months": "6",
         "logo_url": "",
+        "auth_icon": "wrench",
+        "auth_logo_url": "",
     }
     for k, v in defaults.items():
         if k not in settings_dict:
@@ -739,7 +764,7 @@ def list_deals(stage: Optional[str] = None, q: Optional[str] = None):
         SELECT d.*, 
             c.name as client_name, c.company as client_company, c.phone as client_phone,
             eq.name as equipment_name, eq.serial_vin as equipment_vin,
-            (SELECT COUNT(*) FROM deal_parts WHERE deal_id = d.id) as parts_count
+            (SELECT COALESCE(SUM(quantity), 0) FROM deal_parts WHERE deal_id = d.id) as parts_count
         FROM deals d
         LEFT JOIN clients c ON d.client_id = c.id
         LEFT JOIN equipment eq ON d.equipment_id = eq.id
@@ -833,6 +858,7 @@ def create_deal(deal: DealCreate):
         "stage": deal.stage,
         "amount": deal.amount or 0.0,
         "cost": deal.cost or 0.0,
+        "parts_count": 0,
         "priority": deal.priority or "normal",
         "responsible": deal.responsible or "Мастер-приемщик",
         "description": (deal.description or "").strip(),
@@ -863,12 +889,17 @@ def get_deal(deal_id: int):
 
     c.execute("""
         SELECT dp.id as deal_part_id, dp.quantity, dp.purchase_price, dp.selling_price,
-               p.id as part_id, p.sku, p.name as part_name, p.category as part_category
+               dp.part_id as part_id,
+               COALESCE(p.sku, 'P-' || dp.part_id) as sku,
+               COALESCE(p.name, 'Запчасть #' || dp.part_id) as part_name,
+               COALESCE(p.category, 'Запчасти') as part_category
         FROM deal_parts dp
-        JOIN parts p ON dp.part_id = p.id
+        LEFT JOIN parts p ON dp.part_id = p.id
         WHERE dp.deal_id = ?
+        ORDER BY dp.id ASC
     """, (deal_id,))
     deal["parts"] = [dict(r) for r in c.fetchall()]
+    deal["parts_count"] = sum(p["quantity"] for p in deal["parts"])
 
     conn.close()
     return deal
@@ -959,6 +990,9 @@ def update_deal(deal_id: int, deal: DealCreate):
             cl_comp = cl_row["company"]
             cl_phone = cl_row["phone"]
 
+    c.execute("SELECT COALESCE(SUM(quantity), 0) FROM deal_parts WHERE deal_id = ?", (deal_id,))
+    parts_count = c.fetchone()[0]
+
     conn.commit()
     conn.close()
     return {
@@ -974,6 +1008,7 @@ def update_deal(deal_id: int, deal: DealCreate):
         "stage": deal.stage,
         "amount": deal.amount or 0.0,
         "cost": deal.cost or 0.0,
+        "parts_count": parts_count,
         "priority": deal.priority or "normal",
         "responsible": deal.responsible or "Мастер-приемщик",
         "description": (deal.description or "").strip(),
@@ -1037,8 +1072,10 @@ def attach_part_to_deal(deal_id: int, item: DealAttachPart):
     c.execute("""
         SELECT COALESCE(SUM(quantity * purchase_price), 0) FROM deal_parts WHERE deal_id = ?
     """, (deal_id,))
-    parts_cost = c.fetchone()[0]
-    c.execute("UPDATE deals SET cost = MAX(cost, ?) WHERE id = ?", (parts_cost, deal_id))
+    parts_cost = round(c.fetchone()[0], 2)
+    c.execute("UPDATE deals SET cost = ? WHERE id = ?", (parts_cost, deal_id))
+    c.execute("SELECT COUNT(*) FROM deal_parts WHERE deal_id = ?", (deal_id,))
+    parts_count = c.fetchone()[0]
 
     conn.commit()
     conn.close()
@@ -1047,6 +1084,7 @@ def attach_part_to_deal(deal_id: int, item: DealAttachPart):
         "part_id": item.part_id,
         "new_quantity": new_qty,
         "parts_cost": parts_cost,
+        "parts_count": parts_count,
         "message": f"Запчасть «{part['name']}» ({item.quantity} шт.) списана со склада"
     }
 
@@ -1072,13 +1110,28 @@ def remove_part_from_deal(deal_id: int, deal_part_id: int):
 
     c.execute("DELETE FROM deal_parts WHERE id = ?", (deal_part_id,))
 
+    c.execute("""
+        SELECT COALESCE(SUM(quantity * purchase_price), 0) FROM deal_parts WHERE deal_id = ?
+    """, (deal_id,))
+    new_parts_cost = round(c.fetchone()[0], 2)
+    c.execute("UPDATE deals SET cost = ? WHERE id = ?", (new_parts_cost, deal_id))
+
+    c.execute("SELECT COUNT(*) FROM deal_parts WHERE deal_id = ?", (deal_id,))
+    parts_count = c.fetchone()[0]
+
     c.execute("SELECT quantity FROM parts WHERE id = ?", (dp["part_id"],))
     p_row = c.fetchone()
     new_qty = p_row["quantity"] if p_row else 0
 
     conn.commit()
     conn.close()
-    return {"message": "Запчасть возвращена на склад", "part_id": dp["part_id"], "new_quantity": new_qty}
+    return {
+        "message": "Запчасть возвращена на склад",
+        "part_id": dp["part_id"],
+        "new_quantity": new_qty,
+        "parts_cost": new_parts_cost,
+        "parts_count": parts_count
+    }
 
 # ----------------- Warehouse / Spare Parts -----------------
 

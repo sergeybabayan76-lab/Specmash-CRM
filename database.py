@@ -217,7 +217,9 @@ def init_db_schema(conn: sqlite3.Connection):
             ("warranty_months", "6"),
             ("logo_url", ""),
         ])
-        conn.commit()
+    # Clean up any corrupt or undefined users
+    cursor.execute("DELETE FROM users WHERE username IS NULL OR username = '' OR LOWER(username) IN ('undefined', 'null')")
+    conn.commit()
 
     # Seed default users if not exist
     cursor.execute("SELECT COUNT(*) FROM users")
@@ -404,6 +406,9 @@ def get_dashboard_metrics() -> Dict[str, Any]:
     avg_deal = (total_revenue / completed_count) if completed_count > 0 else 0
 
     # Pipeline active deals
+    c.execute("SELECT COUNT(*) FROM deals")
+    total_deals_count = c.fetchone()[0]
+
     c.execute("""
         SELECT 
             COUNT(*) as active_count,
@@ -462,6 +467,7 @@ def get_dashboard_metrics() -> Dict[str, Any]:
         "completed_count": completed_count,
         "avg_deal": round(avg_deal, 2),
         "active_deals_count": active_row["active_count"],
+        "total_deals_count": total_deals_count,
         "active_deals_volume": round(active_row["active_volume"], 2),
         "total_clients": total_clients,
         "total_equipment": total_equipment,
@@ -535,8 +541,11 @@ def restore_all_data(data: Dict[str, Any]) -> Dict[str, Any]:
         if "users" in data and isinstance(data["users"], list):
             user_cnt = 0
             for u in data["users"]:
-                username = u.get("username", "").strip().lower()
-                if not username:
+                username = u.get("username", "")
+                if not username or not isinstance(username, str):
+                    continue
+                username = username.strip().lower()
+                if not username or username in ("undefined", "null") or len(username) < 3:
                     continue
                 p_hash = u.get("password_hash")
                 salt = u.get("salt")

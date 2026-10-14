@@ -287,3 +287,54 @@ body {
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.07);
 }
 
+/* ==========================================================================
+   Mobile & iOS / Android Responsive Optimizations
+   ========================================================================== */
+html, body {
+  touch-action: manipulation;
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Prevent auto-zooming on input focus in iOS Safari */
+@media screen and (max-width: 768px) {
+  input, select, textarea {
+    font-size: 16px !important;
+  }
+}
+
+/* Smooth mobile scrolling */
+.smooth-scroll {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Sliding mobile drawer */
+#app-sidebar {
+  transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+}
+#app-sidebar.sidebar-open {
+  transform: translateX(0) !important;
+}
+
+/* Kanban column responsive width on mobile */
+@media screen and (max-width: 640px) {
+  .kanban-col {
+    min-width: 82vw;
+    max-width: 85vw;
+  }
+}
+
+/* ==========================================================================
+   Role-Based Permissions (Mechanic Visibility Restrictions)
+   ========================================================================== */
+body.role-mechanic .col-deal-cost,
+body.role-mechanic .col-purchase-price,
+body.role-mechanic #deal-cost-group,
+body.role-mechanic #part-purchase-price-group,
+body.role-mechanic #header-finance-block,
+body.role-mechanic #dash-card-revenue,
+body.role-mechanic #dash-charts-row,
+body.role-mechanic #stat-inventory-cost-wrapper {
+  display: none !important;
+}
+
