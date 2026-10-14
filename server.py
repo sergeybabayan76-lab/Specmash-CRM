@@ -764,39 +764,72 @@ def list_deals(stage: Optional[str] = None, q: Optional[str] = None):
 def create_deal(deal: DealCreate):
     conn = database.get_connection()
     c = conn.cursor()
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     # Validate client_id
     client_id = deal.client_id
     if client_id and client_id > 0:
         c.execute("SELECT id FROM clients WHERE id = ?", (client_id,))
         if not c.fetchone():
-            client_id = None
+            c.execute("""
+                INSERT OR IGNORE INTO clients (id, name, company, phone, created_at)
+                VALUES (?, ?, '', '+37499999999', ?)
+            """, (client_id, f"Клиент #{client_id}", now_str))
     else:
         client_id = None
 
-    # Validate equipment_id
+    # Validate equipment_id: never wipe out equipment_id
     equipment_id = deal.equipment_id
     if equipment_id and equipment_id > 0:
         c.execute("SELECT id FROM equipment WHERE id = ?", (equipment_id,))
         if not c.fetchone():
-            equipment_id = None
+            c.execute("""
+                INSERT OR IGNORE INTO equipment (id, name, category, status, created_at)
+                VALUES (?, ?, 'Спецтехника', 'В ремонте', ?)
+            """, (equipment_id, f"Техника #{equipment_id}", now_str))
     else:
         equipment_id = None
 
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     completed_at = now_str if deal.stage == "completed" else None
     c.execute("""
         INSERT INTO deals (title, client_id, equipment_id, stage, amount, cost, priority, responsible, description, deadline, created_at, completed_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (deal.title.strip(), client_id, equipment_id, deal.stage, deal.amount or 0.0, deal.cost or 0.0, deal.priority or "normal", deal.responsible or "Мастер-приемщик", (deal.description or "").strip(), deal.deadline or None, now_str, completed_at))
     deal_id = c.lastrowid
+
+    # Retrieve equipment details and client details for robust frontend sync
+    eq_name = ""
+    eq_vin = ""
+    if equipment_id:
+        c.execute("SELECT name, serial_vin FROM equipment WHERE id = ?", (equipment_id,))
+        eq_row = c.fetchone()
+        if eq_row:
+            eq_name = eq_row["name"]
+            eq_vin = eq_row["serial_vin"]
+
+    cl_name = ""
+    cl_phone = ""
+    cl_comp = ""
+    if client_id:
+        c.execute("SELECT name, company, phone FROM clients WHERE id = ?", (client_id,))
+        cl_row = c.fetchone()
+        if cl_row:
+            cl_name = cl_row["name"]
+            cl_comp = cl_row["company"]
+            cl_phone = cl_row["phone"]
+
     conn.commit()
     conn.close()
     return {
         "id": deal_id,
         "title": deal.title.strip(),
         "client_id": client_id,
+        "client_name": cl_name,
+        "client_company": cl_comp,
+        "client_phone": cl_phone,
         "equipment_id": equipment_id,
+        "equipment_name": eq_name,
+        "equipment_vin": eq_vin,
         "stage": deal.stage,
         "amount": deal.amount or 0.0,
         "cost": deal.cost or 0.0,
@@ -870,12 +903,16 @@ def update_deal_stage(deal_id: int, update: DealStageUpdate):
 def update_deal(deal_id: int, deal: DealCreate):
     conn = database.get_connection()
     c = conn.cursor()
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     client_id = deal.client_id
     if client_id and client_id > 0:
         c.execute("SELECT id FROM clients WHERE id = ?", (client_id,))
         if not c.fetchone():
-            client_id = None
+            c.execute("""
+                INSERT OR IGNORE INTO clients (id, name, company, phone, created_at)
+                VALUES (?, ?, '', '+37499999999', ?)
+            """, (client_id, f"Клиент #{client_id}", now_str))
     else:
         client_id = None
 
@@ -883,26 +920,57 @@ def update_deal(deal_id: int, deal: DealCreate):
     if equipment_id and equipment_id > 0:
         c.execute("SELECT id FROM equipment WHERE id = ?", (equipment_id,))
         if not c.fetchone():
-            equipment_id = None
+            c.execute("""
+                INSERT OR IGNORE INTO equipment (id, name, category, status, created_at)
+                VALUES (?, ?, 'Спецтехника', 'В ремонте', ?)
+            """, (equipment_id, f"Техника #{equipment_id}", now_str))
     else:
         equipment_id = None
 
-    completed_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S") if deal.stage == "completed" else None
+    completed_at = now_str if deal.stage == "completed" else None
     c.execute("""
         UPDATE deals 
         SET title = ?, client_id = ?, equipment_id = ?, stage = ?, amount = ?, cost = ?, priority = ?, responsible = ?, description = ?, deadline = ?, completed_at = ?
         WHERE id = ?
     """, (deal.title.strip(), client_id, equipment_id, deal.stage, deal.amount or 0.0, deal.cost or 0.0, deal.priority or "normal", deal.responsible or "Мастер-приемщик", (deal.description or "").strip(), deal.deadline or None, completed_at, deal_id))
     if c.rowcount == 0:
-        conn.close()
-        raise HTTPException(status_code=404, detail="Сделка не найдена")
+        c.execute("""
+            INSERT INTO deals (id, title, client_id, equipment_id, stage, amount, cost, priority, responsible, description, deadline, created_at, completed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (deal_id, deal.title.strip(), client_id, equipment_id, deal.stage, deal.amount or 0.0, deal.cost or 0.0, deal.priority or "normal", deal.responsible or "Мастер-приемщик", (deal.description or "").strip(), deal.deadline or None, now_str, completed_at))
+
+    eq_name = ""
+    eq_vin = ""
+    if equipment_id:
+        c.execute("SELECT name, serial_vin FROM equipment WHERE id = ?", (equipment_id,))
+        eq_row = c.fetchone()
+        if eq_row:
+            eq_name = eq_row["name"]
+            eq_vin = eq_row["serial_vin"]
+
+    cl_name = ""
+    cl_phone = ""
+    cl_comp = ""
+    if client_id:
+        c.execute("SELECT name, company, phone FROM clients WHERE id = ?", (client_id,))
+        cl_row = c.fetchone()
+        if cl_row:
+            cl_name = cl_row["name"]
+            cl_comp = cl_row["company"]
+            cl_phone = cl_row["phone"]
+
     conn.commit()
     conn.close()
     return {
         "id": deal_id,
         "title": deal.title.strip(),
         "client_id": client_id,
+        "client_name": cl_name,
+        "client_company": cl_comp,
+        "client_phone": cl_phone,
         "equipment_id": equipment_id,
+        "equipment_name": eq_name,
+        "equipment_vin": eq_vin,
         "stage": deal.stage,
         "amount": deal.amount or 0.0,
         "cost": deal.cost or 0.0,
@@ -927,12 +995,27 @@ def delete_deal(deal_id: int):
 def attach_part_to_deal(deal_id: int, item: DealAttachPart):
     conn = database.get_connection()
     c = conn.cursor()
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    # Ensure deal exists in container SQLite
+    c.execute("SELECT id FROM deals WHERE id = ?", (deal_id,))
+    if not c.fetchone():
+        c.execute("""
+            INSERT OR IGNORE INTO deals (id, title, stage, amount, cost, priority, responsible, created_at)
+            VALUES (?, ?, 'in_progress', 0.0, 0.0, 'normal', 'Мастер-приемщик', ?)
+        """, (deal_id, f"Наряд #{deal_id}", now_str))
     
     c.execute("SELECT id, name, quantity, purchase_price, selling_price FROM parts WHERE id = ?", (item.part_id,))
     part = c.fetchone()
     if not part:
-        conn.close()
-        raise HTTPException(status_code=404, detail="Запчасть не найдена на складе")
+        # Recover stub part if not yet hydrated on this Lambda container
+        c.execute("""
+            INSERT OR IGNORE INTO parts (id, sku, name, category, quantity, min_threshold, purchase_price, selling_price, created_at)
+            VALUES (?, ?, ?, 'Запчасти', 10, 2, 0.0, 0.0, ?)
+        """, (item.part_id, f"P-{item.part_id}", f"Запчасть #{item.part_id}", now_str))
+        c.execute("SELECT id, name, quantity, purchase_price, selling_price FROM parts WHERE id = ?", (item.part_id,))
+        part = c.fetchone()
+
     if part["quantity"] < item.quantity:
         conn.close()
         raise HTTPException(status_code=400, detail=f"Недостаточно остатка на складе! В наличии: {part['quantity']} шт.")
@@ -943,9 +1026,9 @@ def attach_part_to_deal(deal_id: int, item: DealAttachPart):
     """, (deal_id, item.part_id, item.quantity, part["purchase_price"], part["selling_price"]))
     deal_part_id = c.lastrowid
 
-    c.execute("UPDATE parts SET quantity = quantity - ? WHERE id = ?", (item.quantity, item.part_id))
+    new_qty = max(0, part["quantity"] - item.quantity)
+    c.execute("UPDATE parts SET quantity = ? WHERE id = ?", (new_qty, item.part_id))
 
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     c.execute("""
         INSERT INTO stock_movements (part_id, type, quantity, deal_id, comment, created_at)
         VALUES (?, 'outgoing', ?, ?, ?, ?)
@@ -959,9 +1042,17 @@ def attach_part_to_deal(deal_id: int, item: DealAttachPart):
 
     conn.commit()
     conn.close()
-    return {"deal_part_id": deal_part_id, "message": f"Запчасть «{part['name']}» ({item.quantity} шт.) списана со склада"}
+    return {
+        "deal_part_id": deal_part_id,
+        "part_id": item.part_id,
+        "new_quantity": new_qty,
+        "parts_cost": parts_cost,
+        "message": f"Запчасть «{part['name']}» ({item.quantity} шт.) списана со склада"
+    }
 
 @app.delete("/api/deals/{deal_id}/parts/{deal_part_id}")
+@app.post("/api/deals/{deal_id}/parts/{deal_part_id}/delete")
+@app.post("/api/deals/{deal_id}/parts/{deal_part_id}")
 def remove_part_from_deal(deal_id: int, deal_part_id: int):
     conn = database.get_connection()
     c = conn.cursor()
@@ -969,7 +1060,7 @@ def remove_part_from_deal(deal_id: int, deal_part_id: int):
     dp = c.fetchone()
     if not dp:
         conn.close()
-        raise HTTPException(status_code=404, detail="Позиция запчасти не найдена")
+        return {"message": "Запчасть уже удалена"}
 
     c.execute("UPDATE parts SET quantity = quantity + ? WHERE id = ?", (dp["quantity"], dp["part_id"]))
     
@@ -980,9 +1071,14 @@ def remove_part_from_deal(deal_id: int, deal_part_id: int):
     """, (dp["part_id"], dp["quantity"], deal_id, now_str))
 
     c.execute("DELETE FROM deal_parts WHERE id = ?", (deal_part_id,))
+
+    c.execute("SELECT quantity FROM parts WHERE id = ?", (dp["part_id"],))
+    p_row = c.fetchone()
+    new_qty = p_row["quantity"] if p_row else 0
+
     conn.commit()
     conn.close()
-    return {"message": "Запчасть возвращена на склад"}
+    return {"message": "Запчасть возвращена на склад", "part_id": dp["part_id"], "new_quantity": new_qty}
 
 # ----------------- Warehouse / Spare Parts -----------------
 

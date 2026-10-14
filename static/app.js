@@ -68,8 +68,24 @@ const crmStore = {
         missingOnServer.push(localItem);
       } else {
         const srvItem = mergedMap.get(key);
-        // If local item was modified locally, preserve local edits
-        if (localItem._updated_at && (!srvItem._updated_at || localItem._updated_at > srvItem._updated_at)) {
+        if (entity === 'parts') {
+          // Warehouse server quantity is authoritative after deductions/movements
+          const merged = { ...localItem, ...srvItem };
+          mergedMap.set(key, merged);
+        } else if (entity === 'deals') {
+          const merged = { ...srvItem, ...localItem };
+          // Preserve equipment information if server had cold start
+          if (srvItem.equipment_name) {
+            merged.equipment_name = srvItem.equipment_name;
+            merged.equipment_vin = srvItem.equipment_vin;
+            merged.equipment_id = srvItem.equipment_id;
+          } else if (localItem.equipment_id) {
+            merged.equipment_id = localItem.equipment_id;
+            merged.equipment_name = localItem.equipment_name || '';
+            merged.equipment_vin = localItem.equipment_vin || '';
+          }
+          mergedMap.set(key, merged);
+        } else if (localItem._updated_at && (!srvItem._updated_at || localItem._updated_at > srvItem._updated_at)) {
           const merged = { ...srvItem, ...localItem };
           mergedMap.set(key, merged);
           missingOnServer.push(merged);
@@ -95,6 +111,12 @@ const crmStore = {
     try {
       const payload = {};
       payload[entity] = items;
+      if (entity === 'deals') {
+        const eqList = this.getList('equipment');
+        if (eqList && eqList.length > 0) payload.equipment = eqList;
+        const clList = this.getList('clients');
+        if (clList && clList.length > 0) payload.clients = clList;
+      }
       await fetch('/api/sync/hydrate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -196,6 +218,10 @@ function initAuth() {
   showAppLayout();
   applyUserPermissions();
   loadSettings();
+  // Preload core entities so cache and relations are always ready
+  loadClients();
+  loadEquipment();
+  loadParts();
   switchTab(state.currentTab || 'dashboard');
 }
 
@@ -1095,7 +1121,7 @@ function renderDealsList() {
         <td class="p-3.5 text-xs">
           <div class="font-bold text-slate-700 flex items-center gap-1.5">
             <i data-lucide="truck" class="w-3.5 h-3.5 text-emerald-600"></i>
-            <span>${deal.equipment_name || 'Не привязана'}</span>
+            <span>${deal.equipment_name || (state.equipment && state.equipment.find(eq => eq.id === deal.equipment_id)?.name) || 'Не привязана'}</span>
           </div>
           <div class="text-[11px] text-slate-400 font-mono">${deal.equipment_category || ''}</div>
         </td>
@@ -1225,7 +1251,7 @@ function renderKanbanCard(deal) {
         </div>
         <div class="flex items-center gap-1.5 text-slate-600">
           <i data-lucide="truck" class="w-3.5 h-3.5 text-emerald-500"></i>
-          <span class="truncate">${deal.equipment_name || 'Техника не привязана'}</span>
+          <span class="truncate">${deal.equipment_name || (state.equipment && state.equipment.find(eq => eq.id === deal.equipment_id)?.name) || 'Техника не привязана'}</span>
         </div>
       </div>
 
@@ -1565,7 +1591,7 @@ function openStockAdjustModal(partId, partName) {
 
 async function saveStockAdjust(e) {
   e.preventDefault();
-  const partId = document.getElementById('adjust-part-id').value;
+  const partId = parseInt(document.getElementById('adjust-part-id').value);
   const qty = parseInt(document.getElementById('adjust-quantity').value);
   const comment = document.getElementById('adjust-comment').value || 'Корректировка остатка';
 
@@ -1583,9 +1609,16 @@ async function saveStockAdjust(e) {
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || 'Ошибка');
 
+    const partObj = state.parts.find(p => p.id === partId);
+    if (partObj && typeof data.new_quantity === 'number') {
+      partObj.quantity = data.new_quantity;
+      partObj._updated_at = Date.now();
+      crmStore.saveItem('parts', partObj);
+    }
+
     showToast(data.message);
     closeModal('modal-stock-adjust');
-    loadParts();
+    await loadParts();
     loadDashboard();
   } catch (err) {
     showToast(err.message, 'error');
@@ -1916,7 +1949,7 @@ function closeModal(id) {
 
 // DEAL MODAL
 async function openDealModal(dealId = null, defaultStage = 'new') {
-  await Promise.all([loadClientsListOptions(), loadWarehousePartsOptions(), loadEmployeesSelectOptions()]);
+  await Promise.all([loadClientsListOptions(), loadWarehousePartsOptions(), loadEmployeesSelectOptions(), loadEquipment()]);
   
   const form = document.getElementById('form-deal');
   form.reset();
@@ -1951,7 +1984,7 @@ async function openDealModal(dealId = null, defaultStage = 'new') {
   } else {
     document.getElementById('modal-deal-title').textContent = 'Новый заказ-наряд СТО Спецмаш';
     document.getElementById('deal-stage').value = defaultStage;
-    handleDealClientChange(document.getElementById('deal-client').value);
+    await handleDealClientChange(document.getElementById('deal-client').value);
   }
 
   openModal('modal-deal');
@@ -1974,35 +2007,55 @@ async function loadClientsListOptions() {
   const taskClientSelect = document.getElementById('task-client');
   const eqClientSelect = document.getElementById('equipment-client');
 
-  const options = state.clients.map(c => `
+  const clientOptions = state.clients.map(c => `
     <option value="${c.id}">${c.name} (${c.company || 'Физлицо'})</option>
   `).join('');
 
-  if (select) select.innerHTML = options;
-  if (eqClientSelect) eqClientSelect.innerHTML = `<option value="">— Без привязки / На балансе СТО —</option>` + options;
-  if (taskClientSelect) taskClientSelect.innerHTML = `<option value="">Не привязан</option>` + options;
+  if (select) select.innerHTML = '<option value="">— Выберите клиента (или оставьте пустым) —</option>' + clientOptions;
+  if (eqClientSelect) eqClientSelect.innerHTML = `<option value="">— Без привязки / На балансе СТО —</option>` + clientOptions;
+  if (taskClientSelect) taskClientSelect.innerHTML = `<option value="">Не привязан</option>` + clientOptions;
 }
 
 async function handleDealClientChange(clientId, selectedEqId = null) {
   const eqSelect = document.getElementById('deal-equipment');
+  if (!eqSelect) return;
   const defaultOption = '<option value="">(Без привязки к технике / Запчасти / Консультация)</option>';
-  if (!clientId) {
-    eqSelect.innerHTML = defaultOption;
-    return;
+
+  if (!state.equipment || state.equipment.length === 0) {
+    try {
+      const res = await fetch('/api/equipment');
+      const data = await res.json();
+      state.equipment = crmStore.mergeWithServer('equipment', data);
+    } catch (e) {}
   }
-  try {
-    const res = await fetch(`/api/clients/${clientId}`);
-    const client = await res.json();
-    if (client.equipment && client.equipment.length > 0) {
-      eqSelect.innerHTML = defaultOption + client.equipment.map(eq => `
-        <option value="${eq.id}" ${selectedEqId == eq.id ? 'selected' : ''}>${eq.name} (${eq.serial_vin || 'б/н'})</option>
-      `).join('');
-    } else {
-      eqSelect.innerHTML = defaultOption + '<option value="" disabled>— У клиента нет зарегистрированной техники —</option>';
-    }
-  } catch (err) {
-    console.error(err);
-    eqSelect.innerHTML = defaultOption;
+
+  const allEq = state.equipment || [];
+  const clientEq = clientId ? allEq.filter(eq => String(eq.client_id) === String(clientId)) : [];
+  const otherEq = clientId ? allEq.filter(eq => String(eq.client_id) !== String(clientId)) : allEq;
+
+  let optionsHtml = defaultOption;
+
+  if (clientEq.length > 0) {
+    optionsHtml += `<optgroup label="Техника данного заказчика">` + clientEq.map(eq => `
+      <option value="${eq.id}" ${selectedEqId == eq.id ? 'selected' : ''}>${eq.name} (${eq.serial_vin || 'б/н'})</option>
+    `).join('') + `</optgroup>`;
+  }
+
+  if (otherEq.length > 0) {
+    optionsHtml += `<optgroup label="${clientId ? 'Остальная техника СТО' : 'Вся зарегистрированная техника СТО'}">` + otherEq.map(eq => `
+      <option value="${eq.id}" ${selectedEqId == eq.id ? 'selected' : ''}>${eq.name} (${eq.serial_vin || 'б/н'}${eq.client_name ? ' • ' + eq.client_name : ''})</option>
+    `).join('') + `</optgroup>`;
+  }
+
+  if (selectedEqId && !allEq.some(eq => eq.id == selectedEqId)) {
+    optionsHtml += `<optgroup label="Привязанная техника">
+      <option value="${selectedEqId}" selected>Техника #${selectedEqId}</option>
+    </optgroup>`;
+  }
+
+  eqSelect.innerHTML = optionsHtml;
+  if (selectedEqId) {
+    eqSelect.value = String(selectedEqId);
   }
 }
 
@@ -2054,7 +2107,8 @@ function hideAttachPartRow() {
 
 async function submitAttachPart() {
   const dealId = document.getElementById('deal-id').value;
-  const partId = parseInt(document.getElementById('attach-part-select').value);
+  const partSelect = document.getElementById('attach-part-select');
+  const partId = parseInt(partSelect.value);
   const qty = parseInt(document.getElementById('attach-part-qty').value) || 1;
 
   if (!dealId || !partId) return;
@@ -2065,26 +2119,55 @@ async function submitAttachPart() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ part_id: partId, quantity: qty })
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || 'Ошибка');
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка списания запчасти');
 
-    showToast(data.message);
+    // Update warehouse stock in state and crmStore immediately!
+    const partObj = state.parts.find(p => p.id === partId);
+    if (partObj) {
+      partObj.quantity = typeof data.new_quantity === 'number' ? data.new_quantity : Math.max(0, partObj.quantity - qty);
+      partObj._updated_at = Date.now();
+      crmStore.saveItem('parts', partObj);
+    }
+
+    // Update deal cost in state and crmStore
+    const dealObj = state.deals.find(d => d.id == dealId);
+    if (dealObj && data.parts_cost) {
+      dealObj.cost = Math.max(dealObj.cost || 0, data.parts_cost);
+      dealObj._updated_at = Date.now();
+      crmStore.saveItem('deals', dealObj);
+    }
+
+    showToast(data.message || 'Запчасть успешно списана');
     hideAttachPartRow();
-    openDealModal(dealId);
-    loadParts();
+    await openDealModal(dealId);
+    renderPartsTable();
     loadDashboard();
   } catch (err) {
-    showToast(err.message, 'error');
+    showToast(err.message || 'Ошибка при списании запчасти', 'error');
   }
 }
 
 async function removeAttachedPart(dealId, dealPartId) {
   try {
-    const res = await fetch(`/api/deals/${dealId}/parts/${dealPartId}`, { method: 'DELETE' });
-    if (!res.ok) throw new Error();
+    let res = await fetch(`/api/deals/${dealId}/parts/${dealPartId}`, { method: 'DELETE' });
+    if (!res.ok) {
+      res = await fetch(`/api/deals/${dealId}/parts/${dealPartId}/delete`, { method: 'POST' });
+    }
+    const data = await res.json().catch(() => ({}));
+
+    if (data.part_id && typeof data.new_quantity === 'number') {
+      const partObj = state.parts.find(p => p.id === data.part_id);
+      if (partObj) {
+        partObj.quantity = data.new_quantity;
+        partObj._updated_at = Date.now();
+        crmStore.saveItem('parts', partObj);
+      }
+    }
+
     showToast('Запчасть возвращена на склад');
-    openDealModal(dealId);
-    loadParts();
+    await openDealModal(dealId);
+    renderPartsTable();
     loadDashboard();
   } catch (err) {
     showToast('Ошибка при возврате запчасти', 'error');
@@ -2094,10 +2177,14 @@ async function removeAttachedPart(dealId, dealPartId) {
 async function saveDeal(e) {
   e.preventDefault();
   const dealId = document.getElementById('deal-id').value;
+  const eqSelect = document.getElementById('deal-equipment');
+  const eqId = parseInt(eqSelect.value) || null;
+  const clientId = parseInt(document.getElementById('deal-client').value) || null;
+
   const payload = {
     title: document.getElementById('deal-title').value.trim(),
-    client_id: parseInt(document.getElementById('deal-client').value) || null,
-    equipment_id: parseInt(document.getElementById('deal-equipment').value) || null,
+    client_id: clientId,
+    equipment_id: eqId,
     stage: document.getElementById('deal-stage').value,
     amount: parseFloat(document.getElementById('deal-amount').value) || 0.0,
     cost: parseFloat(document.getElementById('deal-cost').value) || 0.0,
@@ -2136,14 +2223,19 @@ async function saveDeal(e) {
     const savedId = dealId ? parseInt(dealId) : data.id;
     const clientObj = state.clients.find(c => c.id === payload.client_id);
     const eqObj = state.equipment.find(eq => eq.id === payload.equipment_id);
+    const selectedOptionText = eqSelect.selectedOptions[0] ? eqSelect.selectedOptions[0].text : '';
+    const eqName = data.equipment_name || (eqObj ? eqObj.name : (selectedOptionText.includes('(') ? selectedOptionText.split(' (')[0].trim() : ''));
+    const eqVin = data.equipment_vin || (eqObj ? eqObj.serial_vin : '');
+
     crmStore.saveItem('deals', {
       ...payload,
       id: savedId,
-      client_name: clientObj ? clientObj.name : '',
-      client_company: clientObj ? clientObj.company : '',
-      client_phone: clientObj ? clientObj.phone : '',
-      equipment_name: eqObj ? eqObj.name : '',
-      equipment_vin: eqObj ? eqObj.serial_vin : ''
+      client_name: data.client_name || (clientObj ? clientObj.name : ''),
+      client_company: data.client_company || (clientObj ? clientObj.company : ''),
+      client_phone: data.client_phone || (clientObj ? clientObj.phone : ''),
+      equipment_name: eqName,
+      equipment_vin: eqVin,
+      _updated_at: Date.now()
     });
 
     showToast(dealId ? 'Сделка обновлена' : 'Сделка создана');

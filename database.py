@@ -600,7 +600,10 @@ def restore_all_data(data: Dict[str, Any]) -> Dict[str, Any]:
                 if client_id and client_id > 0:
                     c.execute("SELECT id FROM clients WHERE id = ?", (client_id,))
                     if not c.fetchone():
-                        client_id = None
+                        c.execute("""
+                            INSERT OR IGNORE INTO clients (id, name, company, phone, created_at)
+                            VALUES (?, ?, '', '+37499999999', ?)
+                        """, (client_id, eq.get("client_name") or f"Клиент #{client_id}", now_str))
                 else:
                     client_id = None
 
@@ -667,7 +670,10 @@ def restore_all_data(data: Dict[str, Any]) -> Dict[str, Any]:
                 if client_id and client_id > 0:
                     c.execute("SELECT id FROM clients WHERE id = ?", (client_id,))
                     if not c.fetchone():
-                        client_id = None
+                        c.execute("""
+                            INSERT OR IGNORE INTO clients (id, name, company, phone, created_at)
+                            VALUES (?, ?, '', '+37499999999', ?)
+                        """, (client_id, d.get("client_name") or f"Клиент #{client_id}", now_str))
                 else:
                     client_id = None
 
@@ -675,7 +681,10 @@ def restore_all_data(data: Dict[str, Any]) -> Dict[str, Any]:
                 if equipment_id and equipment_id > 0:
                     c.execute("SELECT id FROM equipment WHERE id = ?", (equipment_id,))
                     if not c.fetchone():
-                        equipment_id = None
+                        c.execute("""
+                            INSERT OR IGNORE INTO equipment (id, name, category, status, created_at)
+                            VALUES (?, ?, 'Спецтехника', 'В ремонте', ?)
+                        """, (equipment_id, d.get("equipment_name") or f"Техника #{equipment_id}", now_str))
                 else:
                     equipment_id = None
 
@@ -699,6 +708,35 @@ def restore_all_data(data: Dict[str, Any]) -> Dict[str, Any]:
                 ))
                 dl_cnt += 1
             counts["deals"] = dl_cnt
+
+        # Deal Parts
+        if "deal_parts" in data and isinstance(data["deal_parts"], list):
+            dp_cnt = 0
+            for dp in data["deal_parts"]:
+                deal_id = dp.get("deal_id")
+                part_id = dp.get("part_id")
+                if not deal_id or not part_id:
+                    continue
+                c.execute("SELECT id FROM deals WHERE id = ?", (deal_id,))
+                if not c.fetchone():
+                    c.execute("INSERT OR IGNORE INTO deals (id, title, stage, created_at) VALUES (?, ?, 'in_progress', ?)", (deal_id, f"Наряд #{deal_id}", now_str))
+                c.execute("SELECT id FROM parts WHERE id = ?", (part_id,))
+                if not c.fetchone():
+                    c.execute("INSERT OR IGNORE INTO parts (id, sku, name, quantity, purchase_price, selling_price, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", (part_id, dp.get("sku") or f"P-{part_id}", dp.get("part_name") or f"Запчасть #{part_id}", 10, dp.get("purchase_price", 0.0), dp.get("selling_price", 0.0), now_str))
+
+                c.execute("""
+                    INSERT OR REPLACE INTO deal_parts (id, deal_id, part_id, quantity, purchase_price, selling_price)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (
+                    dp.get("id") or dp.get("deal_part_id"),
+                    deal_id,
+                    part_id,
+                    dp.get("quantity", 1),
+                    dp.get("purchase_price", 0.0),
+                    dp.get("selling_price", 0.0)
+                ))
+                dp_cnt += 1
+            counts["deal_parts"] = dp_cnt
 
         # Tasks
         if "tasks" in data and isinstance(data["tasks"], list):
