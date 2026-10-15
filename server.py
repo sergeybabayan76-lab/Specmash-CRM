@@ -65,6 +65,16 @@ class DealCreate(BaseModel):
     description: Optional[str] = ""
     deadline: Optional[str] = ""
 
+class PartCreate(BaseModel):
+    sku: Optional[str] = ""
+    name: str
+    category: Optional[str] = ""
+    quantity: int = 0
+    min_threshold: int = 2
+    purchase_price: float = 0.0
+    selling_price: float = 0.0
+    location: Optional[str] = ""
+
 # ----------------- Routes -----------------
 
 @app.get("/")
@@ -219,5 +229,41 @@ def create_equipment(eq: EquipmentCreate):
         }
         res = db.table("equipment").insert(eq_data).execute()
         return {"message": "Техника зарегистрирована", "data": res.data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Parts (Inventory)
+@app.get("/api/parts")
+def list_parts(low_stock: Optional[bool] = None, q: Optional[str] = None):
+    db = database.get_supabase()
+    if not db:
+        return []
+    try:
+        res = db.table("parts").select("*").order("id", desc=True).execute()
+        data = res.data or []
+        if low_stock:
+            data = [p for p in data if p.get("quantity", 0) <= p.get("min_threshold", 2)]
+        return data
+    except Exception:
+        return []
+
+@app.post("/api/parts")
+def create_part(part: PartCreate):
+    db = database.get_supabase()
+    if not db:
+        raise HTTPException(status_code=500, detail="Нет подключения к базе данных")
+    try:
+        part_data = {
+            "sku": (part.sku or "").strip(),
+            "name": part.name.strip(),
+            "category": (part.category or "").strip(),
+            "quantity": int(part.quantity or 0),
+            "min_threshold": int(part.min_threshold or 2),
+            "purchase_price": float(part.purchase_price or 0.0),
+            "selling_price": float(part.selling_price or 0.0),
+            "location": (part.location or "").strip()
+        }
+        res = db.table("parts").insert(part_data).execute()
+        return {"message": "Запчасть добавлена", "data": res.data}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
