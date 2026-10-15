@@ -6,16 +6,16 @@ import os
 from typing import List, Dict, Any, Optional
 from supabase import create_client, Client
 
+# Жестко прописанные ключи для гарантированного подключения
+SUPABASE_URL = "https://gkbx119iqkzavhsrpeucw.supabase.co"  # Стандартный URL по вашему идентификатору
+SUPABASE_KEY = "sb_publishable_GKBx119-iQkZavhsrpEUcw_fBE1sqXA"
+
 def get_supabase() -> Optional[Client]:
-    url = os.environ.get("SUPABASE_URL")
-    # Проверяем все возможные варианты названий ключа в Vercel
-    key = (
-        os.environ.get("SUPABASE_KEY") or 
-        os.environ.get("SUPABASE_SECRET_KEY") or 
-        os.environ.get("SUPABASE_ANON_KEY")
-    )
+    url = SUPABASE_URL or os.environ.get("SUPABASE_URL")
+    key = SUPABASE_KEY or os.environ.get("SUPABASE_KEY") or os.environ.get("SUPABASE_SECRET_KEY") or os.environ.get("SUPABASE_ANON_KEY")
     
     if not url or not key:
+        print("CRITICAL: Supabase URL or Key is missing!")
         return None
     try:
         return create_client(url, key)
@@ -38,7 +38,7 @@ def get_dashboard_metrics() -> Dict[str, Any]:
         deals_res = db.table("deals").select("*").execute()
         deals = deals_res.data if deals_res.data else []
         
-        completed_deals = [d for d in deals if d.get("stage") == "completed"]
+        completed_deals = [d for d in deals if d.get("stage"] == "completed"]
         total_revenue = sum(d.get("amount", 0) for d in completed_deals)
         total_cost = sum(d.get("cost", 0) for d in completed_deals)
         net_profit = total_revenue - total_cost
