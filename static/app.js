@@ -8,17 +8,39 @@
 const crmStore = {
   KEY_PREFIX: 'specmash_crm_',
 
+  getDeletedList(entity) {
+    try {
+      const raw = localStorage.getItem(this.KEY_PREFIX + entity + '_deleted');
+      return raw ? JSON.parse(raw) : [];
+    } catch (e) {
+      return [];
+    }
+  },
+
+  trackDeleted(entity, id) {
+    if (!id) return;
+    try {
+      const deleted = this.getDeletedList(entity);
+      if (!deleted.includes(id)) {
+        deleted.push(id);
+        localStorage.setItem(this.KEY_PREFIX + entity + '_deleted', JSON.stringify(deleted.slice(-200)));
+      }
+    } catch (e) {}
+  },
+
   saveItem(entity, item) {
     if (!item) return;
     try {
       const list = this.getList(entity);
       const existingIdx = list.findIndex(x => (item.id && x.id == item.id) || (item.username && x.username === item.username));
+      const enrichedItem = { ...item, _updated_at: Date.now() };
       if (existingIdx >= 0) {
-        list[existingIdx] = { ...list[existingIdx], ...item, _updated_at: Date.now() };
+        list[existingIdx] = { ...list[existingIdx], ...enrichedItem };
       } else {
-        list.unshift({ ...item, _created_at: Date.now() });
+        list.unshift(enrichedItem);
       }
       localStorage.setItem(this.KEY_PREFIX + entity, JSON.stringify(list));
+      this.syncToServer();
     } catch (e) {
       console.warn('LocalStorage save error:', e);
     }
@@ -26,6 +48,7 @@ const crmStore = {
 
   removeItem(entity, id) {
     try {
+      this.trackDeleted(entity, id);
       const list = this.getList(entity).filter(x => {
         if (x.id && id && String(x.id) === String(id)) return false;
         if (x.username && id && String(x.username).toLowerCase() === String(id).toLowerCase()) return false;
@@ -53,37 +76,101 @@ const crmStore = {
   },
 
   mergeWithServer(entity, serverItems) {
-    if (!Array.isArray(serverItems)) {
-      return this.getList(entity);
+    const localList = this.getList(entity);
+    const deletedList = this.getDeletedList(entity);
+
+    if (!Array.isArray(serverItems) || serverItems.length === 0) {
+      return localList;
     }
 
-    // Sanitize and filter
-    let cleanItems = serverItems;
+    // Filter out deleted items from server
+    let validServerItems = serverItems.filter(item => {
+      if (!item) return false;
+      if (item.id && deletedList.includes(item.id)) return false;
+      if (item.username && deletedList.includes(item.username)) return false;
+      return true;
+    });
+
+    const map = new Map();
+    // Add server items
+    for (const item of validServerItems) {
+      const key = item.id ? String(item.id) : (item.username || item.sku || Math.random());
+      map.set(key, item);
+    }
+
+    // Merge local items: keep any local items that are not deleted!
+    let hasLocalOnlyItems = false;
+    for (const localItem of localList) {
+      if (!localItem) continue;
+      if (localItem.id && deletedList.includes(localItem.id)) continue;
+      if (localItem.username && deletedList.includes(localItem.username)) continue;
+
+      const key = localItem.id ? String(localItem.id) : (localItem.username || localItem.sku);
+      if (!key) continue;
+
+      if (!map.has(key)) {
+        map.set(key, localItem);
+        hasLocalOnlyItems = true;
+      } else {
+        const serverItem = map.get(key);
+        if (localItem._updated_at && (!serverItem._updated_at || localItem._updated_at > serverItem._updated_at)) {
+          map.set(key, { ...serverItem, ...localItem });
+        }
+      }
+    }
+
+    let merged = Array.from(map.values());
+
     if (entity === 'users') {
-      cleanItems = serverItems.filter(u => {
-        if (!u) return false;
+      merged = merged.filter(u => {
         const un = String(u.username || '').trim().toLowerCase();
         return un && un !== 'undefined' && un !== 'null' && un.length >= 3;
       });
     } else if (entity === 'deals') {
-      cleanItems = serverItems.map(d => ({
+      merged = merged.map(d => ({
         ...d,
         parts_count: Number(d.parts_count || 0),
         amount: Number(d.amount || 0),
         cost: Number(d.cost || 0),
       })).sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0));
+    } else if (entity === 'clients' || entity === 'equipment' || entity === 'parts' || entity === 'tasks') {
+      merged.sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0));
     }
 
     try {
-      localStorage.setItem(this.KEY_PREFIX + entity, JSON.stringify(cleanItems));
+      localStorage.setItem(this.KEY_PREFIX + entity, JSON.stringify(merged));
     } catch (e) {}
 
-    return cleanItems;
+    if (hasLocalOnlyItems) {
+      this.syncToServer();
+    }
+
+    return merged;
   },
 
-  syncToServer(entity, items) {
-    // Authoritative Server Mode: prevent resurrecting deleted records or reverting stages across devices
-    return Promise.resolve();
+  _syncTimeout: null,
+  syncToServer() {
+    clearTimeout(this._syncTimeout);
+    this._syncTimeout = setTimeout(async () => {
+      try {
+        const payload = {
+          clients: this.getList('clients'),
+          equipment: this.getList('equipment'),
+          parts: this.getList('parts'),
+          deals: this.getList('deals'),
+          tasks: this.getList('tasks'),
+        };
+        if (payload.clients.length || payload.equipment.length || payload.parts.length || payload.deals.length) {
+          await fetch('/api/sync/hydrate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+        }
+      } catch (e) {
+        console.warn('Sync hydrate error:', e);
+      }
+    }, 1200);
   }
 };
 
@@ -2397,7 +2484,10 @@ async function deleteDeal() {
   const dealId = document.getElementById('deal-id').value;
   if (!dealId || !confirm('Удалить эту сделку?')) return;
   try {
-    const res = await fetch(`/api/deals/${dealId}`, { method: 'DELETE' });
+    let res = await fetch(`/api/deals/${dealId}`, { method: 'DELETE' });
+    if (!res.ok) {
+      res = await fetch(`/api/deals/${dealId}/delete`, { method: 'POST' });
+    }
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка удаления');
 
@@ -2498,7 +2588,10 @@ async function deleteClient() {
   const clientId = document.getElementById('client-id').value;
   if (!clientId || !confirm('Удалить клиента? Вся техника и сделки сохранятся без привязки.')) return;
   try {
-    const res = await fetch(`/api/clients/${clientId}`, { method: 'DELETE' });
+    let res = await fetch(`/api/clients/${clientId}`, { method: 'DELETE' });
+    if (!res.ok) {
+      res = await fetch(`/api/clients/${clientId}/delete`, { method: 'POST' });
+    }
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка удаления');
 
@@ -2605,7 +2698,10 @@ async function deleteEquipment() {
   const eqId = document.getElementById('equipment-id').value;
   if (!eqId || !confirm('Удалить единицу техники?')) return;
   try {
-    const res = await fetch(`/api/equipment/${eqId}`, { method: 'DELETE' });
+    let res = await fetch(`/api/equipment/${eqId}`, { method: 'DELETE' });
+    if (!res.ok) {
+      res = await fetch(`/api/equipment/${eqId}/delete`, { method: 'POST' });
+    }
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка удаления');
 
@@ -2652,12 +2748,12 @@ async function savePart(e) {
   e.preventDefault();
   const partId = document.getElementById('part-id').value;
   const payload = {
-    sku: document.getElementById('part-sku').value,
-    category: document.getElementById('part-category').value,
-    name: document.getElementById('part-name').value,
+    sku: document.getElementById('part-sku').value.trim(),
+    category: document.getElementById('part-category').value.trim(),
+    name: document.getElementById('part-name').value.trim(),
     quantity: parseInt(document.getElementById('part-quantity').value) || 0,
     min_threshold: parseInt(document.getElementById('part-min-threshold').value) || 2,
-    location: document.getElementById('part-location').value,
+    location: document.getElementById('part-location').value.trim(),
     purchase_price: parseFloat(document.getElementById('part-purchase-price').value) || 0.0,
     selling_price: parseFloat(document.getElementById('part-selling-price').value) || 0.0,
   };
@@ -2670,6 +2766,13 @@ async function savePart(e) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
+      if (!res.ok) {
+        res = await fetch(`/api/parts/${partId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+      }
     } else {
       res = await fetch('/api/parts', {
         method: 'POST',
@@ -2678,9 +2781,9 @@ async function savePart(e) {
       });
     }
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка сохранения');
+    if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка сохранения запчасти');
 
-    const savedId = partId ? parseInt(partId) : data.id;
+    const savedId = partId ? parseInt(partId) : (data.id || Date.now());
     crmStore.saveItem('parts', {
       ...payload,
       id: savedId
@@ -2699,7 +2802,10 @@ async function deletePart() {
   const partId = document.getElementById('part-id').value;
   if (!partId || !confirm('Удалить эту позицию со склада?')) return;
   try {
-    const res = await fetch(`/api/parts/${partId}`, { method: 'DELETE' });
+    let res = await fetch(`/api/parts/${partId}`, { method: 'DELETE' });
+    if (!res.ok) {
+      res = await fetch(`/api/parts/${partId}/delete`, { method: 'POST' });
+    }
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка удаления');
 
@@ -2709,7 +2815,7 @@ async function deletePart() {
     await loadParts();
     loadDashboard();
   } catch (err) {
-    showToast('Ошибка удаления', 'error');
+    showToast(err.message, 'error');
   }
 }
 
@@ -2748,6 +2854,13 @@ async function saveTask(e) {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка создания задачи');
+
+    const savedId = data.id || Date.now();
+    crmStore.saveItem('tasks', {
+      ...payload,
+      id: savedId
+    });
+
     showToast('Задача создана');
     closeModal('modal-task');
     await loadTasks();

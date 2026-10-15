@@ -58,10 +58,11 @@ def get_connection() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, timeout=30.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON;")
+    conn.execute("PRAGMA busy_timeout = 30000;")
     if IS_VERCEL:
         try:
-            # Lambda /tmp filesystems can have locking issues with WAL mode; DELETE mode is safe
-            conn.execute("PRAGMA journal_mode = DELETE;")
+            conn.execute("PRAGMA journal_mode = MEMORY;")
+            conn.execute("PRAGMA synchronous = NORMAL;")
         except Exception:
             pass
     else:

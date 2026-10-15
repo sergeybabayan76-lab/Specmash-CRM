@@ -9,6 +9,7 @@ import io
 import json
 import base64
 import shutil
+import sqlite3
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 
@@ -561,11 +562,21 @@ def create_client(client: ClientCreate):
     c.execute("""
         INSERT INTO clients (name, company, phone, email, address, notes, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (client.name, client.company, client.phone, client.email, client.address, client.notes, now_str))
+    """, (client.name.strip(), (client.company or "").strip(), client.phone.strip(), (client.email or "").strip(), (client.address or "").strip(), (client.notes or "").strip(), now_str))
     client_id = c.lastrowid
     conn.commit()
     conn.close()
-    return {"id": client_id, "message": "Клиент успешно добавлен"}
+    return {
+        "id": client_id,
+        "name": client.name.strip(),
+        "company": (client.company or "").strip(),
+        "phone": client.phone.strip(),
+        "email": (client.email or "").strip(),
+        "address": (client.address or "").strip(),
+        "notes": (client.notes or "").strip(),
+        "created_at": now_str,
+        "message": "Клиент успешно добавлен"
+    }
 
 @app.get("/api/clients/{client_id}")
 def get_client(client_id: int):
@@ -605,22 +616,34 @@ def update_client(client_id: int, client: ClientCreate):
         UPDATE clients 
         SET name = ?, company = ?, phone = ?, email = ?, address = ?, notes = ?
         WHERE id = ?
-    """, (client.name, client.company, client.phone, client.email, client.address, client.notes, client_id))
+    """, (client.name.strip(), (client.company or "").strip(), client.phone.strip(), (client.email or "").strip(), (client.address or "").strip(), (client.notes or "").strip(), client_id))
     if c.rowcount == 0:
-        conn.close()
-        raise HTTPException(status_code=404, detail="Клиент не найден")
+        c.execute("""
+            INSERT OR REPLACE INTO clients (id, name, company, phone, email, address, notes, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (client_id, client.name.strip(), (client.company or "").strip(), client.phone.strip(), (client.email or "").strip(), (client.address or "").strip(), (client.notes or "").strip(), datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
     conn.commit()
     conn.close()
-    return {"message": "Данные клиента обновлены"}
+    return {
+        "id": client_id,
+        "name": client.name.strip(),
+        "company": (client.company or "").strip(),
+        "phone": client.phone.strip(),
+        "email": (client.email or "").strip(),
+        "address": (client.address or "").strip(),
+        "notes": (client.notes or "").strip(),
+        "message": "Данные клиента обновлены"
+    }
 
 @app.delete("/api/clients/{client_id}")
+@app.post("/api/clients/{client_id}/delete")
 def delete_client(client_id: int):
     conn = database.get_connection()
     c = conn.cursor()
     c.execute("DELETE FROM clients WHERE id = ?", (client_id,))
     conn.commit()
     conn.close()
-    return {"message": "Клиент удален"}
+    return {"message": "Клиент удален", "id": client_id}
 
 # ----------------- Equipment (База техники) -----------------
 
@@ -728,8 +751,10 @@ def update_equipment(eq_id: int, eq: EquipmentCreate):
         WHERE id = ?
     """, (client_id, eq.name.strip(), eq.category, (eq.serial_vin or "").strip(), eq.year, (eq.operating_hours or "").strip(), eq.status or "Исправна", (eq.notes or "").strip(), eq_id))
     if c.rowcount == 0:
-        conn.close()
-        raise HTTPException(status_code=404, detail="Техника не найдена")
+        c.execute("""
+            INSERT OR REPLACE INTO equipment (id, client_id, name, category, serial_vin, year, operating_hours, status, notes, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (eq_id, client_id, eq.name.strip(), eq.category, (eq.serial_vin or "").strip(), eq.year, (eq.operating_hours or "").strip(), eq.status or "Исправна", (eq.notes or "").strip(), datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
     conn.commit()
     conn.close()
     return {
@@ -746,13 +771,14 @@ def update_equipment(eq_id: int, eq: EquipmentCreate):
     }
 
 @app.delete("/api/equipment/{eq_id}")
+@app.post("/api/equipment/{eq_id}/delete")
 def delete_equipment(eq_id: int):
     conn = database.get_connection()
     c = conn.cursor()
     c.execute("DELETE FROM equipment WHERE id = ?", (eq_id,))
     conn.commit()
     conn.close()
-    return {"message": "Техника удалена"}
+    return {"message": "Техника удалена", "id": eq_id}
 
 # ----------------- Deals / Kanban & List Pipeline -----------------
 
@@ -1018,13 +1044,14 @@ def update_deal(deal_id: int, deal: DealCreate):
     }
 
 @app.delete("/api/deals/{deal_id}")
+@app.post("/api/deals/{deal_id}/delete")
 def delete_deal(deal_id: int):
     conn = database.get_connection()
     c = conn.cursor()
     c.execute("DELETE FROM deals WHERE id = ?", (deal_id,))
     conn.commit()
     conn.close()
-    return {"message": "Сделка удалена"}
+    return {"message": "Сделка удалена", "id": deal_id}
 
 @app.post("/api/deals/{deal_id}/parts")
 def attach_part_to_deal(deal_id: int, item: DealAttachPart):
@@ -1166,7 +1193,7 @@ def create_part(part: PartCreate):
         c.execute("""
             INSERT INTO parts (sku, name, category, quantity, min_threshold, purchase_price, selling_price, location, created_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (part.sku, part.name, part.category, part.quantity, part.min_threshold, part.purchase_price, part.selling_price, part.location, now_str))
+        """, (part.sku.strip(), part.name.strip(), part.category.strip(), part.quantity, part.min_threshold, part.purchase_price, part.selling_price, (part.location or "").strip(), now_str))
         part_id = c.lastrowid
         if part.quantity > 0:
             c.execute("""
@@ -1177,10 +1204,26 @@ def create_part(part: PartCreate):
     except sqlite3.IntegrityError:
         conn.close()
         raise HTTPException(status_code=400, detail="Запчасть с таким артикулом (SKU) уже существует!")
+    except Exception as e:
+        conn.close()
+        raise HTTPException(status_code=500, detail=f"Ошибка сохранения запчасти: {str(e)}")
     conn.close()
-    return {"id": part_id, "message": "Запчасть добавлена на склад"}
+    return {
+        "id": part_id,
+        "sku": part.sku.strip(),
+        "name": part.name.strip(),
+        "category": part.category.strip(),
+        "quantity": part.quantity,
+        "min_threshold": part.min_threshold,
+        "purchase_price": part.purchase_price,
+        "selling_price": part.selling_price,
+        "location": (part.location or "").strip(),
+        "created_at": now_str,
+        "message": "Запчасть добавлена на склад"
+    }
 
 @app.put("/api/parts/{part_id}")
+@app.post("/api/parts/{part_id}")
 def update_part(part_id: int, part: PartCreate):
     conn = database.get_connection()
     c = conn.cursor()
@@ -1188,13 +1231,26 @@ def update_part(part_id: int, part: PartCreate):
         UPDATE parts 
         SET sku = ?, name = ?, category = ?, min_threshold = ?, purchase_price = ?, selling_price = ?, location = ?
         WHERE id = ?
-    """, (part.sku, part.name, part.category, part.min_threshold, part.purchase_price, part.selling_price, part.location, part_id))
+    """, (part.sku.strip(), part.name.strip(), part.category.strip(), part.min_threshold, part.purchase_price, part.selling_price, (part.location or "").strip(), part_id))
     if c.rowcount == 0:
-        conn.close()
-        raise HTTPException(status_code=404, detail="Запчасть не найдена")
+        c.execute("""
+            INSERT OR REPLACE INTO parts (id, sku, name, category, quantity, min_threshold, purchase_price, selling_price, location, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (part_id, part.sku.strip(), part.name.strip(), part.category.strip(), part.quantity, part.min_threshold, part.purchase_price, part.selling_price, (part.location or "").strip(), datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
     conn.commit()
     conn.close()
-    return {"message": "Карточка запчасти обновлена"}
+    return {
+        "id": part_id,
+        "sku": part.sku.strip(),
+        "name": part.name.strip(),
+        "category": part.category.strip(),
+        "quantity": part.quantity,
+        "min_threshold": part.min_threshold,
+        "purchase_price": part.purchase_price,
+        "selling_price": part.selling_price,
+        "location": (part.location or "").strip(),
+        "message": "Карточка запчасти обновлена"
+    }
 
 @app.post("/api/parts/{part_id}/stock")
 def adjust_part_stock(part_id: int, adjust: PartStockAdjust):
@@ -1240,13 +1296,14 @@ def get_stock_movements(limit: int = 50):
     return movements
 
 @app.delete("/api/parts/{part_id}")
+@app.post("/api/parts/{part_id}/delete")
 def delete_part(part_id: int):
     conn = database.get_connection()
     c = conn.cursor()
     c.execute("DELETE FROM parts WHERE id = ?", (part_id,))
     conn.commit()
     conn.close()
-    return {"message": "Запчасть удалена"}
+    return {"message": "Запчасть удалена", "id": part_id}
 
 # ----------------- Tasks & Planner -----------------
 
@@ -1289,6 +1346,7 @@ def create_task(task: TaskCreate):
     return {"id": task_id, "message": "Задача добавлена в планировщик"}
 
 @app.patch("/api/tasks/{task_id}/toggle")
+@app.post("/api/tasks/{task_id}/toggle")
 def toggle_task(task_id: int):
     conn = database.get_connection()
     c = conn.cursor()
@@ -1302,16 +1360,17 @@ def toggle_task(task_id: int):
     c.execute("UPDATE tasks SET status = ? WHERE id = ?", (new_status, task_id))
     conn.commit()
     conn.close()
-    return {"status": new_status, "message": "Статус задачи изменен"}
+    return {"status": new_status, "message": "Статус задачи изменен", "id": task_id}
 
 @app.delete("/api/tasks/{task_id}")
+@app.post("/api/tasks/{task_id}/delete")
 def delete_task(task_id: int):
     conn = database.get_connection()
     c = conn.cursor()
     c.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
     conn.commit()
     conn.close()
-    return {"message": "Задача удалена"}
+    return {"message": "Задача удалена", "id": task_id}
 
 # ----------------- Export / Import -----------------
 
