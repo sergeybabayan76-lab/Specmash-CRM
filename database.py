@@ -223,9 +223,7 @@ def init_db_schema(conn: sqlite3.Connection):
     conn.commit()
 
     # Seed default users if not exist
-    cursor.execute("SELECT COUNT(*) FROM users")
-    if cursor.fetchone()[0] == 0:
-        seed_default_users(conn)
+    seed_default_users(conn)
 
     # Seed clients/equipment/parts if not exist
     cursor.execute("SELECT COUNT(*) FROM clients")
@@ -251,10 +249,13 @@ def seed_default_users(conn: sqlite3.Connection):
         ("mechanic", h_mech, s_mech, "Петров Сергей Иванович (Старший механик)", "mechanic", "+37499334455", now_str),
     ]
 
-    cursor.executemany("""
-    INSERT INTO users (username, password_hash, salt, full_name, role, phone, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, users_data)
+    for u in users_data:
+        cursor.execute("SELECT id FROM users WHERE LOWER(username) = ?", (u[0].lower(),))
+        if not cursor.fetchone():
+            cursor.execute("""
+                INSERT INTO users (username, password_hash, salt, full_name, role, phone, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, u)
     conn.commit()
 
 def seed_demo_data(conn: sqlite3.Connection):
