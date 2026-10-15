@@ -84,7 +84,85 @@ def update_deal_stage(deal_id: int, update: DealStageUpdate):
             update_data["completed_at"] = now_str
         else:
             update_data["completed_at"] = None
+  class ClientCreate(BaseModel):
+    name: str
+    company: Optional[str] = ""
+    phone: str
+    email: Optional[str] = ""
+    address: Optional[str] = ""
+    notes: Optional[str] = ""
+
+class DealCreate(BaseModel):
+    title: str
+    client_id: Optional[int] = None
+    equipment_id: Optional[int] = None
+    stage: str = "new"
+    amount: float = 0.0
+    cost: float = 0.0
+    priority: str = "normal"
+    responsible: str = "Мастер-приемщик"
+    description: Optional[str] = ""
+    deadline: Optional[str] = ""
+
+@app.post("/api/deals")
+def create_deal(deal: DealCreate):
+    db = database.get_supabase()
+    if not db:
+        raise HTTPException(status_code=500, detail="Нет подключения к базе данных")
+    try:
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        completed_at = now_str if deal.stage == "completed" else None
         
+        deal_data = {
+            "title": deal.title.strip(),
+            "client_id": deal.client_id if deal.client_id and deal.client_id > 0 else None,
+            "equipment_id": deal.equipment_id if deal.equipment_id and deal.equipment_id > 0 else None,
+            "stage": deal.stage or "new",
+            "amount": float(deal.amount or 0.0),
+            "cost": float(deal.cost or 0.0),
+            "priority": deal.priority or "normal",
+            "responsible": deal.responsible or "Мастер-приемщик",
+            "description": (deal.description or "").strip(),
+            "deadline": deal.deadline or None,
+            "created_at": now_str,
+            "completed_at": completed_at
+        }
+        res = db.table("deals").insert(deal_data).execute()
+        return {"message": "Сделка успешно создана", "data": res.data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/clients")
+def list_clients(q: Optional[str] = None):
+    db = database.get_supabase()
+    if not db:
+        return []
+    try:
+        res = db.table("clients").select("*").order("id", desc=True).execute()
+        return res.data or []
+    except Exception:
+        return []
+
+@app.post("/api/clients")
+def create_client(client: ClientCreate):
+    db = database.get_supabase()
+    if not db:
+        raise HTTPException(status_code=500, detail="Нет подключения к базе данных")
+    try:
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        client_data = {
+            "name": client.name.strip(),
+            "company": (client.company or "").strip(),
+            "phone": client.phone.strip(),
+            "email": (client.email or "").strip(),
+            "address": (client.address or "").strip(),
+            "notes": (client.notes or "").strip(),
+            "created_at": now_str
+        }
+        res = db.table("clients").insert(client_data).execute()
+        return {"message": "Клиент добавлен", "data": res.data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))      
         res = db.table("deals").update(update_data).eq("id", deal_id).execute()
         return {"message": "Статус сделки обновлен", "data": res.data}
     except Exception as e:
