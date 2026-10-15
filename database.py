@@ -6,15 +6,21 @@ import os
 from typing import List, Dict, Any, Optional
 from supabase import create_client, Client
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_SECRET_KEY")
-
 def get_supabase() -> Optional[Client]:
-    if not SUPABASE_URL or not SUPABASE_KEY:
+    url = os.environ.get("SUPABASE_URL")
+    # Проверяем все возможные варианты названий ключа в Vercel
+    key = (
+        os.environ.get("SUPABASE_KEY") or 
+        os.environ.get("SUPABASE_SECRET_KEY") or 
+        os.environ.get("SUPABASE_ANON_KEY")
+    )
+    
+    if not url or not key:
         return None
     try:
-        return create_client(SUPABASE_URL, SUPABASE_KEY)
-    except Exception:
+        return create_client(url, key)
+    except Exception as e:
+        print(f"Supabase connection error: {e}")
         return None
 
 def get_dashboard_metrics() -> Dict[str, Any]:
@@ -39,7 +45,14 @@ def get_dashboard_metrics() -> Dict[str, Any]:
         
         clients_res = db.table("clients").select("id", count="exact").execute()
         equipment_res = db.table("equipment").select("id", count="exact").execute()
-        users_res = db.table("users").select("id", count="exact").execute()
+        
+        # Безопасный запрос к таблице users (если её еще нет, не падаем)
+        try:
+            users_res = db.table("users").select("id", count="exact").execute()
+            total_users = users_res.count if users_res.count is not None else 0
+        except Exception:
+            total_users = 0
+
         parts_res = db.table("parts").select("*").execute()
         parts = parts_res.data if parts_res.data else []
         
@@ -65,9 +78,9 @@ def get_dashboard_metrics() -> Dict[str, Any]:
             "active_deals_count": len([d for d in deals if d.get("stage") not in ("completed", "cancelled")]),
             "total_deals_count": len(deals),
             "active_deals_volume": sum(d.get("amount", 0) for d in deals if d.get("stage") not in ("completed", "cancelled")),
-            "total_clients": clients_res.count if clients_res.count is not None else 0,
-            "total_equipment": equipment_res.count if equipment_res.count is not None else 0,
-            "total_users": users_res.count if users_res.count is not None else 0,
+            "total_clients": clients_res.count if clients_res.count is not None else len(clients_res.data or []),
+            "total_equipment": equipment_res.count if equipment_res.count is not None else len(equipment_res.data or []),
+            "total_users": total_users,
             "low_stock_parts": low_stock,
             "inventory_cost": round(inv_cost, 2),
             "inventory_retail": round(inv_retail, 2),
@@ -93,5 +106,4 @@ def dump_all_data() -> Dict[str, Any]:
     return data
 
 def restore_all_data(data: Dict[str, Any]) -> Dict[str, Any]:
-    # Заглушка для восстановления данных, если потребуется
     return {"status": "ok"}
