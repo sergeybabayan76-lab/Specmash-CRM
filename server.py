@@ -1,6 +1,6 @@
 """
 FastAPI Backend Server for СТО Спецмаш CRM.
-Handles REST API for Users/Auth, Administrator Settings/Branding, Deals/Kanban & List views, Clients, Equipment, Warehouse, Tasks, Analytics, and CSV Import/Export.
+Powered by Supabase PostgreSQL with real-time WebSockets synchronization for Kanban board.
 """
 
 import os
@@ -8,12 +8,10 @@ import csv
 import io
 import json
 import base64
-import shutil
-import sqlite3
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 
-from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Form, Response
+from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Form, Response, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,7 +22,7 @@ import database
 # Initialize database on startup
 database.init_db()
 
-app = FastAPI(title="СТО Спецмаш CRM API", version="1.2.0")
+app = FastAPI(title="СТО Спецмаш CRM API", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -43,6 +41,68 @@ try:
 except Exception:
     pass
 
+# ----------------- WebSocket Connection Manager -----------------
+
+class KanbanConnectionManager:
+    """Manages active WebSocket connections for live Kanban board updates across users."""
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: dict):
+        dead_connections = []
+        for connection in list(self.active_connections):
+            try:
+                await connection.send_json(message)
+            except Exception:
+                dead_connections.append(connection)
+        for dead in dead_connections:
+            self.disconnect(dead)
+
+manager = KanbanConnectionManager()
+
+@app.websocket("/ws/kanban")
+async def websocket_kanban_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            try:
+                msg = json.loads(data)
+                mtype = msg.get("type")
+                if mtype == "ping":
+                    await websocket.send_json({"type": "pong", "timestamp": datetime.now().isoformat()})
+                elif mtype in ("deal_moved", "deal_stage_updated", "stage_changed"):
+                    deal_id = msg.get("deal_id")
+                    new_stage = msg.get("stage")
+                    if deal_id and new_stage:
+                        try:
+                            database.update_deal_stage(int(deal_id), str(new_stage))
+                        except Exception as e:
+                            print(f"[WS Stage Update Error] {e}")
+                    await manager.broadcast(msg)
+            except Exception:
+                pass
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+    except Exception:
+        manager.disconnect(websocket)
+
+@app.get("/api/realtime/config")
+def get_realtime_config():
+    """Provides Supabase Realtime endpoint parameters securely to authenticated frontend."""
+    return {
+        "url": database.SUPABASE_URL,
+        "key": database.SUPABASE_KEY
+    }
+
 # ----------------- Pydantic Models -----------------
 
 class LoginRequest(BaseModel):
@@ -53,7 +113,7 @@ class UserCreate(BaseModel):
     username: str
     password: str
     full_name: str
-    role: str = "mechanic"  # 'admin', 'moderator', 'mechanic'
+    role: str = "mechanic"
     phone: Optional[str] = ""
 
 class UserUpdate(BaseModel):
@@ -141,12 +201,7 @@ class TaskCreate(BaseModel):
 
 @app.post("/api/auth/login")
 def login(req: LoginRequest):
-    conn = database.get_connection()
-    c = conn.cursor()
-    c.execute("SELECT * FROM users WHERE LOWER(username) = ?", (req.username.strip().lower(),))
-    user = c.fetchone()
-    conn.close()
-
+    user = database.get_user_by_username(req.username.strip().lower())
     if not user:
         raise HTTPException(status_code=401, detail="Неверный логин или пароль")
 
@@ -158,17 +213,12 @@ def login(req: LoginRequest):
         "username": user["username"],
         "full_name": user["full_name"],
         "role": user["role"],
-        "phone": user["phone"] or "",
+        "phone": user.get("phone") or "",
     }
 
 @app.get("/api/users")
 def list_users():
-    conn = database.get_connection()
-    c = conn.cursor()
-    c.execute("SELECT id, username, full_name, role, phone, created_at FROM users ORDER BY id ASC")
-    users = [dict(r) for r in c.fetchall()]
-    conn.close()
-    return users
+    return database.list_users()
 
 @app.post("/api/users")
 def create_user(u: UserCreate):
@@ -178,51 +228,16 @@ def create_user(u: UserCreate):
 
     clean_username = u.username.strip().lower()
     if len(clean_username) < 3 or clean_username in ('undefined', 'null'):
-        raise HTTPException(status_code=400, detail="Логин сотрудника должен быть не короче 3 символов и не содержать 'undefined'")
+        raise HTTPException(status_code=400, detail="Логин сотрудника должен быть не короче 3 символов")
     if len(u.password) < 4:
         raise HTTPException(status_code=400, detail="Пароль должен быть не короче 4 символов")
 
-    conn = database.get_connection()
-    c = conn.cursor()
-    c.execute("SELECT id FROM users WHERE LOWER(username) = ?", (clean_username,))
-    existing = c.fetchone()
-    p_hash, salt = database.hash_password(u.password)
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    if existing:
-        user_id = existing["id"]
-        c.execute("""
-            UPDATE users SET password_hash = ?, salt = ?, full_name = ?, role = ?, phone = ?
-            WHERE id = ?
-        """, (p_hash, salt, u.full_name.strip(), u.role, (u.phone or "").strip(), user_id))
-        conn.commit()
-        conn.close()
-        return {
-            "id": user_id,
-            "username": clean_username,
-            "full_name": u.full_name.strip(),
-            "role": u.role,
-            "phone": (u.phone or "").strip(),
-            "created_at": now_str,
-            "message": "Сотрудник успешно обновлен"
-        }
-
-    c.execute("""
-        INSERT INTO users (username, password_hash, salt, full_name, role, phone, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (clean_username, p_hash, salt, u.full_name.strip(), u.role, (u.phone or "").strip(), now_str))
-    user_id = c.lastrowid
-    conn.commit()
-    conn.close()
-    return {
-        "id": user_id,
-        "username": clean_username,
-        "full_name": u.full_name.strip(),
-        "role": u.role,
-        "phone": (u.phone or "").strip(),
-        "created_at": now_str,
-        "message": "Сотрудник успешно добавлен"
-    }
+    try:
+        return database.create_user(u.model_dump())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.put("/api/users/{user_id}")
 @app.post("/api/users/{user_id}")
@@ -231,188 +246,49 @@ def update_user(user_id: int, u: UserUpdate):
     if u.role not in valid_roles:
         raise HTTPException(status_code=400, detail="Недопустимая роль")
 
-    conn = database.get_connection()
-    c = conn.cursor()
-    c.execute("SELECT * FROM users WHERE id = ?", (user_id,))
-    existing = c.fetchone()
-    if not existing:
-        conn.close()
-        raise HTTPException(status_code=404, detail="Сотрудник не найден")
-
-    if existing["role"] == "admin" and u.role != "admin":
-        c.execute("SELECT COUNT(*) FROM users WHERE role = 'admin' AND id != ?", (user_id,))
-        if c.fetchone()[0] == 0:
-            conn.close()
-            raise HTTPException(status_code=400, detail="В системе должен оставаться хотя бы один администратор!")
-
-    clean_phone = (u.phone or "").strip()
-    clean_fullname = u.full_name.strip()
-
-    if u.password and len(u.password.strip()) > 0:
-        if len(u.password.strip()) < 4:
-            conn.close()
-            raise HTTPException(status_code=400, detail="Пароль должен быть не короче 4 символов")
-        p_hash, salt = database.hash_password(u.password.strip())
-        c.execute("""
-            UPDATE users SET full_name = ?, role = ?, phone = ?, password_hash = ?, salt = ?
-            WHERE id = ?
-        """, (clean_fullname, u.role, clean_phone, p_hash, salt, user_id))
-    else:
-        c.execute("""
-            UPDATE users SET full_name = ?, role = ?, phone = ?
-            WHERE id = ?
-        """, (clean_fullname, u.role, clean_phone, user_id))
-
-    conn.commit()
-    conn.close()
-    return {
-        "id": user_id,
-        "username": existing["username"],
-        "full_name": clean_fullname,
-        "role": u.role,
-        "phone": clean_phone,
-        "message": "Данные сотрудника обновлены"
-    }
+    try:
+        return database.update_user(user_id, u.model_dump())
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 @app.delete("/api/users/{user_id}")
 @app.post("/api/users/{user_id}/delete")
 def delete_user(user_id: str):
-    conn = database.get_connection()
-    c = conn.cursor()
-
-    # Automatically clean up any corrupted or undefined users
-    c.execute("DELETE FROM users WHERE username IS NULL OR username = '' OR LOWER(username) IN ('undefined', 'null')")
-
     if user_id in ('undefined', 'null', '0'):
-        conn.commit()
-        conn.close()
         return {"message": "Некорректный сотрудник удален"}
-
     try:
         numeric_id = int(user_id)
-        c.execute("SELECT role FROM users WHERE id = ?", (numeric_id,))
-    except ValueError:
-        numeric_id = None
-        c.execute("SELECT role FROM users WHERE LOWER(username) = ?", (user_id.lower(),))
-
-    row = c.fetchone()
-    if not row:
-        conn.commit()
-        conn.close()
-        return {"message": "Сотрудник уже удален"}
-
-    if row["role"] == "admin":
-        c.execute("SELECT COUNT(*) FROM users WHERE role = 'admin'")
-        if c.fetchone()[0] <= 1:
-            conn.close()
-            raise HTTPException(status_code=400, detail="Нельзя удалить последнего администратора системы!")
-
-    if numeric_id is not None:
-        c.execute("DELETE FROM users WHERE id = ?", (numeric_id,))
-    else:
-        c.execute("DELETE FROM users WHERE LOWER(username) = ?", (user_id.lower(),))
-
-    conn.commit()
-    conn.close()
-    return {"message": "Сотрудник успешно удален"}
+        return database.delete_user(numeric_id)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 # ----------------- Settings & Branding & Backup -----------------
 
 @app.get("/api/settings")
 def get_settings():
-    conn = database.get_connection()
-    c = conn.cursor()
-    c.execute("SELECT key, value FROM settings")
-    settings_dict = {r["key"]: r["value"] for r in c.fetchall()}
-    conn.close()
-
-    defaults = {
-        "company_name": "СТО Спецмаш",
-        "company_slogan": "Сервис спецтехники, грузовых авто и оборудования",
-        "company_phone": "+374 99 999999",
-        "company_email": "info@specmash-sto.am",
-        "company_address": "г. Ереван, ул. Себастия, 12",
-        "company_tin": "02589412",
-        "currency": "AMD",
-        "default_responsible": "Иванов Алексей Викторович (Директор)",
-        "warranty_months": "6",
-        "logo_url": "",
-        "auth_icon": "wrench",
-        "auth_logo_url": "",
-    }
-    for k, v in defaults.items():
-        if k not in settings_dict:
-            settings_dict[k] = v
-    return settings_dict
+    return database.get_settings()
 
 @app.post("/api/settings")
 def update_settings(s: FullSettingsUpdate):
-    conn = database.get_connection()
-    c = conn.cursor()
     update_data = s.model_dump(exclude_unset=True)
-    for key, value in update_data.items():
-        if value is not None:
-            c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, str(value).strip()))
-    conn.commit()
-    conn.close()
-    return {"message": "Основные настройки программы успешно сохранены"}
+    return database.update_settings(update_data)
 
 @app.get("/api/settings/stats")
 def get_system_stats():
-    conn = database.get_connection()
-    c = conn.cursor()
-    db_size_kb = 0
-    if os.path.exists(database.DB_PATH):
-        db_size_kb = round(os.path.getsize(database.DB_PATH) / 1024, 1)
-
-    c.execute("SELECT COUNT(*) FROM clients")
-    cnt_clients = c.fetchone()[0]
-    c.execute("SELECT COUNT(*) FROM equipment")
-    cnt_eq = c.fetchone()[0]
-    c.execute("SELECT COUNT(*) FROM parts")
-    cnt_parts = c.fetchone()[0]
-    c.execute("SELECT COUNT(*) FROM deals")
-    cnt_deals = c.fetchone()[0]
-    c.execute("SELECT COUNT(*) FROM users")
-    cnt_users = c.fetchone()[0]
-    c.execute("SELECT COUNT(*) FROM tasks")
-    cnt_tasks = c.fetchone()[0]
-    conn.close()
-
-    return {
-        "version": "1.2.0",
-        "db_size_kb": db_size_kb,
-        "counts": {
-            "clients": cnt_clients,
-            "equipment": cnt_eq,
-            "parts": cnt_parts,
-            "deals": cnt_deals,
-            "users": cnt_users,
-            "tasks": cnt_tasks,
-        }
-    }
+    return database.get_system_stats()
 
 @app.get("/api/settings/backup")
 def download_database_backup():
-    if not os.path.exists(database.DB_PATH):
-        raise HTTPException(status_code=404, detail="Файл базы данных не найден")
-    
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"specmash_crm_backup_{timestamp}.db"
-    return FileResponse(
-        database.DB_PATH,
-        media_type="application/octet-stream",
-        filename=filename
-    )
+    return database.dump_all_data()
 
 @app.get("/api/backup/json")
 def export_json_backup():
-    """Exports full database state (all tables) as a clean JSON document."""
+    """Exports full database state as JSON."""
     try:
         data = database.dump_all_data()
         data["exported_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         data["app"] = "СТО Спецмаш CRM"
-        data["version"] = "1.2.0"
+        data["version"] = "2.0.0"
         return data
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Ошибка экспорта базы: {str(e)}")
@@ -431,7 +307,7 @@ async def restore_json_backup(req: Dict[str, Any]):
 
 @app.post("/api/sync/hydrate")
 def sync_hydrate_records(payload: Dict[str, Any]):
-    """Syncs client-side persisted records to ensure Vercel serverless has all rows."""
+    """Syncs client records to PostgreSQL."""
     try:
         counts = database.restore_all_data(payload)
         return {"status": "ok", "synced": counts}
@@ -444,933 +320,233 @@ async def upload_logo(file: UploadFile = File(...)):
     if ext not in [".png", ".jpg", ".jpeg", ".svg", ".webp"]:
         raise HTTPException(status_code=400, detail="Поддерживаются только форматы PNG, JPG, JPEG, SVG, WebP")
 
-    filename = f"logo{ext}"
-    target_path = os.path.join(UPLOADS_DIR, filename)
-
     contents = await file.read()
-    try:
-        with open(target_path, "wb") as f:
-            f.write(contents)
-        logo_url = f"/static/uploads/{filename}?t={int(datetime.now().timestamp())}"
-    except (OSError, IOError):
-        mime_types = {
-            ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-            ".svg": "image/svg+xml", ".webp": "image/webp"
-        }
-        mime = mime_types.get(ext, "image/png")
-        b64 = base64.b64encode(contents).decode("utf-8")
-        logo_url = f"data:{mime};base64,{b64}"
+    mime_types = {
+        ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".svg": "image/svg+xml", ".webp": "image/webp"
+    }
+    mime = mime_types.get(ext, "image/png")
+    b64 = base64.b64encode(contents).decode("utf-8")
+    logo_url = f"data:{mime};base64,{b64}"
 
-    conn = database.get_connection()
-    c = conn.cursor()
-    c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('logo_url', ?)", (logo_url,))
-    conn.commit()
-    conn.close()
-
+    database.update_settings({"logo_url": logo_url})
     return {"logo_url": logo_url, "message": "Логотип успешно обновлен"}
 
 @app.delete("/api/settings/logo")
 def delete_logo():
-    conn = database.get_connection()
-    c = conn.cursor()
-    c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('logo_url', '')")
-    conn.commit()
-    conn.close()
+    database.update_settings({"logo_url": ""})
     return {"message": "Логотип сброшен к стандартному"}
 
 # ----------------- Dashboard & Analytics -----------------
 
 @app.get("/api/dashboard")
 def get_dashboard():
-    metrics = database.get_dashboard_metrics()
-    
-    conn = database.get_connection()
-    c = conn.cursor()
-    c.execute("""
-        SELECT 
-            strftime('%Y-%m', completed_at) as month,
-            SUM(amount) as revenue,
-            SUM(cost) as cost,
-            COUNT(*) as deals_count
-        FROM deals 
-        WHERE stage = 'completed' AND completed_at IS NOT NULL
-        GROUP BY month
-        ORDER BY month ASC
-    """)
-    monthly_data = [dict(r) for r in c.fetchall()]
-
-    c.execute("""
-        SELECT 
-            c.id, c.name, c.company,
-            COUNT(d.id) as completed_deals,
-            COALESCE(SUM(d.amount), 0) as total_spent
-        FROM clients c
-        JOIN deals d ON d.client_id = c.id
-        WHERE d.stage = 'completed'
-        GROUP BY c.id
-        ORDER BY total_spent DESC
-        LIMIT 5
-    """)
-    top_clients = [dict(r) for r in c.fetchall()]
-
-    c.execute("""
-        SELECT id, sku, name, category, quantity, min_threshold, location
-        FROM parts
-        WHERE quantity <= min_threshold
-        ORDER BY quantity ASC
-        LIMIT 10
-    """)
-    critical_parts = [dict(r) for r in c.fetchall()]
-
-    conn.close()
-
-    metrics["monthly_data"] = monthly_data
-    metrics["top_clients"] = top_clients
-    metrics["critical_parts"] = critical_parts
-    return metrics
+    return database.get_dashboard_metrics()
 
 # ----------------- Clients -----------------
 
 @app.get("/api/clients")
 def list_clients(q: Optional[str] = None):
-    conn = database.get_connection()
-    c = conn.cursor()
-    query = """
-        SELECT c.*, 
-            (SELECT COUNT(*) FROM equipment WHERE client_id = c.id) as equipment_count,
-            (SELECT COUNT(*) FROM deals WHERE client_id = c.id) as deals_count,
-            (SELECT COALESCE(SUM(amount), 0) FROM deals WHERE client_id = c.id AND stage = 'completed') as total_revenue
-        FROM clients c
-    """
-    params = []
-    if q:
-        query += " WHERE c.name LIKE ? OR c.company LIKE ? OR c.phone LIKE ? OR c.email LIKE ?"
-        term = f"%{q}%"
-        params = [term, term, term, term]
-    query += " ORDER BY c.id DESC"
-    
-    c.execute(query, params)
-    clients = [dict(r) for r in c.fetchall()]
-    conn.close()
-    return clients
+    return database.list_clients(q=q)
 
 @app.post("/api/clients")
 def create_client(client: ClientCreate):
-    conn = database.get_connection()
-    c = conn.cursor()
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    c.execute("""
-        INSERT INTO clients (name, company, phone, email, address, notes, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (client.name.strip(), (client.company or "").strip(), client.phone.strip(), (client.email or "").strip(), (client.address or "").strip(), (client.notes or "").strip(), now_str))
-    client_id = c.lastrowid
-    conn.commit()
-    conn.close()
-    return {
-        "id": client_id,
-        "name": client.name.strip(),
-        "company": (client.company or "").strip(),
-        "phone": client.phone.strip(),
-        "email": (client.email or "").strip(),
-        "address": (client.address or "").strip(),
-        "notes": (client.notes or "").strip(),
-        "created_at": now_str,
-        "message": "Клиент успешно добавлен"
-    }
+    return database.create_client(client.model_dump())
 
 @app.get("/api/clients/{client_id}")
 def get_client(client_id: int):
-    conn = database.get_connection()
-    c = conn.cursor()
-    c.execute("SELECT * FROM clients WHERE id = ?", (client_id,))
-    client_row = c.fetchone()
-    if not client_row:
-        conn.close()
+    try:
+        return database.get_crm_client(client_id)
+    except KeyError:
         raise HTTPException(status_code=404, detail="Клиент не найден")
-    client = dict(client_row)
-
-    c.execute("SELECT * FROM equipment WHERE client_id = ? ORDER BY id DESC", (client_id,))
-    client["equipment"] = [dict(r) for r in c.fetchall()]
-
-    c.execute("""
-        SELECT d.*, eq.name as equipment_name 
-        FROM deals d 
-        LEFT JOIN equipment eq ON d.equipment_id = eq.id
-        WHERE d.client_id = ? 
-        ORDER BY d.id DESC
-    """, (client_id,))
-    client["deals"] = [dict(r) for r in c.fetchall()]
-
-    c.execute("SELECT * FROM tasks WHERE client_id = ? ORDER BY due_date ASC", (client_id,))
-    client["tasks"] = [dict(r) for r in c.fetchall()]
-
-    conn.close()
-    return client
 
 @app.put("/api/clients/{client_id}")
 @app.post("/api/clients/{client_id}")
 def update_client(client_id: int, client: ClientCreate):
-    conn = database.get_connection()
-    c = conn.cursor()
-    c.execute("""
-        UPDATE clients 
-        SET name = ?, company = ?, phone = ?, email = ?, address = ?, notes = ?
-        WHERE id = ?
-    """, (client.name.strip(), (client.company or "").strip(), client.phone.strip(), (client.email or "").strip(), (client.address or "").strip(), (client.notes or "").strip(), client_id))
-    if c.rowcount == 0:
-        c.execute("""
-            INSERT OR REPLACE INTO clients (id, name, company, phone, email, address, notes, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (client_id, client.name.strip(), (client.company or "").strip(), client.phone.strip(), (client.email or "").strip(), (client.address or "").strip(), (client.notes or "").strip(), datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-    conn.commit()
-    conn.close()
-    return {
-        "id": client_id,
-        "name": client.name.strip(),
-        "company": (client.company or "").strip(),
-        "phone": client.phone.strip(),
-        "email": (client.email or "").strip(),
-        "address": (client.address or "").strip(),
-        "notes": (client.notes or "").strip(),
-        "message": "Данные клиента обновлены"
-    }
+    return database.update_client(client_id, client.model_dump())
 
 @app.delete("/api/clients/{client_id}")
 @app.post("/api/clients/{client_id}/delete")
 def delete_client(client_id: int):
-    conn = database.get_connection()
-    c = conn.cursor()
-    c.execute("DELETE FROM clients WHERE id = ?", (client_id,))
-    conn.commit()
-    conn.close()
-    return {"message": "Клиент удален", "id": client_id}
+    return database.delete_client(client_id)
 
 # ----------------- Equipment (База техники) -----------------
 
 @app.get("/api/equipment")
 def list_equipment(q: Optional[str] = None, category: Optional[str] = None):
-    conn = database.get_connection()
-    c = conn.cursor()
-    query = """
-        SELECT eq.*, c.name as client_name, c.company as client_company, c.phone as client_phone
-        FROM equipment eq
-        LEFT JOIN clients c ON eq.client_id = c.id
-        WHERE 1=1
-    """
-    params = []
-    if q:
-        query += " AND (eq.name LIKE ? OR eq.serial_vin LIKE ? OR c.name LIKE ? OR c.company LIKE ?)"
-        term = f"%{q}%"
-        params.extend([term, term, term, term])
-    if category and category != "all":
-        query += " AND eq.category = ?"
-        params.append(category)
-    query += " ORDER BY eq.id DESC"
-    
-    c.execute(query, params)
-    equipment = [dict(r) for r in c.fetchall()]
-    conn.close()
-    return equipment
+    return database.list_equipment(q=q, category=category)
 
 @app.post("/api/equipment")
 def create_equipment(eq: EquipmentCreate):
-    conn = database.get_connection()
-    c = conn.cursor()
-    
-    # Check client_id
-    client_id = eq.client_id
-    if client_id and client_id > 0:
-        c.execute("SELECT id FROM clients WHERE id = ?", (client_id,))
-        if not c.fetchone():
-            client_id = None
-    else:
-        client_id = None
-
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    c.execute("""
-        INSERT INTO equipment (client_id, name, category, serial_vin, year, operating_hours, status, notes, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (client_id, eq.name.strip(), eq.category, (eq.serial_vin or "").strip(), eq.year, (eq.operating_hours or "").strip(), eq.status or "Исправна", (eq.notes or "").strip(), now_str))
-    eq_id = c.lastrowid
-    conn.commit()
-    conn.close()
-    return {
-        "id": eq_id,
-        "client_id": client_id,
-        "name": eq.name.strip(),
-        "category": eq.category,
-        "serial_vin": (eq.serial_vin or "").strip(),
-        "year": eq.year,
-        "operating_hours": (eq.operating_hours or "").strip(),
-        "status": eq.status or "Исправна",
-        "notes": (eq.notes or "").strip(),
-        "created_at": now_str,
-        "message": "Единица техники успешно зарегистрирована"
-    }
+    return database.create_equipment(eq.model_dump())
 
 @app.get("/api/equipment/{eq_id}")
 def get_equipment_detail(eq_id: int):
-    conn = database.get_connection()
-    c = conn.cursor()
-    c.execute("""
-        SELECT eq.*, c.name as client_name, c.company as client_company, c.phone as client_phone
-        FROM equipment eq
-        LEFT JOIN clients c ON eq.client_id = c.id
-        WHERE eq.id = ?
-    """, (eq_id,))
-    eq_row = c.fetchone()
-    if not eq_row:
-        conn.close()
+    try:
+        return database.get_equipment(eq_id)
+    except KeyError:
         raise HTTPException(status_code=404, detail="Техника не найдена")
-    item = dict(eq_row)
-
-    c.execute("""
-        SELECT * FROM deals WHERE equipment_id = ? ORDER BY id DESC
-    """, (eq_id,))
-    item["deals_history"] = [dict(r) for r in c.fetchall()]
-    conn.close()
-    return item
 
 @app.put("/api/equipment/{eq_id}")
 @app.post("/api/equipment/{eq_id}")
 def update_equipment(eq_id: int, eq: EquipmentCreate):
-    conn = database.get_connection()
-    c = conn.cursor()
-
-    client_id = eq.client_id
-    if client_id and client_id > 0:
-        c.execute("SELECT id FROM clients WHERE id = ?", (client_id,))
-        if not c.fetchone():
-            client_id = None
-    else:
-        client_id = None
-
-    c.execute("""
-        UPDATE equipment 
-        SET client_id = ?, name = ?, category = ?, serial_vin = ?, year = ?, operating_hours = ?, status = ?, notes = ?
-        WHERE id = ?
-    """, (client_id, eq.name.strip(), eq.category, (eq.serial_vin or "").strip(), eq.year, (eq.operating_hours or "").strip(), eq.status or "Исправна", (eq.notes or "").strip(), eq_id))
-    if c.rowcount == 0:
-        c.execute("""
-            INSERT OR REPLACE INTO equipment (id, client_id, name, category, serial_vin, year, operating_hours, status, notes, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (eq_id, client_id, eq.name.strip(), eq.category, (eq.serial_vin or "").strip(), eq.year, (eq.operating_hours or "").strip(), eq.status or "Исправна", (eq.notes or "").strip(), datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-    conn.commit()
-    conn.close()
-    return {
-        "id": eq_id,
-        "client_id": client_id,
-        "name": eq.name.strip(),
-        "category": eq.category,
-        "serial_vin": (eq.serial_vin or "").strip(),
-        "year": eq.year,
-        "operating_hours": (eq.operating_hours or "").strip(),
-        "status": eq.status or "Исправна",
-        "notes": (eq.notes or "").strip(),
-        "message": "Данные по технике обновлены"
-    }
+    return database.update_equipment(eq_id, eq.model_dump())
 
 @app.delete("/api/equipment/{eq_id}")
 @app.post("/api/equipment/{eq_id}/delete")
 def delete_equipment(eq_id: int):
-    conn = database.get_connection()
-    c = conn.cursor()
-    c.execute("DELETE FROM equipment WHERE id = ?", (eq_id,))
-    conn.commit()
-    conn.close()
-    return {"message": "Техника удалена", "id": eq_id}
+    return database.delete_equipment(eq_id)
 
 # ----------------- Deals / Kanban & List Pipeline -----------------
 
 @app.get("/api/deals")
 def list_deals(stage: Optional[str] = None, q: Optional[str] = None):
-    conn = database.get_connection()
-    c = conn.cursor()
-    query = """
-        SELECT d.*, 
-            c.name as client_name, c.company as client_company, c.phone as client_phone,
-            eq.name as equipment_name, eq.serial_vin as equipment_vin,
-            (SELECT COALESCE(SUM(quantity), 0) FROM deal_parts WHERE deal_id = d.id) as parts_count
-        FROM deals d
-        LEFT JOIN clients c ON d.client_id = c.id
-        LEFT JOIN equipment eq ON d.equipment_id = eq.id
-        WHERE 1=1
-    """
-    params = []
-    if stage and stage != "all":
-        query += " AND d.stage = ?"
-        params.append(stage)
-    if q:
-        query += " AND (d.title LIKE ? OR c.name LIKE ? OR c.company LIKE ? OR eq.name LIKE ? OR d.responsible LIKE ?)"
-        term = f"%{q}%"
-        params.extend([term, term, term, term, term])
-    query += " ORDER BY d.id DESC"
-
-    c.execute(query, params)
-    deals = [dict(r) for r in c.fetchall()]
-    conn.close()
-    return deals
+    return database.list_deals(stage=stage, q=q)
 
 @app.post("/api/deals")
-def create_deal(deal: DealCreate):
-    conn = database.get_connection()
-    c = conn.cursor()
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    # Validate client_id
-    client_id = deal.client_id
-    if client_id and client_id > 0:
-        c.execute("SELECT id FROM clients WHERE id = ?", (client_id,))
-        if not c.fetchone():
-            c.execute("""
-                INSERT OR IGNORE INTO clients (id, name, company, phone, created_at)
-                VALUES (?, ?, '', '+37499999999', ?)
-            """, (client_id, f"Клиент #{client_id}", now_str))
-    else:
-        client_id = None
-
-    # Validate equipment_id: never wipe out equipment_id
-    equipment_id = deal.equipment_id
-    if equipment_id and equipment_id > 0:
-        c.execute("SELECT id FROM equipment WHERE id = ?", (equipment_id,))
-        if not c.fetchone():
-            c.execute("""
-                INSERT OR IGNORE INTO equipment (id, name, category, status, created_at)
-                VALUES (?, ?, 'Спецтехника', 'В ремонте', ?)
-            """, (equipment_id, f"Техника #{equipment_id}", now_str))
-    else:
-        equipment_id = None
-
-    completed_at = now_str if deal.stage == "completed" else None
-    c.execute("""
-        INSERT INTO deals (title, client_id, equipment_id, stage, amount, cost, priority, responsible, description, deadline, created_at, completed_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (deal.title.strip(), client_id, equipment_id, deal.stage, deal.amount or 0.0, deal.cost or 0.0, deal.priority or "normal", deal.responsible or "Мастер-приемщик", (deal.description or "").strip(), deal.deadline or None, now_str, completed_at))
-    deal_id = c.lastrowid
-
-    # Retrieve equipment details and client details for robust frontend sync
-    eq_name = ""
-    eq_vin = ""
-    if equipment_id:
-        c.execute("SELECT name, serial_vin FROM equipment WHERE id = ?", (equipment_id,))
-        eq_row = c.fetchone()
-        if eq_row:
-            eq_name = eq_row["name"]
-            eq_vin = eq_row["serial_vin"]
-
-    cl_name = ""
-    cl_phone = ""
-    cl_comp = ""
-    if client_id:
-        c.execute("SELECT name, company, phone FROM clients WHERE id = ?", (client_id,))
-        cl_row = c.fetchone()
-        if cl_row:
-            cl_name = cl_row["name"]
-            cl_comp = cl_row["company"]
-            cl_phone = cl_row["phone"]
-
-    conn.commit()
-    conn.close()
-    return {
-        "id": deal_id,
-        "title": deal.title.strip(),
-        "client_id": client_id,
-        "client_name": cl_name,
-        "client_company": cl_comp,
-        "client_phone": cl_phone,
-        "equipment_id": equipment_id,
-        "equipment_name": eq_name,
-        "equipment_vin": eq_vin,
-        "stage": deal.stage,
-        "amount": deal.amount or 0.0,
-        "cost": deal.cost or 0.0,
-        "parts_count": 0,
-        "priority": deal.priority or "normal",
-        "responsible": deal.responsible or "Мастер-приемщик",
-        "description": (deal.description or "").strip(),
-        "deadline": deal.deadline or None,
-        "created_at": now_str,
-        "completed_at": completed_at,
-        "message": "Сделка/наряд успешно создан"
-    }
+async def create_deal(deal: DealCreate):
+    res = database.create_deal(deal.model_dump())
+    # Broadcast to all connected WebSockets
+    await manager.broadcast({
+        "type": "deal_created",
+        "deal": res
+    })
+    return res
 
 @app.get("/api/deals/{deal_id}")
 def get_deal(deal_id: int):
-    conn = database.get_connection()
-    c = conn.cursor()
-    c.execute("""
-        SELECT d.*, 
-            c.name as client_name, c.company as client_company, c.phone as client_phone, c.email as client_email,
-            eq.name as equipment_name, eq.serial_vin as equipment_vin, eq.operating_hours as equipment_hours
-        FROM deals d
-        LEFT JOIN clients c ON d.client_id = c.id
-        LEFT JOIN equipment eq ON d.equipment_id = eq.id
-        WHERE d.id = ?
-    """, (deal_id,))
-    deal_row = c.fetchone()
-    if not deal_row:
-        conn.close()
+    try:
+        return database.get_deal(deal_id)
+    except KeyError:
         raise HTTPException(status_code=404, detail="Сделка не найдена")
-    deal = dict(deal_row)
-
-    c.execute("""
-        SELECT dp.id as deal_part_id, dp.quantity, dp.purchase_price, dp.selling_price,
-               dp.part_id as part_id,
-               COALESCE(p.sku, 'P-' || dp.part_id) as sku,
-               COALESCE(p.name, 'Запчасть #' || dp.part_id) as part_name,
-               COALESCE(p.category, 'Запчасти') as part_category
-        FROM deal_parts dp
-        LEFT JOIN parts p ON dp.part_id = p.id
-        WHERE dp.deal_id = ?
-        ORDER BY dp.id ASC
-    """, (deal_id,))
-    deal["parts"] = [dict(r) for r in c.fetchall()]
-    deal["parts_count"] = sum(p["quantity"] for p in deal["parts"])
-
-    conn.close()
-    return deal
 
 @app.patch("/api/deals/{deal_id}/stage")
 @app.post("/api/deals/{deal_id}/stage")
 @app.put("/api/deals/{deal_id}/stage")
-def update_deal_stage(deal_id: int, update: DealStageUpdate):
-    conn = database.get_connection()
-    c = conn.cursor()
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    completed_at = now_str if update.stage == "completed" else None
-
-    if update.stage == "completed":
-        c.execute("UPDATE deals SET stage = ?, completed_at = ? WHERE id = ?", (update.stage, completed_at, deal_id))
-    else:
-        c.execute("UPDATE deals SET stage = ?, completed_at = NULL WHERE id = ?", (update.stage, deal_id))
-
-    if c.rowcount == 0:
-        c.execute("SELECT id FROM deals WHERE id = ?", (deal_id,))
-        if not c.fetchone():
-            c.execute("""
-                INSERT INTO deals (id, title, stage, amount, cost, priority, responsible, created_at, completed_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (deal_id, f"Наряд #{deal_id}", update.stage, 0.0, 0.0, "normal", "Мастер-приемщик", now_str, completed_at))
-    conn.commit()
-    conn.close()
-    return {"message": "Статус наряда успешно изменен", "stage": update.stage}
+async def update_deal_stage(deal_id: int, update: DealStageUpdate):
+    res = database.update_deal_stage(deal_id, update.stage)
+    # Broadcast stage change to all clients instantly!
+    await manager.broadcast({
+        "type": "deal_stage_updated",
+        "deal_id": deal_id,
+        "stage": update.stage,
+        "data": res
+    })
+    return res
 
 @app.put("/api/deals/{deal_id}")
 @app.post("/api/deals/{deal_id}")
-def update_deal(deal_id: int, deal: DealCreate):
-    conn = database.get_connection()
-    c = conn.cursor()
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    client_id = deal.client_id
-    if client_id and client_id > 0:
-        c.execute("SELECT id FROM clients WHERE id = ?", (client_id,))
-        if not c.fetchone():
-            c.execute("""
-                INSERT OR IGNORE INTO clients (id, name, company, phone, created_at)
-                VALUES (?, ?, '', '+37499999999', ?)
-            """, (client_id, f"Клиент #{client_id}", now_str))
-    else:
-        client_id = None
-
-    equipment_id = deal.equipment_id
-    if equipment_id and equipment_id > 0:
-        c.execute("SELECT id FROM equipment WHERE id = ?", (equipment_id,))
-        if not c.fetchone():
-            c.execute("""
-                INSERT OR IGNORE INTO equipment (id, name, category, status, created_at)
-                VALUES (?, ?, 'Спецтехника', 'В ремонте', ?)
-            """, (equipment_id, f"Техника #{equipment_id}", now_str))
-    else:
-        equipment_id = None
-
-    completed_at = now_str if deal.stage == "completed" else None
-    c.execute("""
-        UPDATE deals 
-        SET title = ?, client_id = ?, equipment_id = ?, stage = ?, amount = ?, cost = ?, priority = ?, responsible = ?, description = ?, deadline = ?, completed_at = ?
-        WHERE id = ?
-    """, (deal.title.strip(), client_id, equipment_id, deal.stage, deal.amount or 0.0, deal.cost or 0.0, deal.priority or "normal", deal.responsible or "Мастер-приемщик", (deal.description or "").strip(), deal.deadline or None, completed_at, deal_id))
-    if c.rowcount == 0:
-        c.execute("""
-            INSERT INTO deals (id, title, client_id, equipment_id, stage, amount, cost, priority, responsible, description, deadline, created_at, completed_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (deal_id, deal.title.strip(), client_id, equipment_id, deal.stage, deal.amount or 0.0, deal.cost or 0.0, deal.priority or "normal", deal.responsible or "Мастер-приемщик", (deal.description or "").strip(), deal.deadline or None, now_str, completed_at))
-
-    eq_name = ""
-    eq_vin = ""
-    if equipment_id:
-        c.execute("SELECT name, serial_vin FROM equipment WHERE id = ?", (equipment_id,))
-        eq_row = c.fetchone()
-        if eq_row:
-            eq_name = eq_row["name"]
-            eq_vin = eq_row["serial_vin"]
-
-    cl_name = ""
-    cl_phone = ""
-    cl_comp = ""
-    if client_id:
-        c.execute("SELECT name, company, phone FROM clients WHERE id = ?", (client_id,))
-        cl_row = c.fetchone()
-        if cl_row:
-            cl_name = cl_row["name"]
-            cl_comp = cl_row["company"]
-            cl_phone = cl_row["phone"]
-
-    c.execute("SELECT COALESCE(SUM(quantity), 0) FROM deal_parts WHERE deal_id = ?", (deal_id,))
-    parts_count = c.fetchone()[0]
-
-    conn.commit()
-    conn.close()
-    return {
-        "id": deal_id,
-        "title": deal.title.strip(),
-        "client_id": client_id,
-        "client_name": cl_name,
-        "client_company": cl_comp,
-        "client_phone": cl_phone,
-        "equipment_id": equipment_id,
-        "equipment_name": eq_name,
-        "equipment_vin": eq_vin,
-        "stage": deal.stage,
-        "amount": deal.amount or 0.0,
-        "cost": deal.cost or 0.0,
-        "parts_count": parts_count,
-        "priority": deal.priority or "normal",
-        "responsible": deal.responsible or "Мастер-приемщик",
-        "description": (deal.description or "").strip(),
-        "deadline": deal.deadline or None,
-        "completed_at": completed_at,
-        "message": "Сделка обновлена"
-    }
+async def update_deal(deal_id: int, deal: DealCreate):
+    res = database.update_deal(deal_id, deal.model_dump())
+    await manager.broadcast({
+        "type": "deal_updated",
+        "deal_id": deal_id,
+        "deal": res
+    })
+    return res
 
 @app.delete("/api/deals/{deal_id}")
 @app.post("/api/deals/{deal_id}/delete")
-def delete_deal(deal_id: int):
-    conn = database.get_connection()
-    c = conn.cursor()
-    c.execute("DELETE FROM deals WHERE id = ?", (deal_id,))
-    conn.commit()
-    conn.close()
-    return {"message": "Сделка удалена", "id": deal_id}
+async def delete_deal(deal_id: int):
+    res = database.delete_deal(deal_id)
+    await manager.broadcast({
+        "type": "deal_deleted",
+        "deal_id": deal_id
+    })
+    return res
 
 @app.post("/api/deals/{deal_id}/parts")
-def attach_part_to_deal(deal_id: int, item: DealAttachPart):
-    conn = database.get_connection()
-    c = conn.cursor()
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    # Ensure deal exists in container SQLite
-    c.execute("SELECT id FROM deals WHERE id = ?", (deal_id,))
-    if not c.fetchone():
-        c.execute("""
-            INSERT OR IGNORE INTO deals (id, title, stage, amount, cost, priority, responsible, created_at)
-            VALUES (?, ?, 'in_progress', 0.0, 0.0, 'normal', 'Мастер-приемщик', ?)
-        """, (deal_id, f"Наряд #{deal_id}", now_str))
-    
-    c.execute("SELECT id, name, quantity, purchase_price, selling_price FROM parts WHERE id = ?", (item.part_id,))
-    part = c.fetchone()
-    if not part:
-        # Recover stub part if not yet hydrated on this Lambda container
-        c.execute("""
-            INSERT OR IGNORE INTO parts (id, sku, name, category, quantity, min_threshold, purchase_price, selling_price, created_at)
-            VALUES (?, ?, ?, 'Запчасти', 10, 2, 0.0, 0.0, ?)
-        """, (item.part_id, f"P-{item.part_id}", f"Запчасть #{item.part_id}", now_str))
-        c.execute("SELECT id, name, quantity, purchase_price, selling_price FROM parts WHERE id = ?", (item.part_id,))
-        part = c.fetchone()
-
-    if part["quantity"] < item.quantity:
-        conn.close()
-        raise HTTPException(status_code=400, detail=f"Недостаточно остатка на складе! В наличии: {part['quantity']} шт.")
-
-    c.execute("""
-        INSERT INTO deal_parts (deal_id, part_id, quantity, purchase_price, selling_price)
-        VALUES (?, ?, ?, ?, ?)
-    """, (deal_id, item.part_id, item.quantity, part["purchase_price"], part["selling_price"]))
-    deal_part_id = c.lastrowid
-
-    new_qty = max(0, part["quantity"] - item.quantity)
-    c.execute("UPDATE parts SET quantity = ? WHERE id = ?", (new_qty, item.part_id))
-
-    c.execute("""
-        INSERT INTO stock_movements (part_id, type, quantity, deal_id, comment, created_at)
-        VALUES (?, 'outgoing', ?, ?, ?, ?)
-    """, (item.part_id, item.quantity, deal_id, f"Списание на сделку/наряд №{deal_id}", now_str))
-
-    c.execute("""
-        SELECT COALESCE(SUM(quantity * purchase_price), 0) FROM deal_parts WHERE deal_id = ?
-    """, (deal_id,))
-    parts_cost = round(c.fetchone()[0], 2)
-    c.execute("UPDATE deals SET cost = ? WHERE id = ?", (parts_cost, deal_id))
-    c.execute("SELECT COUNT(*) FROM deal_parts WHERE deal_id = ?", (deal_id,))
-    parts_count = c.fetchone()[0]
-
-    conn.commit()
-    conn.close()
-    return {
-        "deal_part_id": deal_part_id,
-        "part_id": item.part_id,
-        "new_quantity": new_qty,
-        "parts_cost": parts_cost,
-        "parts_count": parts_count,
-        "message": f"Запчасть «{part['name']}» ({item.quantity} шт.) списана со склада"
-    }
+async def attach_part_to_deal(deal_id: int, item: DealAttachPart):
+    try:
+        res = database.attach_part_to_deal(deal_id, item.part_id, item.quantity)
+        await manager.broadcast({
+            "type": "deal_parts_updated",
+            "deal_id": deal_id,
+            "data": res
+        })
+        return res
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/api/deals/{deal_id}/parts/{deal_part_id}")
 @app.post("/api/deals/{deal_id}/parts/{deal_part_id}/delete")
 @app.post("/api/deals/{deal_id}/parts/{deal_part_id}")
-def remove_part_from_deal(deal_id: int, deal_part_id: int):
-    conn = database.get_connection()
-    c = conn.cursor()
-    c.execute("SELECT part_id, quantity FROM deal_parts WHERE id = ? AND deal_id = ?", (deal_part_id, deal_id))
-    dp = c.fetchone()
-    if not dp:
-        conn.close()
+async def remove_part_from_deal(deal_id: int, deal_part_id: int):
+    try:
+        res = database.remove_part_from_deal(deal_id, deal_part_id)
+        await manager.broadcast({
+            "type": "deal_parts_updated",
+            "deal_id": deal_id,
+            "data": res
+        })
+        return res
+    except KeyError:
         return {"message": "Запчасть уже удалена"}
-
-    c.execute("UPDATE parts SET quantity = quantity + ? WHERE id = ?", (dp["quantity"], dp["part_id"]))
-    
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    c.execute("""
-        INSERT INTO stock_movements (part_id, type, quantity, deal_id, comment, created_at)
-        VALUES (?, 'incoming', ?, ?, 'Возврат запчасти из наряда обратно на склад', ?)
-    """, (dp["part_id"], dp["quantity"], deal_id, now_str))
-
-    c.execute("DELETE FROM deal_parts WHERE id = ?", (deal_part_id,))
-
-    c.execute("""
-        SELECT COALESCE(SUM(quantity * purchase_price), 0) FROM deal_parts WHERE deal_id = ?
-    """, (deal_id,))
-    new_parts_cost = round(c.fetchone()[0], 2)
-    c.execute("UPDATE deals SET cost = ? WHERE id = ?", (new_parts_cost, deal_id))
-
-    c.execute("SELECT COUNT(*) FROM deal_parts WHERE deal_id = ?", (deal_id,))
-    parts_count = c.fetchone()[0]
-
-    c.execute("SELECT quantity FROM parts WHERE id = ?", (dp["part_id"],))
-    p_row = c.fetchone()
-    new_qty = p_row["quantity"] if p_row else 0
-
-    conn.commit()
-    conn.close()
-    return {
-        "message": "Запчасть возвращена на склад",
-        "part_id": dp["part_id"],
-        "new_quantity": new_qty,
-        "parts_cost": new_parts_cost,
-        "parts_count": parts_count
-    }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ----------------- Warehouse / Spare Parts -----------------
 
 @app.get("/api/parts")
 def list_parts(q: Optional[str] = None, low_stock: bool = False, category: Optional[str] = None):
-    conn = database.get_connection()
-    c = conn.cursor()
-    query = "SELECT * FROM parts WHERE 1=1"
-    params = []
-    if q:
-        query += " AND (sku LIKE ? OR name LIKE ? OR category LIKE ? OR location LIKE ?)"
-        term = f"%{q}%"
-        params.extend([term, term, term, term])
-    if low_stock:
-        query += " AND quantity <= min_threshold"
-    if category and category != "all":
-        query += " AND category = ?"
-        params.append(category)
-    query += " ORDER BY id DESC"
-
-    c.execute(query, params)
-    parts = [dict(r) for r in c.fetchall()]
-    conn.close()
-    return parts
+    return database.list_parts(q=q, low_stock=low_stock, category=category)
 
 @app.post("/api/parts")
 def create_part(part: PartCreate):
-    conn = database.get_connection()
-    c = conn.cursor()
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     try:
-        c.execute("""
-            INSERT INTO parts (sku, name, category, quantity, min_threshold, purchase_price, selling_price, location, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (part.sku.strip(), part.name.strip(), part.category.strip(), part.quantity, part.min_threshold, part.purchase_price, part.selling_price, (part.location or "").strip(), now_str))
-        part_id = c.lastrowid
-        if part.quantity > 0:
-            c.execute("""
-                INSERT INTO stock_movements (part_id, type, quantity, comment, created_at)
-                VALUES (?, 'incoming', ?, 'Начальный остаток при создании карточки', ?)
-            """, (part_id, part.quantity, now_str))
-        conn.commit()
-    except sqlite3.IntegrityError:
-        conn.close()
-        raise HTTPException(status_code=400, detail="Запчасть с таким артикулом (SKU) уже существует!")
+        return database.create_part(part.model_dump())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        conn.close()
         raise HTTPException(status_code=500, detail=f"Ошибка сохранения запчасти: {str(e)}")
-    conn.close()
-    return {
-        "id": part_id,
-        "sku": part.sku.strip(),
-        "name": part.name.strip(),
-        "category": part.category.strip(),
-        "quantity": part.quantity,
-        "min_threshold": part.min_threshold,
-        "purchase_price": part.purchase_price,
-        "selling_price": part.selling_price,
-        "location": (part.location or "").strip(),
-        "created_at": now_str,
-        "message": "Запчасть добавлена на склад"
-    }
 
 @app.put("/api/parts/{part_id}")
 @app.post("/api/parts/{part_id}")
 def update_part(part_id: int, part: PartCreate):
-    conn = database.get_connection()
-    c = conn.cursor()
-    c.execute("""
-        UPDATE parts 
-        SET sku = ?, name = ?, category = ?, min_threshold = ?, purchase_price = ?, selling_price = ?, location = ?
-        WHERE id = ?
-    """, (part.sku.strip(), part.name.strip(), part.category.strip(), part.min_threshold, part.purchase_price, part.selling_price, (part.location or "").strip(), part_id))
-    if c.rowcount == 0:
-        c.execute("""
-            INSERT OR REPLACE INTO parts (id, sku, name, category, quantity, min_threshold, purchase_price, selling_price, location, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (part_id, part.sku.strip(), part.name.strip(), part.category.strip(), part.quantity, part.min_threshold, part.purchase_price, part.selling_price, (part.location or "").strip(), datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
-    conn.commit()
-    conn.close()
-    return {
-        "id": part_id,
-        "sku": part.sku.strip(),
-        "name": part.name.strip(),
-        "category": part.category.strip(),
-        "quantity": part.quantity,
-        "min_threshold": part.min_threshold,
-        "purchase_price": part.purchase_price,
-        "selling_price": part.selling_price,
-        "location": (part.location or "").strip(),
-        "message": "Карточка запчасти обновлена"
-    }
+    return database.update_part(part_id, part.model_dump())
 
 @app.post("/api/parts/{part_id}/stock")
 def adjust_part_stock(part_id: int, adjust: PartStockAdjust):
-    conn = database.get_connection()
-    c = conn.cursor()
-    c.execute("SELECT id, name, quantity FROM parts WHERE id = ?", (part_id,))
-    part = c.fetchone()
-    if not part:
-        conn.close()
+    try:
+        return database.adjust_part_stock(part_id, adjust.quantity_change, adjust.comment or "Корректировка остатка")
+    except KeyError:
         raise HTTPException(status_code=404, detail="Запчасть не найдена")
-
-    new_qty = part["quantity"] + adjust.quantity_change
-    if new_qty < 0:
-        conn.close()
-        raise HTTPException(status_code=400, detail="Остаток не может быть отрицательным!")
-
-    m_type = "incoming" if adjust.quantity_change > 0 else "outgoing"
-    c.execute("UPDATE parts SET quantity = ? WHERE id = ?", (new_qty, part_id))
-    
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    c.execute("""
-        INSERT INTO stock_movements (part_id, type, quantity, comment, created_at)
-        VALUES (?, ?, ?, ?, ?)
-    """, (part_id, m_type, abs(adjust.quantity_change), adjust.comment, now_str))
-
-    conn.commit()
-    conn.close()
-    return {"new_quantity": new_qty, "message": "Остаток успешно изменен"}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/api/stock/movements")
 def get_stock_movements(limit: int = 50):
-    conn = database.get_connection()
-    c = conn.cursor()
-    c.execute("""
-        SELECT sm.*, p.name as part_name, p.sku as part_sku
-        FROM stock_movements sm
-        JOIN parts p ON sm.part_id = p.id
-        ORDER BY sm.id DESC
-        LIMIT ?
-    """, (limit,))
-    movements = [dict(r) for r in c.fetchall()]
-    conn.close()
-    return movements
+    return database.get_stock_movements(limit=limit)
 
 @app.delete("/api/parts/{part_id}")
 @app.post("/api/parts/{part_id}/delete")
 def delete_part(part_id: int):
-    conn = database.get_connection()
-    c = conn.cursor()
-    c.execute("DELETE FROM parts WHERE id = ?", (part_id,))
-    conn.commit()
-    conn.close()
-    return {"message": "Запчасть удалена", "id": part_id}
+    return database.delete_part(part_id)
 
 # ----------------- Tasks & Planner -----------------
 
 @app.get("/api/tasks")
 def list_tasks(status: Optional[str] = None):
-    conn = database.get_connection()
-    c = conn.cursor()
-    query = """
-        SELECT t.*, 
-            c.name as client_name, c.company as client_company,
-            d.title as deal_title
-        FROM tasks t
-        LEFT JOIN clients c ON t.client_id = c.id
-        LEFT JOIN deals d ON t.deal_id = d.id
-        WHERE 1=1
-    """
-    params = []
-    if status and status != "all":
-        query += " AND t.status = ?"
-        params.append(status)
-    query += " ORDER BY t.status DESC, t.due_date ASC"
-
-    c.execute(query, params)
-    tasks = [dict(r) for r in c.fetchall()]
-    conn.close()
-    return tasks
+    return database.list_tasks(status=status)
 
 @app.post("/api/tasks")
 def create_task(task: TaskCreate):
-    conn = database.get_connection()
-    c = conn.cursor()
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    c.execute("""
-        INSERT INTO tasks (title, deal_id, client_id, due_date, priority, status, remind, notes, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (task.title, task.deal_id, task.client_id, task.due_date, task.priority, task.status, task.remind, task.notes, now_str))
-    task_id = c.lastrowid
-    conn.commit()
-    conn.close()
-    return {"id": task_id, "message": "Задача добавлена в планировщик"}
+    return database.create_task(task.model_dump())
 
 @app.patch("/api/tasks/{task_id}/toggle")
 @app.post("/api/tasks/{task_id}/toggle")
 def toggle_task(task_id: int):
-    conn = database.get_connection()
-    c = conn.cursor()
-    c.execute("SELECT status FROM tasks WHERE id = ?", (task_id,))
-    row = c.fetchone()
-    if not row:
-        conn.close()
+    try:
+        return database.toggle_task(task_id)
+    except KeyError:
         raise HTTPException(status_code=404, detail="Задача не найдена")
-    
-    new_status = "completed" if row["status"] != "completed" else "pending"
-    c.execute("UPDATE tasks SET status = ? WHERE id = ?", (new_status, task_id))
-    conn.commit()
-    conn.close()
-    return {"status": new_status, "message": "Статус задачи изменен", "id": task_id}
 
 @app.delete("/api/tasks/{task_id}")
 @app.post("/api/tasks/{task_id}/delete")
 def delete_task(task_id: int):
-    conn = database.get_connection()
-    c = conn.cursor()
-    c.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
-    conn.commit()
-    conn.close()
-    return {"message": "Задача удалена", "id": task_id}
+    return database.delete_task(task_id)
 
 # ----------------- Export / Import -----------------
 
@@ -1380,16 +556,9 @@ def export_table_csv(table: str):
     if table not in valid_tables:
         raise HTTPException(status_code=400, detail="Неверная таблица для экспорта")
 
-    conn = database.get_connection()
-    c = conn.cursor()
-    
-    if table == "users":
-        c.execute("SELECT id, username, full_name, role, phone, created_at FROM users")
-    else:
-        c.execute(f"SELECT * FROM {table}")
-        
-    rows = c.fetchall()
-    conn.close()
+    with database.get_sb_client() as client:
+        r = client.get(f"/{table}", params={"select": "*"})
+        rows = r.json() if r.status_code == 200 else []
 
     if not rows:
         return Response(content="Таблица пуста", media_type="text/csv")
@@ -1397,12 +566,10 @@ def export_table_csv(table: str):
     output = io.StringIO()
     output.write('\ufeff')
     writer = csv.writer(output, delimiter=';')
-    
-    headers = [col[0] for col in c.description]
+    headers = list(rows[0].keys())
     writer.writerow(headers)
-    
     for row in rows:
-        writer.writerow([row[col] for col in headers])
+        writer.writerow([row.get(col, '') for col in headers])
 
     filename = f"export_{table}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
     response = Response(content=output.getvalue().encode('utf-8-sig'), media_type="text/csv")
@@ -1420,28 +587,23 @@ async def import_clients(file: UploadFile = File(...)):
     reader = csv.DictReader(io.StringIO(text), delimiter=';' if ';' in text else ',')
     imported_count = 0
 
-    conn = database.get_connection()
-    c = conn.cursor()
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
     for row in reader:
         name = row.get("name") or row.get("ФИО") or row.get("Имя")
         if not name:
             continue
-        company = row.get("company") or row.get("Компания") or ""
-        phone = row.get("phone") or row.get("Телефон") or ""
-        email = row.get("email") or row.get("Email") or ""
-        address = row.get("address") or row.get("Адрес") or ""
-        notes = row.get("notes") or row.get("Заметки") or "Импортировано из файла"
+        try:
+            database.create_client({
+                "name": name.strip(),
+                "company": (row.get("company") or row.get("Компания") or "").strip(),
+                "phone": (row.get("phone") or row.get("Телефон") or "+37499000000").strip(),
+                "email": (row.get("email") or row.get("Email") or "").strip(),
+                "address": (row.get("address") or row.get("Адрес") or "").strip(),
+                "notes": (row.get("notes") or row.get("Заметки") or "Импортировано из CSV").strip(),
+            })
+            imported_count += 1
+        except Exception:
+            pass
 
-        c.execute("""
-            INSERT INTO clients (name, company, phone, email, address, notes, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (name, company, phone, email, address, notes, now_str))
-        imported_count += 1
-
-    conn.commit()
-    conn.close()
     return {"imported": imported_count, "message": f"Успешно импортировано {imported_count} клиентов"}
 
 @app.post("/api/import/parts")
@@ -1455,62 +617,32 @@ async def import_parts(file: UploadFile = File(...)):
     reader = csv.DictReader(io.StringIO(text), delimiter=';' if ';' in text else ',')
     imported_count = 0
 
-    conn = database.get_connection()
-    c = conn.cursor()
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
     for row in reader:
         sku = row.get("sku") or row.get("Артикул")
         name = row.get("name") or row.get("Наименование")
         if not sku or not name:
             continue
-        category = row.get("category") or row.get("Категория") or "Общее"
         try:
-            quantity = int(row.get("quantity") or row.get("Количество") or 0)
-        except ValueError:
-            quantity = 0
-        try:
-            purchase_price = float(row.get("purchase_price") or row.get("Закупка") or 0.0)
-        except ValueError:
-            purchase_price = 0.0
-        try:
-            selling_price = float(row.get("selling_price") or row.get("Продажа") or 0.0)
-        except ValueError:
-            selling_price = 0.0
-        location = row.get("location") or row.get("Склад") or ""
-
-        try:
-            c.execute("""
-                INSERT OR REPLACE INTO parts (sku, name, category, quantity, purchase_price, selling_price, location, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (sku, name, category, quantity, purchase_price, selling_price, location, now_str))
+            database.create_part({
+                "sku": sku.strip(),
+                "name": name.strip(),
+                "category": (row.get("category") or row.get("Категория") or "Общее").strip(),
+                "quantity": int(row.get("quantity") or row.get("Количество") or 0),
+                "purchase_price": float(row.get("purchase_price") or row.get("Закупка") or 0.0),
+                "selling_price": float(row.get("selling_price") or row.get("Продажа") or 0.0),
+                "location": (row.get("location") or row.get("Склад") or "").strip(),
+                "min_threshold": int(row.get("min_threshold") or 2)
+            })
             imported_count += 1
         except Exception:
             pass
 
-    conn.commit()
-    conn.close()
     return {"imported": imported_count, "message": f"Успешно импортировано {imported_count} запчастей"}
 
 @app.post("/api/reset-demo")
 def reset_demo_data():
-    conn = database.get_connection()
-    c = conn.cursor()
-    c.executescript("""
-        DELETE FROM deal_parts;
-        DELETE FROM stock_movements;
-        DELETE FROM tasks;
-        DELETE FROM deals;
-        DELETE FROM equipment;
-        DELETE FROM parts;
-        DELETE FROM clients;
-        DELETE FROM users;
-        DELETE FROM sqlite_sequence;
-    """)
-    database.seed_default_users(conn)
-    database.seed_demo_data(conn)
-    conn.close()
-    return {"message": "База данных успешно сброшена к демонстрационным данным СТО Спецмаш"}
+    database.init_db()
+    return {"message": "База данных успешно инициализирована данными СТО Спецмаш"}
 
 # ----------------- Static Frontend -----------------
 

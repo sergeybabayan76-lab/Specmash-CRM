@@ -8,47 +8,22 @@
 const crmStore = {
   KEY_PREFIX: 'specmash_crm_',
 
-  getDeletedList(entity) {
-    try {
-      const raw = localStorage.getItem(this.KEY_PREFIX + entity + '_deleted');
-      return raw ? JSON.parse(raw) : [];
-    } catch (e) {
-      return [];
-    }
-  },
-
-  trackDeleted(entity, id) {
-    if (!id) return;
-    try {
-      const deleted = this.getDeletedList(entity);
-      if (!deleted.includes(id)) {
-        deleted.push(id);
-        localStorage.setItem(this.KEY_PREFIX + entity + '_deleted', JSON.stringify(deleted.slice(-200)));
-      }
-    } catch (e) {}
-  },
-
   saveItem(entity, item) {
     if (!item) return;
     try {
       const list = this.getList(entity);
       const existingIdx = list.findIndex(x => (item.id && x.id == item.id) || (item.username && x.username === item.username));
-      const enrichedItem = { ...item, _updated_at: Date.now() };
       if (existingIdx >= 0) {
-        list[existingIdx] = { ...list[existingIdx], ...enrichedItem };
+        list[existingIdx] = { ...list[existingIdx], ...item };
       } else {
-        list.unshift(enrichedItem);
+        list.unshift(item);
       }
       localStorage.setItem(this.KEY_PREFIX + entity, JSON.stringify(list));
-      this.syncToServer();
-    } catch (e) {
-      console.warn('LocalStorage save error:', e);
-    }
+    } catch (e) {}
   },
 
   removeItem(entity, id) {
     try {
-      this.trackDeleted(entity, id);
       const list = this.getList(entity).filter(x => {
         if (x.id && id && String(x.id) === String(id)) return false;
         if (x.username && id && String(x.username).toLowerCase() === String(id).toLowerCase()) return false;
@@ -76,103 +51,300 @@ const crmStore = {
   },
 
   mergeWithServer(entity, serverItems) {
-    const localList = this.getList(entity);
-    const deletedList = this.getDeletedList(entity);
-
-    if (!Array.isArray(serverItems) || serverItems.length === 0) {
-      return localList;
-    }
-
-    // Filter out deleted items from server
-    let validServerItems = serverItems.filter(item => {
-      if (!item) return false;
-      if (item.id && deletedList.includes(item.id)) return false;
-      if (item.username && deletedList.includes(item.username)) return false;
-      return true;
-    });
-
-    const map = new Map();
-    // Add server items
-    for (const item of validServerItems) {
-      const key = item.id ? String(item.id) : (item.username || item.sku || Math.random());
-      map.set(key, item);
-    }
-
-    // Merge local items: keep any local items that are not deleted!
-    let hasLocalOnlyItems = false;
-    for (const localItem of localList) {
-      if (!localItem) continue;
-      if (localItem.id && deletedList.includes(localItem.id)) continue;
-      if (localItem.username && deletedList.includes(localItem.username)) continue;
-
-      const key = localItem.id ? String(localItem.id) : (localItem.username || localItem.sku);
-      if (!key) continue;
-
-      if (!map.has(key)) {
-        map.set(key, localItem);
-        hasLocalOnlyItems = true;
-      } else {
-        const serverItem = map.get(key);
-        if (localItem._updated_at && (!serverItem._updated_at || localItem._updated_at > serverItem._updated_at)) {
-          map.set(key, { ...serverItem, ...localItem });
-        }
+    if (Array.isArray(serverItems)) {
+      let items = serverItems;
+      if (entity === 'deals') {
+        items = items.map(d => ({
+          ...d,
+          parts_count: Number(d.parts_count || 0),
+          amount: Number(d.amount || 0),
+          cost: Number(d.cost || 0),
+        })).sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0));
+      } else if (['clients', 'equipment', 'parts', 'tasks', 'users'].includes(entity)) {
+        items = items.sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0));
       }
-    }
-
-    let merged = Array.from(map.values());
-
-    if (entity === 'users') {
-      merged = merged.filter(u => {
-        const un = String(u.username || '').trim().toLowerCase();
-        return un && un !== 'undefined' && un !== 'null' && un.length >= 3;
-      });
-    } else if (entity === 'deals') {
-      merged = merged.map(d => ({
-        ...d,
-        parts_count: Number(d.parts_count || 0),
-        amount: Number(d.amount || 0),
-        cost: Number(d.cost || 0),
-      })).sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0));
-    } else if (entity === 'clients' || entity === 'equipment' || entity === 'parts' || entity === 'tasks') {
-      merged.sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0));
-    }
-
-    try {
-      localStorage.setItem(this.KEY_PREFIX + entity, JSON.stringify(merged));
-    } catch (e) {}
-
-    if (hasLocalOnlyItems) {
-      this.syncToServer();
-    }
-
-    return merged;
-  },
-
-  _syncTimeout: null,
-  syncToServer() {
-    clearTimeout(this._syncTimeout);
-    this._syncTimeout = setTimeout(async () => {
       try {
-        const payload = {
-          clients: this.getList('clients'),
-          equipment: this.getList('equipment'),
-          parts: this.getList('parts'),
-          deals: this.getList('deals'),
-          tasks: this.getList('tasks'),
-        };
-        if (payload.clients.length || payload.equipment.length || payload.parts.length || payload.deals.length) {
-          await fetch('/api/sync/hydrate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-          });
-        }
-      } catch (e) {
-        console.warn('Sync hydrate error:', e);
-      }
-    }, 1200);
+        localStorage.setItem(this.KEY_PREFIX + entity, JSON.stringify(items));
+      } catch (e) {}
+      return items;
+    }
+    return this.getList(entity);
   }
 };
+
+// ================= REAL-TIME WEBSOCKETS & SUPABASE REALTIME =================
+
+let fastApiWs = null;
+let supabaseWs = null;
+let realtimeHeartbeatInterval = null;
+let kanbanPollingTimer = null;
+let isRealtimeConnected = false;
+
+function updateRealtimeStatus(status, text) {
+  const pill = document.getElementById('realtime-status-pill');
+  const txt = document.getElementById('realtime-status-text');
+  const dot = pill ? pill.querySelector('span:first-child') : null;
+  if (!pill) return;
+  if (status === 'connected') {
+    pill.className = 'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-medium transition-all';
+    if (dot) dot.className = 'w-2 h-2 rounded-full bg-emerald-500 animate-pulse';
+    if (txt) txt.textContent = text || 'WebSockets Онлайн';
+  } else if (status === 'syncing') {
+    pill.className = 'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-blue-50 border border-blue-200 text-blue-700 text-xs font-medium transition-all';
+    if (dot) dot.className = 'w-2 h-2 rounded-full bg-blue-500 animate-spin';
+    if (txt) txt.textContent = text || 'Синхронизация...';
+  } else {
+    pill.className = 'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-xs font-medium transition-all';
+    if (dot) dot.className = 'w-2 h-2 rounded-full bg-amber-400';
+    if (txt) txt.textContent = text || 'Авто-синхронизация';
+  }
+}
+
+function initRealtimeSync() {
+  initFastApiWebSocket();
+  initSupabaseRealtime();
+  startKanbanBackgroundPolling();
+}
+
+function initFastApiWebSocket() {
+  if (fastApiWs && (fastApiWs.readyState === WebSocket.OPEN || fastApiWs.readyState === WebSocket.CONNECTING)) {
+    return;
+  }
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = `${protocol}//${window.location.host}/ws/kanban`;
+
+  try {
+    fastApiWs = new WebSocket(wsUrl);
+
+    fastApiWs.onopen = () => {
+      isRealtimeConnected = true;
+      updateRealtimeStatus('connected', 'FastAPI WS Онлайн');
+    };
+
+    fastApiWs.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        handleIncomingRealtimeMessage(msg);
+      } catch (e) {}
+    };
+
+    fastApiWs.onerror = () => {
+      if (!supabaseWs || supabaseWs.readyState !== WebSocket.OPEN) {
+        updateRealtimeStatus('syncing', 'Supabase Realtime');
+      }
+    };
+
+    fastApiWs.onclose = () => {
+      fastApiWs = null;
+      setTimeout(() => {
+        if (state.currentUser && state.currentUser.id) {
+          initFastApiWebSocket();
+        }
+      }, 4000);
+    };
+  } catch (e) {
+    console.warn('[FastAPI WS Init Warning]', e);
+  }
+}
+
+async function initSupabaseRealtime() {
+  if (supabaseWs && (supabaseWs.readyState === WebSocket.OPEN || supabaseWs.readyState === WebSocket.CONNECTING)) {
+    return;
+  }
+
+  let sbHost = 'wnrnbptadgvmyibszpvk.supabase.co';
+  let sbKey = '';
+
+  try {
+    const res = await fetch('/api/realtime/config');
+    if (res.ok) {
+      const cfg = await res.json();
+      if (cfg.url) sbHost = cfg.url.replace(/^https?:\/\//, '');
+      if (cfg.key) sbKey = cfg.key;
+    }
+  } catch (e) {}
+
+  if (!sbKey) return;
+  const sbUrl = `wss://${sbHost}/realtime/v1/websocket?apikey=${encodeURIComponent(sbKey)}&vsn=1.0.0`;
+
+  try {
+    supabaseWs = new WebSocket(sbUrl);
+
+    supabaseWs.onopen = () => {
+      updateRealtimeStatus('connected', 'Supabase Realtime Онлайн');
+      // Join realtime channel for deals table postgres_changes
+      const joinMsg = {
+        topic: 'realtime:public:deals',
+        event: 'phx_join',
+        payload: {
+          config: {
+            broadcast: { self: true },
+            postgres_changes: [{ event: '*', schema: 'public', table: 'deals' }]
+          }
+        },
+        ref: '1'
+      };
+      supabaseWs.send(JSON.stringify(joinMsg));
+
+      if (realtimeHeartbeatInterval) clearInterval(realtimeHeartbeatInterval);
+      realtimeHeartbeatInterval = setInterval(() => {
+        if (supabaseWs && supabaseWs.readyState === WebSocket.OPEN) {
+          supabaseWs.send(JSON.stringify({
+            topic: 'phoenix',
+            event: 'heartbeat',
+            payload: {},
+            ref: 'hb'
+          }));
+        }
+      }, 25000);
+    };
+
+    supabaseWs.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.event === 'postgres_changes' && msg.payload && msg.payload.data) {
+          const change = msg.payload.data;
+          const changeType = change.type;
+          const record = change.record;
+          const oldRecord = change.old_record;
+
+          if (changeType === 'UPDATE' && record) {
+            handleRemoteDealStageChange(record.id, record.stage, record);
+          } else if (changeType === 'INSERT' && record) {
+            handleRemoteDealCreated(record);
+          } else if (changeType === 'DELETE' && oldRecord) {
+            handleRemoteDealDeleted(oldRecord.id);
+          }
+        }
+      } catch (e) {}
+    };
+
+    supabaseWs.onerror = () => {
+      updateRealtimeStatus('idle', 'Авто-синхронизация');
+    };
+
+    supabaseWs.onclose = () => {
+      supabaseWs = null;
+      if (realtimeHeartbeatInterval) clearInterval(realtimeHeartbeatInterval);
+      setTimeout(() => {
+        if (state.currentUser && state.currentUser.id) {
+          initSupabaseRealtime();
+        }
+      }, 5000);
+    };
+  } catch (e) {
+    console.warn('[Supabase Realtime Init Warning]', e);
+  }
+}
+
+function handleIncomingRealtimeMessage(msg) {
+  if (!msg || !msg.type) return;
+  if (msg.type === 'deal_stage_updated' || msg.type === 'deal_moved' || msg.type === 'stage_changed') {
+    const dealId = msg.deal_id;
+    const newStage = msg.stage;
+    handleRemoteDealStageChange(dealId, newStage, msg.data);
+  } else if (msg.type === 'deal_created' && msg.deal) {
+    handleRemoteDealCreated(msg.deal);
+  } else if (msg.type === 'deal_updated' && msg.deal) {
+    handleRemoteDealUpdated(msg.deal);
+  } else if (msg.type === 'deal_deleted') {
+    handleRemoteDealDeleted(msg.deal_id);
+  } else if (msg.type === 'deal_parts_updated') {
+    loadDeals();
+  }
+}
+
+function handleRemoteDealStageChange(dealId, newStage, recordData) {
+  if (!state.deals) return;
+  const numId = Number(dealId);
+  const deal = state.deals.find(d => Number(d.id) === numId);
+
+  if (deal) {
+    if (deal.stage === newStage && !recordData) return;
+    deal.stage = newStage;
+    if (recordData) {
+      if (recordData.amount !== undefined) deal.amount = recordData.amount;
+      if (recordData.cost !== undefined) deal.cost = recordData.cost;
+      if (recordData.title !== undefined) deal.title = recordData.title;
+      if (recordData.completed_at !== undefined) deal.completed_at = recordData.completed_at;
+    }
+
+    if (state.draggedDealId && Number(state.draggedDealId) === numId) {
+      return;
+    }
+
+    renderDeals();
+    highlightMovedCard(numId);
+  } else {
+    loadDeals();
+  }
+}
+
+function handleRemoteDealCreated(dealRecord) {
+  if (!state.deals) state.deals = [];
+  const numId = Number(dealRecord.id);
+  const exists = state.deals.some(d => Number(d.id) === numId);
+  if (!exists) {
+    state.deals.unshift(dealRecord);
+    renderDeals();
+    highlightMovedCard(numId);
+  }
+}
+
+function handleRemoteDealUpdated(dealRecord) {
+  if (!state.deals) return;
+  const numId = Number(dealRecord.id);
+  const idx = state.deals.findIndex(d => Number(d.id) === numId);
+  if (idx >= 0) {
+    state.deals[idx] = { ...state.deals[idx], ...dealRecord };
+    renderDeals();
+    highlightMovedCard(numId);
+  }
+}
+
+function handleRemoteDealDeleted(dealId) {
+  if (!state.deals) return;
+  const numId = Number(dealId);
+  state.deals = state.deals.filter(d => Number(d.id) !== numId);
+  renderDeals();
+}
+
+function highlightMovedCard(dealId) {
+  setTimeout(() => {
+    const card = document.getElementById(`kanban-card-${dealId}`);
+    if (card) {
+      card.classList.add('ring-2', 'ring-blue-500', 'bg-blue-50/50');
+      setTimeout(() => {
+        card.classList.remove('ring-2', 'ring-blue-500', 'bg-blue-50/50');
+      }, 1800);
+    }
+  }, 50);
+}
+
+function startKanbanBackgroundPolling() {
+  if (kanbanPollingTimer) clearInterval(kanbanPollingTimer);
+  kanbanPollingTimer = setInterval(async () => {
+    if (!state.currentUser || !state.currentUser.id || document.hidden) return;
+    if (state.draggedDealId) return;
+
+    if (state.currentTab === 'deals') {
+      try {
+        const res = await fetch('/api/deals');
+        if (res.ok) {
+          const freshDeals = await res.json();
+          if (Array.isArray(freshDeals)) {
+            const currentStr = JSON.stringify((state.deals || []).map(d => ({ id: d.id, stage: d.stage, amount: d.amount })));
+            const freshStr = JSON.stringify(freshDeals.map(d => ({ id: d.id, stage: d.stage, amount: d.amount })));
+            if (currentStr !== freshStr) {
+              state.deals = freshDeals;
+              renderDeals();
+            }
+          }
+        }
+      } catch (e) {}
+    }
+  }, 3500);
+}
 
 // Global State Cache
 const state = {
@@ -288,6 +460,7 @@ function showAppLayout() {
   if (authScreen) authScreen.classList.add('hidden');
   if (appLayout) appLayout.classList.remove('hidden');
   if (window.lucide) lucide.createIcons();
+  initRealtimeSync();
 }
 
 function showAuthError(msg) {
@@ -1377,14 +1550,25 @@ function renderDealsList() {
 
 async function updateDealStageQuick(dealId, newStage, event) {
   if (event) event.stopPropagation();
-  const deal = state.deals.find(d => d.id === dealId);
+  const deal = state.deals.find(d => Number(d.id) === Number(dealId));
   if (!deal || deal.stage === newStage) return;
 
   const oldStage = deal.stage;
   deal.stage = newStage;
-  deal._updated_at = Date.now();
   crmStore.saveItem('deals', deal);
   renderDeals();
+  highlightMovedCard(dealId);
+
+  // Send real-time notification to FastAPI WebSocket
+  if (fastApiWs && fastApiWs.readyState === WebSocket.OPEN) {
+    try {
+      fastApiWs.send(JSON.stringify({
+        type: 'deal_stage_updated',
+        deal_id: dealId,
+        stage: newStage
+      }));
+    } catch (e) {}
+  }
 
   try {
     let res = await fetch(`/api/deals/${dealId}/stage`, {
@@ -1406,7 +1590,6 @@ async function updateDealStageQuick(dealId, newStage, event) {
     loadDashboard();
   } catch (err) {
     console.warn('Deal stage update warning:', err);
-    crmStore.saveItem('deals', deal);
     const stageName = KANBAN_STAGES.find(s => s.id === newStage)?.label || newStage;
     showToast(`Стадия наряда сохранена: «${stageName}»`, 'info');
   }
@@ -1432,7 +1615,9 @@ function renderKanbanCard(deal) {
   else if (deal.priority === 'low') priorityBadge = '<span class="badge-low text-[10px] font-medium px-1.5 py-0.5 rounded">Низкий</span>';
 
   return `
-    <div class="kanban-card bg-white p-3.5 rounded-xl border border-slate-200/90 shadow-sm relative space-y-2" 
+    <div class="kanban-card bg-white p-3.5 rounded-xl border border-slate-200/90 shadow-sm relative space-y-2 transition-all duration-300" 
+         id="kanban-card-${deal.id}"
+         data-deal-id="${deal.id}"
          draggable="true" 
          ondragstart="handleDragStart(event, ${deal.id})"
          ondragend="handleDragEnd(event)"
@@ -1473,6 +1658,7 @@ function handleDragStart(e, dealId) {
 }
 
 function handleDragEnd(e) {
+  state.draggedDealId = null;
   e.currentTarget.classList.remove('dragging');
   document.querySelectorAll('.kanban-cards-container').forEach(el => el.classList.remove('drag-over'));
 }
@@ -1490,14 +1676,26 @@ async function handleDrop(e, newStage) {
   e.preventDefault();
   e.currentTarget.classList.remove('drag-over');
   const dealId = state.draggedDealId;
+  state.draggedDealId = null;
   if (!dealId) return;
 
-  const deal = state.deals.find(d => d.id === dealId);
+  const deal = state.deals.find(d => Number(d.id) === Number(dealId));
   if (deal && deal.stage !== newStage) {
     deal.stage = newStage;
-    deal._updated_at = Date.now();
     crmStore.saveItem('deals', deal);
     renderDeals();
+    highlightMovedCard(dealId);
+
+    // Send real-time notification to FastAPI WebSocket
+    if (fastApiWs && fastApiWs.readyState === WebSocket.OPEN) {
+      try {
+        fastApiWs.send(JSON.stringify({
+          type: 'deal_stage_updated',
+          deal_id: dealId,
+          stage: newStage
+        }));
+      } catch (e) {}
+    }
 
     try {
       let res = await fetch(`/api/deals/${dealId}/stage`, {
@@ -1518,7 +1716,6 @@ async function handleDrop(e, newStage) {
       loadDashboard();
     } catch (err) {
       console.warn('Handle drop warning:', err);
-      crmStore.saveItem('deals', deal);
       showToast(`Статус наряда сохранен: «${KANBAN_STAGES.find(s=>s.id===newStage)?.label}»`, 'info');
     }
   }

@@ -520,6 +520,11 @@
 
             <input type="text" id="kanban-filter" oninput="renderDeals()" placeholder="Поиск по сделке, клиенту, технике CASE..." class="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs outline-none focus:border-blue-500 w-56">
 
+            <div id="realtime-status-pill" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-medium transition-all" title="Синхронизация карточек в реальном времени активна">
+              <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              <span id="realtime-status-text">WebSockets Live</span>
+            </div>
+
             <button onclick="openDealModal()" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-sm transition-colors">
               <i data-lucide="plus" class="w-4 h-4"></i>
               <span>Создать наряд</span>

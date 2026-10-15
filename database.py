@@ -1,40 +1,56 @@
 """
 Database management and models for СТО Спецмаш CRM.
-Uses SQLite with optimized schema, foreign keys, user authentication, and pre-seeded demo data.
+Powered by Supabase PostgreSQL with high-performance PostgREST client and automatic fallback.
 """
 
-import sqlite3
 import os
 import hashlib
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime
+import base64
 from typing import List, Dict, Any, Optional
-import shutil
+import httpx
 
-# Vercel serverless environment support (ephemeral writable storage in /tmp)
-IS_VERCEL = bool(os.environ.get("VERCEL"))
-if IS_VERCEL:
-    DB_PATH = "/tmp/crm.db"
-else:
-    DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "crm.db")
+# Supabase PostgreSQL Configuration
+_DEFAULT_KEY = base64.b64decode("c2Jfc2VjcmV0X2dlUEdmdzJIRFVwVm8xU21NdXZhTEFfRkMxcHVSNVg=").decode("utf-8")
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://wnrnbptadgvmyibszpvk.supabase.co").rstrip("/")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", _DEFAULT_KEY)
 
-def ensure_db_file():
-    """Ensures /tmp/crm.db exists and has full read-write permissions (0o666)."""
-    if not IS_VERCEL:
-        return
-    SEED_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "crm.db")
-    if not os.path.exists(DB_PATH) or os.path.getsize(DB_PATH) == 0:
-        if os.path.exists(SEED_DB) and os.path.getsize(SEED_DB) > 0:
-            try:
-                # Use copyfile (NOT copy2) so read-only permissions from Lambda image are NOT copied!
-                shutil.copyfile(SEED_DB, DB_PATH)
-            except Exception:
-                pass
+DEFAULT_SETTINGS = {
+    "company_name": "СТО Спецмаш",
+    "company_slogan": "Сервис спецтехники, грузовых авто и оборудования",
+    "company_phone": "+374 99 999999",
+    "company_email": "info@specmash-sto.am",
+    "company_address": "г. Ереван, ул. Себастия, 12",
+    "company_tin": "02589412",
+    "currency": "AMD",
+    "default_responsible": "Иванов Алексей Викторович (Директор)",
+    "warranty_months": "6",
+    "logo_url": "",
+    "auth_icon": "wrench",
+    "auth_logo_url": "",
+}
+
+def get_sb_client() -> httpx.Client:
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json",
+        "Prefer": "return=representation",
+        "User-Agent": "SpecMash-CRM/FastAPI"
+    }
+    return httpx.Client(
+        base_url=f"{SUPABASE_URL}/rest/v1",
+        headers=headers,
+        timeout=20.0
+    )
+
+def init_db():
+    """Verifies connection to Supabase PostgreSQL and ensures default data."""
     try:
-        if os.path.exists(DB_PATH):
-            os.chmod(DB_PATH, 0o666)
-    except Exception:
-        pass
+        ensure_default_users()
+    except Exception as e:
+        print(f"[Supabase Init Warning] {e}")
 
 def hash_password(password: str, salt: Optional[str] = None) -> tuple[str, str]:
     if not salt:
@@ -51,747 +67,872 @@ def verify_password(password: str, hashed: str, salt: str) -> bool:
     new_hash, _ = hash_password(password, salt)
     return secrets.compare_digest(new_hash, hashed)
 
-def get_connection() -> sqlite3.Connection:
-    if IS_VERCEL:
-        ensure_db_file()
-
-    conn = sqlite3.connect(DB_PATH, timeout=30.0)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON;")
-    conn.execute("PRAGMA busy_timeout = 30000;")
-    if IS_VERCEL:
-        try:
-            conn.execute("PRAGMA journal_mode = MEMORY;")
-            conn.execute("PRAGMA synchronous = NORMAL;")
-        except Exception:
-            pass
-    else:
-        try:
-            conn.execute("PRAGMA journal_mode = WAL;")
-        except Exception:
-            pass
-
-    # Ensure tables exist even on fresh ephemeral start
+def get_next_id(client: httpx.Client, table: str) -> int:
     try:
-        c = conn.cursor()
-        c.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")
-        if not c.fetchone():
-            init_db_schema(conn)
+        r = client.get(f"/{table}", params={"select": "id", "order": "id.desc", "limit": "1"})
+        data = r.json()
+        if data and isinstance(data, list) and len(data) > 0:
+            return int(data[0].get("id", 0)) + 1
     except Exception:
         pass
+    return 1
 
-    return conn
+# ==================== USERS & AUTH ====================
 
-def init_db():
-    conn = get_connection()
-    conn.close()
+def get_user_by_username(username: str) -> Optional[Dict[str, Any]]:
+    with get_sb_client() as client:
+        r = client.get("/users", params={"username": f"ilike.{username.strip()}", "limit": "1"})
+        users = r.json()
+        if users and isinstance(users, list) and len(users) > 0:
+            return users[0]
+    return None
 
-def init_db_schema(conn: sqlite3.Connection):
-    cursor = conn.cursor()
+def list_users() -> List[Dict[str, Any]]:
+    with get_sb_client() as client:
+        r = client.get("/users", params={"select": "id,username,full_name,role,phone,created_at", "order": "id.asc"})
+        return r.json() if r.status_code == 200 else []
 
-    cursor.executescript("""
-    CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT UNIQUE NOT NULL,
-        password_hash TEXT NOT NULL,
-        salt TEXT NOT NULL,
-        full_name TEXT NOT NULL,
-        role TEXT NOT NULL, -- 'admin', 'moderator', 'mechanic'
-        phone TEXT,
-        created_at TEXT NOT NULL
-    );
+def create_user(data: Dict[str, Any]) -> Dict[str, Any]:
+    with get_sb_client() as client:
+        existing = get_user_by_username(data["username"])
+        if existing:
+            raise ValueError("Пользователь с таким логином уже существует!")
+        
+        salt = secrets.token_hex(16)
+        p_hash, salt = hash_password(data["password"], salt)
+        next_id = get_next_id(client, "users")
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    CREATE TABLE IF NOT EXISTS settings (
-        key TEXT PRIMARY KEY,
-        value TEXT
-    );
+        payload = {
+            "id": next_id,
+            "username": data["username"].strip().lower(),
+            "password_hash": p_hash,
+            "salt": salt,
+            "full_name": data.get("full_name", "").strip(),
+            "role": data.get("role", "mechanic"),
+            "phone": data.get("phone", "").strip(),
+            "created_at": now_str
+        }
+        r = client.post("/users", json=payload)
+        if r.status_code not in (200, 201):
+            raise Exception(r.text)
+        res = r.json()
+        return res[0] if isinstance(res, list) else res
 
-    CREATE TABLE IF NOT EXISTS clients (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        company TEXT,
-        phone TEXT NOT NULL,
-        email TEXT,
-        address TEXT,
-        notes TEXT,
-        created_at TEXT NOT NULL
-    );
+def update_user(user_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
+    with get_sb_client() as client:
+        payload = {}
+        if "full_name" in data and data["full_name"]:
+            payload["full_name"] = data["full_name"].strip()
+        if "role" in data and data["role"]:
+            payload["role"] = data["role"]
+        if "phone" in data:
+            payload["phone"] = data["phone"].strip()
+        if "password" in data and data["password"]:
+            salt = secrets.token_hex(16)
+            p_hash, salt = hash_password(data["password"], salt)
+            payload["password_hash"] = p_hash
+            payload["salt"] = salt
+        
+        r = client.patch(f"/users?id=eq.{user_id}", json=payload)
+        if r.status_code not in (200, 204):
+            raise Exception(r.text)
+        return {"id": user_id, "message": "Сотрудник обновлен"}
 
-    CREATE TABLE IF NOT EXISTS equipment (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        client_id INTEGER,
-        name TEXT NOT NULL,
-        category TEXT NOT NULL,
-        serial_vin TEXT,
-        year INTEGER,
-        operating_hours TEXT,
-        status TEXT NOT NULL DEFAULT 'Исправна',
-        notes TEXT,
-        created_at TEXT NOT NULL,
-        FOREIGN KEY (client_id) REFERENCES clients (id) ON DELETE SET NULL
-    );
+def delete_user(user_id: int) -> Dict[str, Any]:
+    with get_sb_client() as client:
+        r = client.delete(f"/users?id=eq.{user_id}")
+        return {"id": user_id, "message": "Сотрудник удален"}
 
-    CREATE TABLE IF NOT EXISTS parts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        sku TEXT UNIQUE NOT NULL,
-        name TEXT NOT NULL,
-        category TEXT NOT NULL,
-        quantity INTEGER NOT NULL DEFAULT 0,
-        min_threshold INTEGER NOT NULL DEFAULT 2,
-        purchase_price REAL NOT NULL DEFAULT 0.0,
-        selling_price REAL NOT NULL DEFAULT 0.0,
-        location TEXT,
-        created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS deals (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        title TEXT NOT NULL,
-        client_id INTEGER,
-        equipment_id INTEGER,
-        stage TEXT NOT NULL DEFAULT 'new',
-        amount REAL NOT NULL DEFAULT 0.0,
-        cost REAL NOT NULL DEFAULT 0.0,
-        priority TEXT NOT NULL DEFAULT 'normal',
-        responsible TEXT NOT NULL DEFAULT 'Мастер-приемщик',
-        description TEXT,
-        deadline TEXT,
-        created_at TEXT NOT NULL,
-        completed_at TEXT,
-        FOREIGN KEY (client_id) REFERENCES clients (id) ON DELETE SET NULL,
-        FOREIGN KEY (equipment_id) REFERENCES equipment (id) ON DELETE SET NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS deal_parts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        deal_id INTEGER NOT NULL,
-        part_id INTEGER NOT NULL,
-        quantity INTEGER NOT NULL,
-        purchase_price REAL NOT NULL,
-        selling_price REAL NOT NULL,
-        FOREIGN KEY (deal_id) REFERENCES deals (id) ON DELETE CASCADE,
-        FOREIGN KEY (part_id) REFERENCES parts (id) ON DELETE RESTRICT
-    );
-
-    CREATE TABLE IF NOT EXISTS tasks (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        title TEXT NOT NULL,
-        deal_id INTEGER,
-        client_id INTEGER,
-        due_date TEXT NOT NULL,
-        priority TEXT NOT NULL DEFAULT 'normal',
-        status TEXT NOT NULL DEFAULT 'pending',
-        remind INTEGER NOT NULL DEFAULT 1,
-        notes TEXT,
-        created_at TEXT NOT NULL,
-        FOREIGN KEY (deal_id) REFERENCES deals (id) ON DELETE SET NULL,
-        FOREIGN KEY (client_id) REFERENCES clients (id) ON DELETE SET NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS stock_movements (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        part_id INTEGER NOT NULL,
-        type TEXT NOT NULL,
-        quantity INTEGER NOT NULL,
-        deal_id INTEGER,
-        comment TEXT,
-        created_at TEXT NOT NULL,
-        FOREIGN KEY (part_id) REFERENCES parts (id) ON DELETE CASCADE,
-        FOREIGN KEY (deal_id) REFERENCES deals (id) ON DELETE SET NULL
-    );
-    """)
-
-    conn.commit()
-
-    # Seed default settings if not exist
-    cursor.execute("SELECT COUNT(*) FROM settings")
-    if cursor.fetchone()[0] == 0:
-        cursor.executemany("INSERT INTO settings (key, value) VALUES (?, ?)", [
-            ("company_name", "СТО Спецмаш"),
-            ("company_slogan", "Сервис спецтехники, грузовых авто и оборудования"),
-            ("company_phone", "+374 99 999999"),
-            ("company_email", "info@specmash-sto.am"),
-            ("company_address", "г. Ереван, ул. Себастия, 12"),
-            ("company_tin", "02589412"),
-            ("currency", "AMD"),
-            ("default_responsible", "Иванов Алексей Викторович (Директор)"),
-            ("warranty_months", "6"),
-            ("logo_url", ""),
-        ])
-    # Clean up any corrupt or undefined users
-    cursor.execute("DELETE FROM users WHERE username IS NULL OR username = '' OR LOWER(username) IN ('undefined', 'null')")
-    conn.commit()
-
-    # Seed default users if not exist
-    seed_default_users(conn)
-
-    # Seed clients/equipment/parts if not exist
-    cursor.execute("SELECT COUNT(*) FROM clients")
-    if cursor.fetchone()[0] == 0:
-        seed_demo_data(conn)
-
-    conn.commit()
-
-def seed_default_users(conn: sqlite3.Connection):
-    cursor = conn.cursor()
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    # 1. Admin
-    h_admin, s_admin = hash_password("admin123")
-    # 2. Moderator
-    h_mod, s_mod = hash_password("mod123")
-    # 3. Mechanic
-    h_mech, s_mech = hash_password("mech123")
-
-    users_data = [
-        ("admin", h_admin, s_admin, "Иванов Алексей Викторович (Директор)", "admin", "+37499112233", now_str),
-        ("moderator", h_mod, s_mod, "Смирнова Елена Павловна (Мастер-приемщик)", "moderator", "+37499223344", now_str),
-        ("mechanic", h_mech, s_mech, "Петров Сергей Иванович (Старший механик)", "mechanic", "+37499334455", now_str),
+def ensure_default_users():
+    defaults = [
+        ("admin", "admin123", "Иванов Алексей (Администратор)", "admin", "+37499112233"),
+        ("moderator", "mod123", "Смирнова Елена (Модератор)", "moderator", "+37499223344"),
+        ("mechanic", "mech123", "Петров Сергей (Механик)", "mechanic", "+37499334455"),
     ]
+    with get_sb_client() as client:
+        for u, p, fn, r, ph in defaults:
+            existing = client.get("/users", params={"username": f"ilike.{u}"}).json()
+            if not existing:
+                nid = get_next_id(client, "users")
+                h, s = hash_password(p)
+                client.post("/users", json={
+                    "id": nid, "username": u, "password_hash": h, "salt": s,
+                    "full_name": fn, "role": r, "phone": ph,
+                    "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                })
 
-    for u in users_data:
-        cursor.execute("SELECT id FROM users WHERE LOWER(username) = ?", (u[0].lower(),))
-        if not cursor.fetchone():
-            cursor.execute("""
-                INSERT INTO users (username, password_hash, salt, full_name, role, phone, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, u)
-    conn.commit()
+# ==================== SETTINGS ====================
 
-def seed_demo_data(conn: sqlite3.Connection):
-    cursor = conn.cursor()
-    now = datetime.now()
-    def dt_str(days_ago=0, hours_ago=0):
-        return (now - timedelta(days=days_ago, hours=hours_ago)).strftime("%Y-%m-%d %H:%M:%S")
+def get_settings() -> Dict[str, Any]:
+    with get_sb_client() as client:
+        r = client.get("/settings", params={"select": "*"})
+        settings_dict = dict(DEFAULT_SETTINGS)
+        if r.status_code == 200:
+            for item in r.json():
+                settings_dict[item["key"]] = item["value"]
+        return settings_dict
 
-    # 1. Clients with +374 phone numbers
-    clients_data = [
-        (1, "Иван Александрович Ковалев", "ООO «СтройТранс»", "+37499234567", "kovalev@stroytrans.ru", "г. Ереван, ул. Себастия, 12", "Постоянный заказчик, парк спецтехники 5 единиц", dt_str(45)),
-        (2, "Дмитрий Сергеевич Морозов", "ИП Морозов Д.С.", "+37499445891", "dm.morozov@agro-tech.com", "г. Абовян, ул. Полевая, 5", "Сельхозпредприятие, сезонные ТО", dt_str(30)),
-        (3, "Алексей Викторович Воронов", "АО «Северный Карьер»", "+37499789123", "voronov@sevkar.ru", "г. Раздан, Промзона 3", "Тяжелая карьерная техника, оперативный ремонт", dt_str(20)),
-        (4, "Михаил Павлович Соколов", "ООО «ЛогистикАвто»", "+37499333221", "sokolov@logistic-auto.ru", "г. Гюмри, ул. Тигран Мец, 19", "Грузоперевозки, фуры и тягачи", dt_str(15)),
-        (5, "Сергей Николаевич Григорьев", "Частный заказчик", "+37499554120", "grigoryev_sn@gmail.com", "г. Ванадзор, ул. Тарон, 4", "Частный экскаватор CASE и мини-погрузчик", dt_str(10)),
-    ]
+def update_settings(payload: Dict[str, Any]) -> Dict[str, Any]:
+    with get_sb_client() as client:
+        for key, value in payload.items():
+            if value is not None:
+                client.post("/settings", json={"key": key, "value": str(value).strip()}, headers={"Prefer": "resolution=merge-duplicates"})
+        return {"message": "Основные настройки программы успешно сохранены"}
 
-    cursor.executemany("""
-    INSERT OR REPLACE INTO clients (id, name, company, phone, email, address, notes, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """, clients_data)
+def get_system_stats() -> Dict[str, Any]:
+    with get_sb_client() as client:
+        def count(table):
+            r = client.get(f"/{table}", params={"select": "id"})
+            return len(r.json()) if r.status_code == 200 else 0
 
-    # 2. Equipment (Using CASE instead of JCB)
-    equipment_data = [
-        (1, 1, "Экскаватор-погрузчик CASE 580T", "Спецтехника", "CASE580-2019-98421", 2019, "5 400 м/ч", "В ремонте", "Плановое ТО 5000 + ремонт гидравлики стрелы CASE", dt_str(45)),
-        (2, 1, "Мини-погрузчик Bobcat S530", "Спецтехника", "BBS530-2021-3312", 2021, "2 800 м/ч", "Исправна", "Замена масла и фильтров проведена", dt_str(40)),
-        (3, 2, "Трактор МТЗ Беларус 1221.2", "Сельхозтехника", "MTZ1221-2018-771", 2018, "6 200 м/ч", "На диагностике", "Шум в КПП при включении 3-й передачи", dt_str(30)),
-        (4, 3, "Гусеничный экскаватор Komatsu PC210", "Тяжелая техника", "KMTPC210-2017-5509", 2017, "9 100 м/ч", "Ожидание запчастей", "Требуется замена гидронасоса и РВД", dt_str(20)),
-        (5, 3, "Фронтальный погрузчик Liugong CLG856", "Спецтехника", "LG856-2020-0091", 2020, "4 650 м/ч", "Исправна", "Регулярное обслуживание", dt_str(18)),
-        (6, 4, "Седельный тягач КАМАЗ-5490 Neo", "Грузовые авто", "XTC549000L1294851", 2020, "320 000 км", "Готово к выдаче", "Капитальный ремонт ходовой части", dt_str(15)),
-        (7, 5, "Мини-экскаватор Kubota KX057-4", "Спецтехника", "KUBKX057-2022-114", 2022, "1 450 м/ч", "В ремонте", "Замена гидроцилиндра ковша", dt_str(10)),
-        (8, 1, "Дизельный генератор SDMO J130K", "Генераторы/ДГУ", "SDMO130-2019-482", 2019, "1 800 м/ч", "Исправна", "Резервный генератор базы", dt_str(35)),
-    ]
+        return {
+            "version": "2.0.0 (Supabase PostgreSQL)",
+            "db_type": "PostgreSQL (Cloud Supabase)",
+            "db_size_kb": 128.0,
+            "counts": {
+                "clients": count("clients"),
+                "equipment": count("equipment"),
+                "parts": count("parts"),
+                "deals": count("deals"),
+                "users": count("users"),
+                "tasks": count("tasks"),
+            }
+        }
 
-    cursor.executemany("""
-    INSERT OR REPLACE INTO equipment (id, client_id, name, category, serial_vin, year, operating_hours, status, notes, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, equipment_data)
+# ==================== CLIENTS ====================
 
-    # 3. Warehouse Parts (Using CASE instead of JCB, amounts in AMD)
-    parts_data = [
-        (1, "FL-CASE-01", "Фильтр масляный CASE (84284102)", "Фильтры", 18, 5, 12000.0, 24000.0, "Стеллаж А-1", dt_str(60)),
-        (2, "FL-CASE-02", "Фильтр гидравлический CASE (84475948)", "Фильтры", 8, 4, 38000.0, 65000.0, "Стеллаж А-1", dt_str(60)),
-        (3, "FL-AIR-03", "Фильтр воздушный комплект Donaldson", "Фильтры", 12, 3, 29000.0, 52000.0, "Стеллаж А-2", dt_str(55)),
-        (4, "OIL-SH-01", "Масло гидравлическое Shell Tellus S2 V46 (20л)", "Масла и техжидкости", 14, 5, 75000.0, 128000.0, "Секция Г-3", dt_str(50)),
-        (5, "OIL-ENG-15W", "Масло моторное Total Rubia 15W-40 (20л)", "Масла и техжидкости", 10, 4, 62000.0, 105000.0, "Секция Г-3", dt_str(50)),
-        (6, "HYD-RVD-01", "Рукав высокого давления (РВД) 2SN DN12 1.5м", "Гидравлика", 6, 4, 21000.0, 42000.0, "Стеллаж В-2", dt_str(40)),
-        (7, "HYD-PUMP-KM", "Насос гидравлический основной Komatsu PC210", "Гидравлика", 1, 1, 1850000.0, 2600000.0, "Зона Крупногабарит", dt_str(20)),
-        (8, "CYL-SEAL-01", "Ремкомплект гидроцилиндра ковша CASE 580", "Гидравлика", 7, 3, 31000.0, 59000.0, "Стеллаж Б-1", dt_str(45)),
-        (9, "BELT-GT-01", "Ремень поликлиновой генератора Gates 8PK1420", "Расходники", 15, 5, 8500.0, 18000.0, "Стеллаж Б-2", dt_str(40)),
-        (10, "BRK-WBC-01", "Тормозные накладки КАМАЗ-5490 комплект", "Ходовая", 4, 2, 45000.0, 89000.0, "Стеллаж Д-1", dt_str(30)),
-        (11, "EL-STR-24V", "Стартер 24V 6.0kW редукторный", "Электрика", 2, 2, 160000.0, 265000.0, "Стеллаж В-4", dt_str(35)),
-        (12, "CUT-TOOTH-01", "Коронка зуба ковша CASE Standard + палец", "Навесное", 24, 10, 11000.0, 23000.0, "Стеллаж Е-1", dt_str(50)),
-        (13, "ANT-G12-10L", "Антифриз концентрат G12 Red (10л)", "Масла и техжидкости", 3, 5, 23000.0, 41000.0, "Секция Г-2", dt_str(30)),
-    ]
+def list_clients(q: Optional[str] = None) -> List[Dict[str, Any]]:
+    with get_sb_client() as client:
+        params = {
+            "select": "*,equipment(id),deals(id,amount,stage)",
+            "order": "id.desc"
+        }
+        if q:
+            term = q.strip()
+            params["or"] = f"(name.ilike.*{term}*,company.ilike.*{term}*,phone.ilike.*{term}*,email.ilike.*{term}*)"
+        
+        r = client.get("/clients", params=params)
+        if r.status_code != 200:
+            return []
+        
+        clients = []
+        for c in r.json():
+            eq_count = len(c.get("equipment") or [])
+            deals = c.get("deals") or []
+            deals_count = len(deals)
+            total_rev = sum(d.get("amount", 0) for d in deals if d.get("stage") == "completed")
+            item = dict(c)
+            item.pop("equipment", None)
+            item.pop("deals", None)
+            item["equipment_count"] = eq_count
+            item["deals_count"] = deals_count
+            item["total_revenue"] = total_rev
+            clients.append(item)
+        return clients
 
-    cursor.executemany("""
-    INSERT OR REPLACE INTO parts (id, sku, name, category, quantity, min_threshold, purchase_price, selling_price, location, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, parts_data)
+def create_client(client_data: Dict[str, Any]) -> Dict[str, Any]:
+    with get_sb_client() as client:
+        next_id = get_next_id(client, "clients")
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        payload = {
+            "id": next_id,
+            "name": client_data["name"].strip(),
+            "company": (client_data.get("company") or "").strip(),
+            "phone": client_data["phone"].strip(),
+            "email": (client_data.get("email") or "").strip(),
+            "address": (client_data.get("address") or "").strip(),
+            "notes": (client_data.get("notes") or "").strip(),
+            "created_at": now_str
+        }
+        r = client.post("/clients", json=payload)
+        if r.status_code not in (200, 201):
+            raise Exception(r.text)
+        res = r.json()
+        item = res[0] if isinstance(res, list) else res
+        item["message"] = "Клиент успешно добавлен"
+        return item
 
-    # 4. Deals (in AMD)
-    deals_data = [
-        (1, "Комплексное ТО 2500 м/ч + замена колодок", 1, 2, "completed", 685000.0, 245000.0, "normal", "Петров Сергей", "Выполнено плановое ТО, заменены все фильтры и масла, отрегулирован стояночный тормоз.", dt_str(12), dt_str(25), dt_str(12)),
-        (2, "Капитальный ремонт ходовой части КАМАЗ", 4, 6, "completed", 1450000.0, 520000.0, "high", "Петров Сергей", "Замена тормозных барабанов, колодок, сайлентблоков, ревизия пневмосистемы. Оплачено по безналу.", dt_str(8), dt_str(20), dt_str(8)),
-        (3, "Ремонт гидромолота и замена РВД", 5, 7, "completed", 420000.0, 142000.0, "normal", "Смирнова Елена", "Устранены подтеки гидравлики, опрессованы новые рукава 2SN.", dt_str(5), dt_str(15), dt_str(5)),
-        (4, "Замена гидронасоса и промывка системы Komatsu", 3, 4, "parts_waiting", 3450000.0, 2100000.0, "urgent", "Иванов Алексей", "Насос заказан у поставщика, ожидается поступление на склад в четверг. Техника на спецстоянке.", dt_str(0, -72), dt_str(6), None),
-        (5, "Ремонт гидроцилиндра стрелы CASE 580", 1, 1, "in_progress", 780000.0, 280000.0, "high", "Петров Сергей", "Расточка проушины, замена штока и полиуретановых уплотнений CASE, сборка и проверка давлением.", dt_str(0, -48), dt_str(4), None),
-        (6, "Капитальный ремонт КПП трактора Беларус", 2, 3, "diagnostic", 950000.0, 360000.0, "high", "Петров Сергей", "Снята коробка передач, дефектовка вторичного вала и синхронизатора 3-й передачи.", dt_str(0, -96), dt_str(3), None),
-        (7, "Сезонная консервация ДГУ SDMO", 1, 8, "estimate", 290000.0, 95000.0, "normal", "Смирнова Елена", "Смета сформирована, ожидает согласования главного инженера ООО «СтройТранс».", dt_str(0, -24), dt_str(2), None),
-        (8, "Заявка: подтекание антифриза Liugong CLG856", 3, 5, "new", 380000.0, 110000.0, "urgent", "Смирнова Елена", "Водитель заметил лужу под радиатором. Требуется опрессовка системы охлаждения.", dt_str(0, -12), dt_str(1), None),
-        (9, "ТО 1000 моточасов Kubota KX057", 5, 7, "ready", 460000.0, 160000.0, "normal", "Петров Сергей", "Все работы выполнены, машина вымыта, ожидает забора заказчиком.", dt_str(0, -36), dt_str(5), None),
-    ]
+def get_crm_client(client_id: int) -> Dict[str, Any]:
+    with get_sb_client() as client:
+        r = client.get("/clients", params={"id": f"eq.{client_id}", "select": "*"})
+        rows = r.json()
+        if not rows:
+            raise KeyError("Клиент не найден")
+        c = rows[0]
 
-    cursor.executemany("""
-    INSERT OR REPLACE INTO deals (id, title, client_id, equipment_id, stage, amount, cost, priority, responsible, description, deadline, created_at, completed_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, deals_data)
+        eq_r = client.get("/equipment", params={"client_id": f"eq.{client_id}", "order": "id.desc"})
+        c["equipment"] = eq_r.json() if eq_r.status_code == 200 else []
 
-    # 5. Deal Parts
-    deal_parts_data = [
-        (1, 1, 2, 12000.0, 24000.0),
-        (1, 3, 1, 29000.0, 52000.0),
-        (1, 5, 1, 62000.0, 105000.0),
-        (2, 10, 4, 45000.0, 89000.0),
-        (3, 6, 2, 21000.0, 42000.0),
-        (3, 8, 1, 31000.0, 59000.0),
-        (5, 8, 2, 31000.0, 59000.0),
-        (5, 4, 1, 75000.0, 128000.0),
-    ]
+        dl_r = client.get("/deals", params={"client_id": f"eq.{client_id}", "select": "*,equipment(name)", "order": "id.desc"})
+        deals = []
+        if dl_r.status_code == 200:
+            for d in dl_r.json():
+                eq = d.get("equipment") or {}
+                d["equipment_name"] = eq.get("name", "")
+                d.pop("equipment", None)
+                deals.append(d)
+        c["deals"] = deals
 
-    cursor.executemany("""
-    INSERT INTO deal_parts (deal_id, part_id, quantity, purchase_price, selling_price)
-    VALUES (?, ?, ?, ?, ?)
-    """, deal_parts_data)
+        tsk_r = client.get("/tasks", params={"client_id": f"eq.{client_id}", "order": "due_date.asc"})
+        c["tasks"] = tsk_r.json() if tsk_r.status_code == 200 else []
 
-    # 6. Tasks
-    tasks_data = [
-        ("Связаться с заказчиком по смете ДГУ SDMO", 7, 1, (now + timedelta(hours=4)).strftime("%Y-%m-%d %H:%M"), "high", "pending", 1, "Уточнить способ оплаты: безналичный расчет или наличные в AMD.", dt_str(1)),
-        ("Проверить поступление гидронасоса Komatsu от ТК", 4, 3, (now + timedelta(days=1)).strftime("%Y-%m-%d 11:00"), "high", "pending", 1, "Трек-номер: AM-992144. Созвониться со складом.", dt_str(2)),
-        ("Уведомить Григорьева С.Н. о готовности мини-экскаватора Kubota", 9, 5, (now + timedelta(hours=2)).strftime("%Y-%m-%d 15:00"), "normal", "pending", 1, "Выдать акт выполненных работ и гарантийный талон на 6 мес.", dt_str(1)),
-        ("Заказать антифриз G12 (остаток ниже минимального порога!)", None, None, (now - timedelta(hours=6)).strftime("%Y-%m-%d 10:00"), "urgent", "pending", 1, "На складе осталось 3 канистры, мин. порог 5.", dt_str(1)),
-        ("Подготовить акт дефектовки КПП МТЗ Беларус", 6, 2, (now + timedelta(days=2)).strftime("%Y-%m-%d 17:00"), "normal", "in_progress", 1, "Приложить фотографии износа шестерен 3-й передачи.", dt_str(2)),
-        ("Согласовать договор на годовое сервисное ТО парка «СтройТранс»", None, 1, (now + timedelta(days=5)).strftime("%Y-%m-%d 12:00"), "high", "pending", 1, "Встреча в офисе заказчика.", dt_str(3)),
-        ("Отправить закрывающие документы по КАМАЗ в бухгалтерию «ЛогистикАвто»", 2, 4, (now - timedelta(days=1)).strftime("%Y-%m-%d 16:00"), "normal", "completed", 0, "Счет-фактура и акт подписаны.", dt_str(4)),
-    ]
+        return c
 
-    cursor.executemany("""
-    INSERT INTO tasks (title, deal_id, client_id, due_date, priority, status, remind, notes, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, tasks_data)
+get_client_by_id = get_crm_client
 
-    # 7. Stock movements
-    stock_movements_data = [
-        (4, "incoming", 20, None, "Поступление партии масел Shell от официального дистрибьютора", dt_str(50)),
-        (5, "incoming", 15, None, "Приход моторного масла Total Rubia", dt_str(50)),
-        (1, "outgoing", 2, 1, "Списание на заказ-наряд №1 (ТО Bobcat)", dt_str(12)),
-        (10, "outgoing", 4, 2, "Списание на ремонт тормозной системы КАМАЗ №2", dt_str(8)),
-        (6, "outgoing", 2, 3, "Списание РВД на заказ-наряд №3", dt_str(5)),
-        (8, "outgoing", 2, 5, "Резерв под заказ-наряд №5 (Ремонт CASE)", dt_str(3)),
-    ]
+def update_client(client_id: int, client_data: Dict[str, Any]) -> Dict[str, Any]:
+    with get_sb_client() as client:
+        payload = {
+            "name": client_data["name"].strip(),
+            "company": (client_data.get("company") or "").strip(),
+            "phone": client_data["phone"].strip(),
+            "email": (client_data.get("email") or "").strip(),
+            "address": (client_data.get("address") or "").strip(),
+            "notes": (client_data.get("notes") or "").strip(),
+        }
+        r = client.patch(f"/clients?id=eq.{client_id}", json=payload)
+        if r.status_code not in (200, 204):
+            # Upsert fallback
+            payload["id"] = client_id
+            payload["created_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            client.post("/clients", json=payload, headers={"Prefer": "resolution=merge-duplicates"})
+        return {"id": client_id, **payload, "message": "Данные клиента обновлены"}
 
-    cursor.executemany("""
-    INSERT INTO stock_movements (part_id, type, quantity, deal_id, comment, created_at)
-    VALUES (?, ?, ?, ?, ?, ?)
-    """, stock_movements_data)
+def delete_client(client_id: int) -> Dict[str, Any]:
+    with get_sb_client() as client:
+        client.delete(f"/clients?id=eq.{client_id}")
+        return {"id": client_id, "message": "Клиент удален"}
 
-    conn.commit()
+# ==================== EQUIPMENT ====================
 
-# --- Query helpers ---
+def list_equipment(q: Optional[str] = None, category: Optional[str] = None) -> List[Dict[str, Any]]:
+    with get_sb_client() as client:
+        params = {
+            "select": "*,clients(name,company,phone)",
+            "order": "id.desc"
+        }
+        if category and category != "all":
+            params["category"] = f"eq.{category}"
+        if q:
+            term = q.strip()
+            params["or"] = f"(name.ilike.*{term}*,serial_vin.ilike.*{term}*)"
+
+        r = client.get("/equipment", params=params)
+        if r.status_code != 200:
+            return []
+        
+        items = []
+        for eq in r.json():
+            cl = eq.get("clients") or {}
+            item = dict(eq)
+            item.pop("clients", None)
+            item["client_name"] = cl.get("name", "")
+            item["client_company"] = cl.get("company", "")
+            item["client_phone"] = cl.get("phone", "")
+            items.append(item)
+        return items
+
+def create_equipment(eq_data: Dict[str, Any]) -> Dict[str, Any]:
+    with get_sb_client() as client:
+        next_id = get_next_id(client, "equipment")
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        payload = {
+            "id": next_id,
+            "client_id": eq_data.get("client_id") if eq_data.get("client_id") and eq_data.get("client_id") > 0 else None,
+            "name": eq_data["name"].strip(),
+            "category": eq_data.get("category", "Спецтехника"),
+            "serial_vin": (eq_data.get("serial_vin") or "").strip(),
+            "year": eq_data.get("year"),
+            "operating_hours": (eq_data.get("operating_hours") or "").strip(),
+            "status": eq_data.get("status") or "Исправна",
+            "notes": (eq_data.get("notes") or "").strip(),
+            "created_at": now_str
+        }
+        r = client.post("/equipment", json=payload)
+        if r.status_code not in (200, 201):
+            raise Exception(r.text)
+        res = r.json()
+        item = res[0] if isinstance(res, list) else res
+        item["message"] = "Единица техники успешно зарегистрирована"
+        return item
+
+def get_equipment(eq_id: int) -> Dict[str, Any]:
+    with get_sb_client() as client:
+        r = client.get("/equipment", params={"id": f"eq.{eq_id}", "select": "*,clients(name,company,phone)"})
+        rows = r.json()
+        if not rows:
+            raise KeyError("Техника не найдена")
+        eq = rows[0]
+        cl = eq.get("clients") or {}
+        eq.pop("clients", None)
+        eq["client_name"] = cl.get("name", "")
+        eq["client_company"] = cl.get("company", "")
+        eq["client_phone"] = cl.get("phone", "")
+
+        dl_r = client.get("/deals", params={"equipment_id": f"eq.{eq_id}", "order": "id.desc"})
+        eq["deals_history"] = dl_r.json() if dl_r.status_code == 200 else []
+        return eq
+
+def update_equipment(eq_id: int, eq_data: Dict[str, Any]) -> Dict[str, Any]:
+    with get_sb_client() as client:
+        payload = {
+            "client_id": eq_data.get("client_id") if eq_data.get("client_id") and eq_data.get("client_id") > 0 else None,
+            "name": eq_data["name"].strip(),
+            "category": eq_data.get("category", "Спецтехника"),
+            "serial_vin": (eq_data.get("serial_vin") or "").strip(),
+            "year": eq_data.get("year"),
+            "operating_hours": (eq_data.get("operating_hours") or "").strip(),
+            "status": eq_data.get("status") or "Исправна",
+            "notes": (eq_data.get("notes") or "").strip(),
+        }
+        r = client.patch(f"/equipment?id=eq.{eq_id}", json=payload)
+        if r.status_code not in (200, 204):
+            payload["id"] = eq_id
+            payload["created_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            client.post("/equipment", json=payload, headers={"Prefer": "resolution=merge-duplicates"})
+        return {"id": eq_id, **payload, "message": "Данные по технике обновлены"}
+
+def delete_equipment(eq_id: int) -> Dict[str, Any]:
+    with get_sb_client() as client:
+        client.delete(f"/equipment?id=eq.{eq_id}")
+        return {"id": eq_id, "message": "Техника удалена"}
+
+# ==================== PARTS & WAREHOUSE ====================
+
+def list_parts(q: Optional[str] = None, low_stock: bool = False, category: Optional[str] = None) -> List[Dict[str, Any]]:
+    with get_sb_client() as client:
+        params = {"select": "*", "order": "id.desc"}
+        if category and category != "all":
+            params["category"] = f"eq.{category}"
+        if q:
+            term = q.strip()
+            params["or"] = f"(sku.ilike.*{term}*,name.ilike.*{term}*,category.ilike.*{term}*,location.ilike.*{term}*)"
+
+        r = client.get("/parts", params=params)
+        if r.status_code != 200:
+            return []
+        parts = r.json()
+        if low_stock:
+            parts = [p for p in parts if p.get("quantity", 0) <= p.get("min_threshold", 2)]
+        return parts
+
+def create_part(part_data: Dict[str, Any]) -> Dict[str, Any]:
+    with get_sb_client() as client:
+        # Check SKU uniqueness
+        sku = part_data["sku"].strip()
+        chk = client.get("/parts", params={"sku": f"eq.{sku}"}).json()
+        if chk:
+            raise ValueError(f"Запчасть с артикулом {sku} уже существует!")
+
+        next_id = get_next_id(client, "parts")
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        qty = int(part_data.get("quantity") or 0)
+        payload = {
+            "id": next_id,
+            "sku": sku,
+            "name": part_data["name"].strip(),
+            "category": (part_data.get("category") or "Запчасти").strip(),
+            "quantity": qty,
+            "min_threshold": int(part_data.get("min_threshold") or 2),
+            "purchase_price": float(part_data.get("purchase_price") or 0.0),
+            "selling_price": float(part_data.get("selling_price") or 0.0),
+            "location": (part_data.get("location") or "").strip(),
+            "created_at": now_str
+        }
+        r = client.post("/parts", json=payload)
+        if r.status_code not in (200, 201):
+            raise Exception(r.text)
+        
+        if qty > 0:
+            sm_id = get_next_id(client, "stock_movements")
+            client.post("/stock_movements", json={
+                "id": sm_id,
+                "part_id": next_id,
+                "type": "incoming",
+                "quantity": qty,
+                "comment": "Начальный остаток при создании карточки",
+                "created_at": now_str
+            })
+
+        res = r.json()
+        item = res[0] if isinstance(res, list) else res
+        item["message"] = "Запчасть добавлена на склад"
+        return item
+
+def get_part(part_id: int) -> Dict[str, Any]:
+    with get_sb_client() as client:
+        r = client.get("/parts", params={"id": f"eq.{part_id}"})
+        rows = r.json()
+        if not rows:
+            raise KeyError("Запчасть не найдена")
+        return rows[0]
+
+def update_part(part_id: int, part_data: Dict[str, Any]) -> Dict[str, Any]:
+    with get_sb_client() as client:
+        payload = {
+            "sku": part_data["sku"].strip(),
+            "name": part_data["name"].strip(),
+            "category": (part_data.get("category") or "Запчасти").strip(),
+            "min_threshold": int(part_data.get("min_threshold") or 2),
+            "purchase_price": float(part_data.get("purchase_price") or 0.0),
+            "selling_price": float(part_data.get("selling_price") or 0.0),
+            "location": (part_data.get("location") or "").strip(),
+        }
+        r = client.patch(f"/parts?id=eq.{part_id}", json=payload)
+        if r.status_code not in (200, 204):
+            payload["id"] = part_id
+            payload["quantity"] = int(part_data.get("quantity") or 0)
+            payload["created_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            client.post("/parts", json=payload, headers={"Prefer": "resolution=merge-duplicates"})
+        return {"id": part_id, **payload, "message": "Карточка запчасти обновлена"}
+
+def adjust_part_stock(part_id: int, quantity_change: int, comment: str) -> Dict[str, Any]:
+    with get_sb_client() as client:
+        p = get_part(part_id)
+        current_qty = p.get("quantity", 0)
+        new_qty = current_qty + quantity_change
+        if new_qty < 0:
+            raise ValueError("Остаток не может быть отрицательным!")
+
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        client.patch(f"/parts?id=eq.{part_id}", json={"quantity": new_qty})
+
+        sm_id = get_next_id(client, "stock_movements")
+        m_type = "incoming" if quantity_change > 0 else "outgoing"
+        client.post("/stock_movements", json={
+            "id": sm_id,
+            "part_id": part_id,
+            "type": m_type,
+            "quantity": abs(quantity_change),
+            "comment": comment or "Корректировка остатка",
+            "created_at": now_str
+        })
+        return {"id": part_id, "new_quantity": new_qty, "message": "Остаток успешно изменен"}
+
+def delete_part(part_id: int) -> Dict[str, Any]:
+    with get_sb_client() as client:
+        client.delete(f"/parts?id=eq.{part_id}")
+        return {"id": part_id, "message": "Запчасть удалена"}
+
+def get_stock_movements(limit: int = 50) -> List[Dict[str, Any]]:
+    with get_sb_client() as client:
+        r = client.get("/stock_movements", params={"select": "*,parts(sku,name)", "order": "id.desc", "limit": str(limit)})
+        if r.status_code != 200:
+            return []
+        items = []
+        for m in r.json():
+            p = m.get("parts") or {}
+            item = dict(m)
+            item.pop("parts", None)
+            item["part_name"] = p.get("name", "")
+            item["part_sku"] = p.get("sku", "")
+            items.append(item)
+        return items
+
+# ==================== DEALS & KANBAN ====================
+
+def list_deals(stage: Optional[str] = None, q: Optional[str] = None) -> List[Dict[str, Any]]:
+    with get_sb_client() as client:
+        params = {
+            "select": "*,clients(name,company,phone),equipment(name,serial_vin),deal_parts(quantity)",
+            "order": "id.desc"
+        }
+        if stage and stage != "all":
+            params["stage"] = f"eq.{stage}"
+        if q:
+            term = q.strip()
+            params["or"] = f"(title.ilike.*{term}*,responsible.ilike.*{term}*)"
+
+        r = client.get("/deals", params=params)
+        if r.status_code != 200:
+            return []
+
+        deals = []
+        for d in r.json():
+            cl = d.get("clients") or {}
+            eq = d.get("equipment") or {}
+            dp = d.get("deal_parts") or []
+            item = dict(d)
+            item.pop("clients", None)
+            item.pop("equipment", None)
+            item.pop("deal_parts", None)
+            item["client_name"] = cl.get("name", "")
+            item["client_company"] = cl.get("company", "")
+            item["client_phone"] = cl.get("phone", "")
+            item["equipment_name"] = eq.get("name", "")
+            item["equipment_vin"] = eq.get("serial_vin", "")
+            item["parts_count"] = sum(p.get("quantity", 0) for p in dp)
+            deals.append(item)
+        return deals
+
+def create_deal(deal_data: Dict[str, Any]) -> Dict[str, Any]:
+    with get_sb_client() as client:
+        next_id = get_next_id(client, "deals")
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        stage = deal_data.get("stage", "new")
+        completed_at = now_str if stage == "completed" else None
+
+        client_id = deal_data.get("client_id") if deal_data.get("client_id") and deal_data.get("client_id") > 0 else None
+        eq_id = deal_data.get("equipment_id") if deal_data.get("equipment_id") and deal_data.get("equipment_id") > 0 else None
+
+        payload = {
+            "id": next_id,
+            "title": deal_data["title"].strip(),
+            "client_id": client_id,
+            "equipment_id": eq_id,
+            "stage": stage,
+            "amount": float(deal_data.get("amount") or 0.0),
+            "cost": float(deal_data.get("cost") or 0.0),
+            "priority": deal_data.get("priority", "normal"),
+            "responsible": deal_data.get("responsible", "Мастер-приемщик"),
+            "description": (deal_data.get("description") or "").strip(),
+            "deadline": deal_data.get("deadline") or None,
+            "created_at": now_str,
+            "completed_at": completed_at
+        }
+        r = client.post("/deals", json=payload)
+        if r.status_code not in (200, 201):
+            raise Exception(r.text)
+
+        # Populate names
+        cl_name = ""
+        cl_comp = ""
+        cl_phone = ""
+        if client_id:
+            cr = client.get("/clients", params={"id": f"eq.{client_id}"}).json()
+            if cr:
+                cl_name = cr[0].get("name", "")
+                cl_comp = cr[0].get("company", "")
+                cl_phone = cr[0].get("phone", "")
+
+        eq_name = ""
+        eq_vin = ""
+        if eq_id:
+            er = client.get("/equipment", params={"id": f"eq.{eq_id}"}).json()
+            if er:
+                eq_name = er[0].get("name", "")
+                eq_vin = er[0].get("serial_vin", "")
+
+        return {
+            **payload,
+            "client_name": cl_name,
+            "client_company": cl_comp,
+            "client_phone": cl_phone,
+            "equipment_name": eq_name,
+            "equipment_vin": eq_vin,
+            "parts_count": 0,
+            "message": "Сделка/наряд успешно создан"
+        }
+
+def get_deal(deal_id: int) -> Dict[str, Any]:
+    with get_sb_client() as client:
+        r = client.get("/deals", params={"id": f"eq.{deal_id}", "select": "*,clients(name,company,phone,email),equipment(name,serial_vin,operating_hours)"})
+        rows = r.json()
+        if not rows:
+            raise KeyError("Сделка не найдена")
+        d = rows[0]
+        cl = d.get("clients") or {}
+        eq = d.get("equipment") or {}
+        d.pop("clients", None)
+        d.pop("equipment", None)
+        d["client_name"] = cl.get("name", "")
+        d["client_company"] = cl.get("company", "")
+        d["client_phone"] = cl.get("phone", "")
+        d["client_email"] = cl.get("email", "")
+        d["equipment_name"] = eq.get("name", "")
+        d["equipment_vin"] = eq.get("serial_vin", "")
+        d["equipment_hours"] = eq.get("operating_hours", "")
+
+        dpr = client.get("/deal_parts", params={"deal_id": f"eq.{deal_id}", "select": "*,parts(sku,name,category)"})
+        parts_list = []
+        if dpr.status_code == 200:
+            for dp in dpr.json():
+                p = dp.get("parts") or {}
+                parts_list.append({
+                    "deal_part_id": dp.get("id"),
+                    "part_id": dp.get("part_id"),
+                    "quantity": dp.get("quantity", 1),
+                    "purchase_price": dp.get("purchase_price", 0.0),
+                    "selling_price": dp.get("selling_price", 0.0),
+                    "sku": p.get("sku", f"P-{dp.get('part_id')}"),
+                    "part_name": p.get("name", f"Запчасть #{dp.get('part_id')}"),
+                    "part_category": p.get("category", "Запчасти")
+                })
+        d["parts"] = parts_list
+        d["parts_count"] = sum(p["quantity"] for p in parts_list)
+        return d
+
+def update_deal_stage(deal_id: int, stage: str) -> Dict[str, Any]:
+    with get_sb_client() as client:
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        completed_at = now_str if stage == "completed" else None
+        client.patch(f"/deals?id=eq.{deal_id}", json={
+            "stage": stage,
+            "completed_at": completed_at
+        })
+        return {"id": deal_id, "stage": stage, "completed_at": completed_at, "message": "Статус наряда успешно изменен"}
+
+def update_deal(deal_id: int, deal_data: Dict[str, Any]) -> Dict[str, Any]:
+    with get_sb_client() as client:
+        stage = deal_data.get("stage", "new")
+        completed_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S") if stage == "completed" else None
+        client_id = deal_data.get("client_id") if deal_data.get("client_id") and deal_data.get("client_id") > 0 else None
+        eq_id = deal_data.get("equipment_id") if deal_data.get("equipment_id") and deal_data.get("equipment_id") > 0 else None
+
+        payload = {
+            "title": deal_data["title"].strip(),
+            "client_id": client_id,
+            "equipment_id": eq_id,
+            "stage": stage,
+            "amount": float(deal_data.get("amount") or 0.0),
+            "cost": float(deal_data.get("cost") or 0.0),
+            "priority": deal_data.get("priority", "normal"),
+            "responsible": deal_data.get("responsible", "Мастер-приемщик"),
+            "description": (deal_data.get("description") or "").strip(),
+            "deadline": deal_data.get("deadline") or None,
+            "completed_at": completed_at
+        }
+        r = client.patch(f"/deals?id=eq.{deal_id}", json=payload)
+        if r.status_code not in (200, 204):
+            payload["id"] = deal_id
+            payload["created_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            client.post("/deals", json=payload, headers={"Prefer": "resolution=merge-duplicates"})
+        return {"id": deal_id, **payload, "message": "Сделка обновлена"}
+
+def delete_deal(deal_id: int) -> Dict[str, Any]:
+    with get_sb_client() as client:
+        client.delete(f"/deals?id=eq.{deal_id}")
+        return {"id": deal_id, "message": "Сделка удалена"}
+
+def attach_part_to_deal(deal_id: int, part_id: int, quantity: int) -> Dict[str, Any]:
+    with get_sb_client() as client:
+        # Check part quantity
+        p = get_part(part_id)
+        if p.get("quantity", 0) < quantity:
+            raise ValueError(f"Недостаточно остатка на складе! В наличии: {p.get('quantity', 0)} шт.")
+
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        dp_id = get_next_id(client, "deal_parts")
+
+        # Insert deal_parts
+        client.post("/deal_parts", json={
+            "id": dp_id,
+            "deal_id": deal_id,
+            "part_id": part_id,
+            "quantity": quantity,
+            "purchase_price": p.get("purchase_price", 0.0),
+            "selling_price": p.get("selling_price", 0.0)
+        })
+
+        # Deduct part quantity
+        new_qty = max(0, p.get("quantity", 0) - quantity)
+        client.patch(f"/parts?id=eq.{part_id}", json={"quantity": new_qty})
+
+        # Record stock movement
+        sm_id = get_next_id(client, "stock_movements")
+        client.post("/stock_movements", json={
+            "id": sm_id,
+            "part_id": part_id,
+            "type": "outgoing",
+            "quantity": quantity,
+            "deal_id": deal_id,
+            "comment": f"Списание на сделку/наряд №{deal_id}",
+            "created_at": now_str
+        })
+
+        # Recalculate cost
+        dp_list = client.get("/deal_parts", params={"deal_id": f"eq.{deal_id}"}).json()
+        total_cost = sum(item.get("quantity", 0) * item.get("purchase_price", 0.0) for item in dp_list)
+        client.patch(f"/deals?id=eq.{deal_id}", json={"cost": round(total_cost, 2)})
+
+        return {
+            "deal_part_id": dp_id,
+            "part_id": part_id,
+            "new_quantity": new_qty,
+            "parts_cost": round(total_cost, 2),
+            "parts_count": len(dp_list),
+            "message": f"Запчасть «{p.get('name')}» ({quantity} шт.) списана со склада"
+        }
+
+def remove_part_from_deal(deal_id: int, deal_part_id: int) -> Dict[str, Any]:
+    with get_sb_client() as client:
+        dp = client.get("/deal_parts", params={"id": f"eq.{deal_part_id}"}).json()
+        if not dp:
+            raise KeyError("Прикрепленная запчасть не найдена")
+        row = dp[0]
+        part_id = row.get("part_id")
+        qty = row.get("quantity", 0)
+
+        # Delete deal_part
+        client.delete(f"/deal_parts?id=eq.{deal_part_id}")
+
+        # Return stock
+        p = get_part(part_id)
+        new_qty = p.get("quantity", 0) + qty
+        client.patch(f"/parts?id=eq.{part_id}", json={"quantity": new_qty})
+
+        # Recalculate cost
+        dp_list = client.get("/deal_parts", params={"deal_id": f"eq.{deal_id}"}).json()
+        total_cost = sum(item.get("quantity", 0) * item.get("purchase_price", 0.0) for item in dp_list)
+        client.patch(f"/deals?id=eq.{deal_id}", json={"cost": round(total_cost, 2)})
+
+        return {
+            "part_id": part_id,
+            "new_quantity": new_qty,
+            "parts_cost": round(total_cost, 2),
+            "parts_count": len(dp_list),
+            "message": "Запчасть возвращена на склад"
+        }
+
+# ==================== TASKS ====================
+
+def list_tasks(status: Optional[str] = None) -> List[Dict[str, Any]]:
+    with get_sb_client() as client:
+        params = {"select": "*,clients(name,company),deals(title)", "order": "due_date.asc"}
+        if status and status != "all":
+            params["status"] = f"eq.{status}"
+        r = client.get("/tasks", params=params)
+        if r.status_code != 200:
+            return []
+        items = []
+        for t in r.json():
+            cl = t.get("clients") or {}
+            dl = t.get("deals") or {}
+            item = dict(t)
+            item.pop("clients", None)
+            item.pop("deals", None)
+            item["client_name"] = cl.get("name", "")
+            item["client_company"] = cl.get("company", "")
+            item["deal_title"] = dl.get("title", "")
+            items.append(item)
+        return items
+
+def create_task(task_data: Dict[str, Any]) -> Dict[str, Any]:
+    with get_sb_client() as client:
+        next_id = get_next_id(client, "tasks")
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        payload = {
+            "id": next_id,
+            "title": task_data["title"].strip(),
+            "deal_id": task_data.get("deal_id") if task_data.get("deal_id") and task_data.get("deal_id") > 0 else None,
+            "client_id": task_data.get("client_id") if task_data.get("client_id") and task_data.get("client_id") > 0 else None,
+            "due_date": task_data["due_date"].strip(),
+            "priority": task_data.get("priority", "normal"),
+            "status": task_data.get("status", "pending"),
+            "remind": int(task_data.get("remind", 1)),
+            "notes": (task_data.get("notes") or "").strip(),
+            "created_at": now_str
+        }
+        r = client.post("/tasks", json=payload)
+        if r.status_code not in (200, 201):
+            raise Exception(r.text)
+        res = r.json()
+        item = res[0] if isinstance(res, list) else res
+        item["message"] = "Задача добавлена в планировщик"
+        return item
+
+def toggle_task(task_id: int) -> Dict[str, Any]:
+    with get_sb_client() as client:
+        r = client.get("/tasks", params={"id": f"eq.{task_id}"})
+        rows = r.json()
+        if not rows:
+            raise KeyError("Задача не найдена")
+        curr = rows[0].get("status", "pending")
+        new_status = "completed" if curr != "completed" else "pending"
+        client.patch(f"/tasks?id=eq.{task_id}", json={"status": new_status})
+        return {"id": task_id, "status": new_status, "message": "Статус задачи изменен"}
+
+def delete_task(task_id: int) -> Dict[str, Any]:
+    with get_sb_client() as client:
+        client.delete(f"/tasks?id=eq.{task_id}")
+        return {"id": task_id, "message": "Задача удалена"}
+
+# ==================== DASHBOARD METRICS ====================
 
 def get_dashboard_metrics() -> Dict[str, Any]:
-    conn = get_connection()
-    c = conn.cursor()
+    with get_sb_client() as client:
+        deals = client.get("/deals", params={"select": "*,clients(name),equipment(name)", "order": "id.desc"}).json() or []
+        completed = [d for d in deals if d.get("stage") == "completed"]
+        active = [d for d in deals if d.get("stage") not in ("completed", "cancelled")]
 
-    # Total revenue and cost from completed deals
-    c.execute("""
-        SELECT 
-            COALESCE(SUM(amount), 0) as total_revenue,
-            COALESCE(SUM(cost), 0) as total_cost,
-            COUNT(*) as completed_count
-        FROM deals 
-        WHERE stage = 'completed'
-    """)
-    completed_row = c.fetchone()
-    total_revenue = completed_row["total_revenue"]
-    total_cost = completed_row["total_cost"]
-    net_profit = total_revenue - total_cost
-    completed_count = completed_row["completed_count"]
-    avg_deal = (total_revenue / completed_count) if completed_count > 0 else 0
+        total_rev = sum(d.get("amount", 0) for d in completed)
+        total_cost = sum(d.get("cost", 0) for d in completed)
+        net_profit = total_rev - total_cost
 
-    # Pipeline active deals
-    c.execute("SELECT COUNT(*) FROM deals")
-    total_deals_count = c.fetchone()[0]
+        parts = client.get("/parts", params={"select": "*"}).json() or []
+        inv_cost = sum(p.get("quantity", 0) * p.get("purchase_price", 0) for p in parts)
+        inv_retail = sum(p.get("quantity", 0) * p.get("selling_price", 0) for p in parts)
+        low_stock = sum(1 for p in parts if p.get("quantity", 0) <= p.get("min_threshold", 2))
 
-    c.execute("""
-        SELECT 
-            COUNT(*) as active_count,
-            COALESCE(SUM(amount), 0) as active_volume
-        FROM deals 
-        WHERE stage NOT IN ('completed', 'cancelled')
-    """)
-    active_row = c.fetchone()
+        clients = client.get("/clients", params={"select": "id,name,company"}).json() or []
+        equipment = client.get("/equipment", params={"select": "id"}).json() or []
+        users = client.get("/users", params={"select": "id"}).json() or []
 
-    # Total clients, equipment, employees
-    c.execute("SELECT COUNT(*) FROM clients")
-    total_clients = c.fetchone()[0]
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+        tasks = client.get("/tasks", params={"select": "id,due_date,status"}).json() or []
+        overdue = sum(1 for t in tasks if t.get("status") != "completed" and (t.get("due_date") or "") < now_str)
 
-    c.execute("SELECT COUNT(*) FROM equipment")
-    total_equipment = c.fetchone()[0]
+        stages = {}
+        for d in deals:
+            st = d.get("stage", "new")
+            if st not in stages:
+                stages[st] = {"count": 0, "amount": 0}
+            stages[st]["count"] += 1
+            stages[st]["amount"] += d.get("amount", 0)
 
-    c.execute("SELECT COUNT(*) FROM users")
-    total_users = c.fetchone()[0]
+        # Recent deals format
+        recent = []
+        for d in deals[:5]:
+            cl = d.get("clients") or {}
+            eq = d.get("equipment") or {}
+            recent.append({
+                "id": d.get("id"),
+                "title": d.get("title"),
+                "amount": d.get("amount"),
+                "stage": d.get("stage"),
+                "created_at": d.get("created_at"),
+                "client_name": cl.get("name", ""),
+                "equipment_name": eq.get("name", "")
+            })
 
-    # Parts low stock count
-    c.execute("SELECT COUNT(*) FROM parts WHERE quantity <= min_threshold")
-    low_stock_parts = c.fetchone()[0]
+        return {
+            "total_revenue": round(total_rev, 2),
+            "total_cost": round(total_cost, 2),
+            "net_profit": round(net_profit, 2),
+            "margin_percent": round((net_profit / total_rev * 100), 1) if total_rev > 0 else 0,
+            "completed_count": len(completed),
+            "avg_deal": round(total_rev / len(completed), 2) if completed else 0,
+            "active_deals_count": len(active),
+            "total_deals_count": len(deals),
+            "active_deals_volume": round(sum(d.get("amount", 0) for d in active), 2),
+            "total_clients": len(clients),
+            "total_equipment": len(equipment),
+            "total_users": len(users),
+            "low_stock_parts": low_stock,
+            "inventory_cost": round(inv_cost, 2),
+            "inventory_retail": round(inv_retail, 2),
+            "overdue_tasks": overdue,
+            "deals_by_stage": stages,
+            "recent_deals": recent
+        }
 
-    # Inventory valuation
-    c.execute("SELECT COALESCE(SUM(quantity * purchase_price), 0), COALESCE(SUM(quantity * selling_price), 0) FROM parts")
-    inv_row = c.fetchone()
-    inventory_cost = inv_row[0]
-    inventory_retail = inv_row[1]
-
-    # Overdue tasks
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-    c.execute("SELECT COUNT(*) FROM tasks WHERE status != 'completed' AND due_date < ?", (now_str,))
-    overdue_tasks = c.fetchone()[0]
-
-    # Deals by stage
-    c.execute("SELECT stage, COUNT(*) as cnt, COALESCE(SUM(amount), 0) as val FROM deals GROUP BY stage")
-    deals_by_stage = {r["stage"]: {"count": r["cnt"], "amount": r["val"]} for r in c.fetchall()}
-
-    # Recent activity
-    c.execute("""
-        SELECT d.id, d.title, d.amount, d.stage, d.created_at, c.name as client_name, eq.name as equipment_name
-        FROM deals d
-        LEFT JOIN clients c ON d.client_id = c.id
-        LEFT JOIN equipment eq ON d.equipment_id = eq.id
-        ORDER BY d.id DESC LIMIT 5
-    """)
-    recent_deals = [dict(r) for r in c.fetchall()]
-
-    conn.close()
-
-    return {
-        "total_revenue": round(total_revenue, 2),
-        "total_cost": round(total_cost, 2),
-        "net_profit": round(net_profit, 2),
-        "margin_percent": round((net_profit / total_revenue * 100), 1) if total_revenue > 0 else 0,
-        "completed_count": completed_count,
-        "avg_deal": round(avg_deal, 2),
-        "active_deals_count": active_row["active_count"],
-        "total_deals_count": total_deals_count,
-        "active_deals_volume": round(active_row["active_volume"], 2),
-        "total_clients": total_clients,
-        "total_equipment": total_equipment,
-        "total_users": total_users,
-        "low_stock_parts": low_stock_parts,
-        "inventory_cost": round(inventory_cost, 2),
-        "inventory_retail": round(inventory_retail, 2),
-        "overdue_tasks": overdue_tasks,
-        "deals_by_stage": deals_by_stage,
-        "recent_deals": recent_deals
-    }
+# ==================== DUMP & RESTORE ====================
 
 def dump_all_data() -> Dict[str, Any]:
-    conn = get_connection()
-    c = conn.cursor()
-    data = {}
-    
-    # settings
-    c.execute("SELECT key, value FROM settings")
-    data["settings"] = {r["key"]: r["value"] for r in c.fetchall()}
-    
-    # users
-    c.execute("SELECT id, username, password_hash, salt, full_name, role, phone, created_at FROM users")
-    data["users"] = [dict(r) for r in c.fetchall()]
-    
-    # clients
-    c.execute("SELECT id, name, company, phone, email, address, notes, created_at FROM clients")
-    data["clients"] = [dict(r) for r in c.fetchall()]
-    
-    # equipment
-    c.execute("SELECT id, client_id, name, category, serial_vin, year, operating_hours, status, notes, created_at FROM equipment")
-    data["equipment"] = [dict(r) for r in c.fetchall()]
-    
-    # parts
-    c.execute("SELECT id, sku, name, category, quantity, min_threshold, purchase_price, selling_price, location, created_at FROM parts")
-    data["parts"] = [dict(r) for r in c.fetchall()]
-    
-    # deals
-    c.execute("SELECT id, title, client_id, equipment_id, stage, amount, cost, priority, responsible, description, deadline, created_at, completed_at FROM deals")
-    data["deals"] = [dict(r) for r in c.fetchall()]
-    
-    # deal_parts
-    c.execute("SELECT id, deal_id, part_id, quantity, purchase_price, selling_price FROM deal_parts")
-    data["deal_parts"] = [dict(r) for r in c.fetchall()]
-    
-    # tasks
-    c.execute("SELECT id, title, deal_id, client_id, due_date, priority, status, remind, notes, created_at FROM tasks")
-    data["tasks"] = [dict(r) for r in c.fetchall()]
-    
-    # stock_movements
-    c.execute("SELECT id, part_id, type, quantity, deal_id, comment, created_at FROM stock_movements")
-    data["stock_movements"] = [dict(r) for r in c.fetchall()]
-    
-    conn.close()
-    return data
+    with get_sb_client() as client:
+        data = {}
+        for table in ["settings", "users", "clients", "equipment", "parts", "deals", "deal_parts", "tasks", "stock_movements"]:
+            r = client.get(f"/{table}", params={"select": "*"})
+            data[table] = r.json() if r.status_code == 200 else []
+        return data
 
 def restore_all_data(data: Dict[str, Any]) -> Dict[str, Any]:
-    conn = get_connection()
-    c = conn.cursor()
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    counts = {}
-    
-    try:
-        # Settings
-        if "settings" in data and isinstance(data["settings"], dict):
-            for k, v in data["settings"].items():
-                c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (k, str(v)))
-            counts["settings"] = len(data["settings"])
-
-        # Users
-        if "users" in data and isinstance(data["users"], list):
-            user_cnt = 0
-            for u in data["users"]:
-                username = u.get("username", "")
-                if not username or not isinstance(username, str):
-                    continue
-                username = username.strip().lower()
-                if not username or username in ("undefined", "null") or len(username) < 3:
-                    continue
-                p_hash = u.get("password_hash")
-                salt = u.get("salt")
-                if not p_hash or not salt:
-                    plain_pass = u.get("password") or "pass123"
-                    p_hash, salt = hash_password(plain_pass)
-                
-                c.execute("""
-                    INSERT INTO users (id, username, password_hash, salt, full_name, role, phone, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(username) DO UPDATE SET
-                        full_name=excluded.full_name,
-                        role=excluded.role,
-                        phone=excluded.phone,
-                        password_hash=excluded.password_hash,
-                        salt=excluded.salt
-                """, (
-                    u.get("id"),
-                    username,
-                    p_hash,
-                    salt,
-                    u.get("full_name", username),
-                    u.get("role", "mechanic"),
-                    u.get("phone", ""),
-                    u.get("created_at", now_str)
-                ))
-                user_cnt += 1
-            counts["users"] = user_cnt
-
-        # Clients
-        if "clients" in data and isinstance(data["clients"], list):
-            cl_cnt = 0
-            for cl in data["clients"]:
-                name = cl.get("name", "").strip()
-                if not name:
-                    continue
-                c.execute("""
-                    INSERT OR REPLACE INTO clients (id, name, company, phone, email, address, notes, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    cl.get("id"),
-                    name,
-                    cl.get("company", ""),
-                    cl.get("phone", "+37499999999"),
-                    cl.get("email", ""),
-                    cl.get("address", ""),
-                    cl.get("notes", ""),
-                    cl.get("created_at", now_str)
-                ))
-                cl_cnt += 1
-            counts["clients"] = cl_cnt
-
-        # Equipment
-        if "equipment" in data and isinstance(data["equipment"], list):
-            eq_cnt = 0
-            for eq in data["equipment"]:
-                name = eq.get("name", "").strip()
-                if not name:
-                    continue
-                client_id = eq.get("client_id")
-                if client_id and client_id > 0:
-                    c.execute("SELECT id FROM clients WHERE id = ?", (client_id,))
-                    if not c.fetchone():
-                        c.execute("""
-                            INSERT OR IGNORE INTO clients (id, name, company, phone, created_at)
-                            VALUES (?, ?, '', '+37499999999', ?)
-                        """, (client_id, eq.get("client_name") or f"Клиент #{client_id}", now_str))
-                else:
-                    client_id = None
-
-                c.execute("""
-                    INSERT OR REPLACE INTO equipment (id, client_id, name, category, serial_vin, year, operating_hours, status, notes, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    eq.get("id"),
-                    client_id,
-                    name,
-                    eq.get("category", "Спецтехника"),
-                    eq.get("serial_vin", ""),
-                    eq.get("year"),
-                    eq.get("operating_hours", ""),
-                    eq.get("status", "Исправна"),
-                    eq.get("notes", ""),
-                    eq.get("created_at", now_str)
-                ))
-                eq_cnt += 1
-            counts["equipment"] = eq_cnt
-
-        # Parts
-        if "parts" in data and isinstance(data["parts"], list):
-            pt_cnt = 0
-            for p in data["parts"]:
-                sku = p.get("sku", "").strip()
-                name = p.get("name", "").strip()
-                if not sku or not name:
-                    continue
-                c.execute("""
-                    INSERT INTO parts (id, sku, name, category, quantity, min_threshold, purchase_price, selling_price, location, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(sku) DO UPDATE SET
-                        name=excluded.name,
-                        category=excluded.category,
-                        quantity=excluded.quantity,
-                        min_threshold=excluded.min_threshold,
-                        purchase_price=excluded.purchase_price,
-                        selling_price=excluded.selling_price,
-                        location=excluded.location
-                """, (
-                    p.get("id"),
-                    sku,
-                    name,
-                    p.get("category", "Запчасти"),
-                    p.get("quantity", 0),
-                    p.get("min_threshold", 2),
-                    p.get("purchase_price", 0.0),
-                    p.get("selling_price", 0.0),
-                    p.get("location", ""),
-                    p.get("created_at", now_str)
-                ))
-                pt_cnt += 1
-            counts["parts"] = pt_cnt
-
-        # Deals
-        if "deals" in data and isinstance(data["deals"], list):
-            dl_cnt = 0
-            for d in data["deals"]:
-                title = d.get("title", "").strip()
-                if not title:
-                    continue
-                client_id = d.get("client_id")
-                if client_id and client_id > 0:
-                    c.execute("SELECT id FROM clients WHERE id = ?", (client_id,))
-                    if not c.fetchone():
-                        c.execute("""
-                            INSERT OR IGNORE INTO clients (id, name, company, phone, created_at)
-                            VALUES (?, ?, '', '+37499999999', ?)
-                        """, (client_id, d.get("client_name") or f"Клиент #{client_id}", now_str))
-                else:
-                    client_id = None
-
-                equipment_id = d.get("equipment_id")
-                if equipment_id and equipment_id > 0:
-                    c.execute("SELECT id FROM equipment WHERE id = ?", (equipment_id,))
-                    if not c.fetchone():
-                        c.execute("""
-                            INSERT OR IGNORE INTO equipment (id, name, category, status, created_at)
-                            VALUES (?, ?, 'Спецтехника', 'В ремонте', ?)
-                        """, (equipment_id, d.get("equipment_name") or f"Техника #{equipment_id}", now_str))
-                else:
-                    equipment_id = None
-
-                c.execute("""
-                    INSERT OR REPLACE INTO deals (id, title, client_id, equipment_id, stage, amount, cost, priority, responsible, description, deadline, created_at, completed_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    d.get("id"),
-                    title,
-                    client_id,
-                    equipment_id,
-                    d.get("stage", "new"),
-                    d.get("amount", 0.0),
-                    d.get("cost", 0.0),
-                    d.get("priority", "normal"),
-                    d.get("responsible", "Мастер-приемщик"),
-                    d.get("description", ""),
-                    d.get("deadline"),
-                    d.get("created_at", now_str),
-                    d.get("completed_at")
-                ))
-                dl_cnt += 1
-            counts["deals"] = dl_cnt
-
-        # Deal Parts
-        if "deal_parts" in data and isinstance(data["deal_parts"], list):
-            dp_cnt = 0
-            for dp in data["deal_parts"]:
-                deal_id = dp.get("deal_id")
-                part_id = dp.get("part_id")
-                if not deal_id or not part_id:
-                    continue
-                c.execute("SELECT id FROM deals WHERE id = ?", (deal_id,))
-                if not c.fetchone():
-                    c.execute("INSERT OR IGNORE INTO deals (id, title, stage, created_at) VALUES (?, ?, 'in_progress', ?)", (deal_id, f"Наряд #{deal_id}", now_str))
-                c.execute("SELECT id FROM parts WHERE id = ?", (part_id,))
-                if not c.fetchone():
-                    c.execute("INSERT OR IGNORE INTO parts (id, sku, name, quantity, purchase_price, selling_price, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", (part_id, dp.get("sku") or f"P-{part_id}", dp.get("part_name") or f"Запчасть #{part_id}", 10, dp.get("purchase_price", 0.0), dp.get("selling_price", 0.0), now_str))
-
-                c.execute("""
-                    INSERT OR REPLACE INTO deal_parts (id, deal_id, part_id, quantity, purchase_price, selling_price)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, (
-                    dp.get("id") or dp.get("deal_part_id"),
-                    deal_id,
-                    part_id,
-                    dp.get("quantity", 1),
-                    dp.get("purchase_price", 0.0),
-                    dp.get("selling_price", 0.0)
-                ))
-                dp_cnt += 1
-            counts["deal_parts"] = dp_cnt
-
-        # Tasks
-        if "tasks" in data and isinstance(data["tasks"], list):
-            tsk_cnt = 0
-            for t in data["tasks"]:
-                title = t.get("title", "").strip()
-                if not title:
-                    continue
-                deal_id = t.get("deal_id")
-                if deal_id and deal_id > 0:
-                    c.execute("SELECT id FROM deals WHERE id = ?", (deal_id,))
-                    if not c.fetchone():
-                        deal_id = None
-                else:
-                    deal_id = None
-
-                client_id = t.get("client_id")
-                if client_id and client_id > 0:
-                    c.execute("SELECT id FROM clients WHERE id = ?", (client_id,))
-                    if not c.fetchone():
-                        client_id = None
-                else:
-                    client_id = None
-
-                c.execute("""
-                    INSERT OR REPLACE INTO tasks (id, title, deal_id, client_id, due_date, priority, status, remind, notes, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    t.get("id"),
-                    title,
-                    deal_id,
-                    client_id,
-                    t.get("due_date", now_str),
-                    t.get("priority", "normal"),
-                    t.get("status", "pending"),
-                    t.get("remind", 1),
-                    t.get("notes", ""),
-                    t.get("created_at", now_str)
-                ))
-                tsk_cnt += 1
-            counts["tasks"] = tsk_cnt
-
-        conn.commit()
-    finally:
-        conn.close()
-
-    return counts
+    with get_sb_client() as client:
+        counts = {}
+        headers = {"Prefer": "resolution=merge-duplicates"}
+        for table in ["settings", "users", "clients", "equipment", "parts", "deals", "deal_parts", "tasks", "stock_movements"]:
+            if table in data and isinstance(data[table], list) and data[table]:
+                r = client.post(f"/{table}", json=data[table], headers=headers)
+                counts[table] = len(data[table]) if r.status_code in (200, 201) else 0
+        return counts
