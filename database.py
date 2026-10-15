@@ -11,10 +11,18 @@ import base64
 from typing import List, Dict, Any, Optional
 import httpx
 
+import re
+
 # Supabase PostgreSQL Configuration
 _DEFAULT_KEY = base64.b64decode("c2Jfc2VjcmV0X2dlUEdmdzJIRFVwVm8xU21NdXZhTEFfRkMxcHVSNVg=").decode("utf-8")
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://wnrnbptadgvmyibszpvk.supabase.co").rstrip("/")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY", _DEFAULT_KEY)
+
+raw_url = os.environ.get("SUPABASE_URL", "https://wnrnbptadgvmyibszpvk.supabase.co")
+url_match = re.search(r'https://[^\s)\]]+', raw_url)
+SUPABASE_URL = url_match.group(0).rstrip("/") if url_match else "https://wnrnbptadgvmyibszpvk.supabase.co"
+
+raw_key = os.environ.get("SUPABASE_KEY", _DEFAULT_KEY)
+key_match = re.search(r'[A-Za-z0-9_\-]+', raw_key)
+SUPABASE_KEY = key_match.group(0).strip() if key_match else _DEFAULT_KEY
 
 DEFAULT_SETTINGS = {
     "company_name": "СТО Спецмаш",
