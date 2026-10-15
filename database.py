@@ -7,7 +7,7 @@ from typing import List, Dict, Any, Optional
 from supabase import create_client, Client
 
 # Жестко прописанные ключи для гарантированного подключения
-SUPABASE_URL = "https://gkbx119iqkzavhsrpeucw.supabase.co"  # Стандартный URL по вашему идентификатору
+SUPABASE_URL = "https://gkbx119iqkzavhsrpeucw.supabase.co"
 SUPABASE_KEY = "sb_publishable_GKBx119-iQkZavhsrpEUcw_fBE1sqXA"
 
 def get_supabase() -> Optional[Client]:
@@ -38,7 +38,7 @@ def get_dashboard_metrics() -> Dict[str, Any]:
         deals_res = db.table("deals").select("*").execute()
         deals = deals_res.data if deals_res.data else []
         
-        completed_deals = [d for d in deals if d.get("stage"] == "completed"]
+        completed_deals = [d for d in deals if d.get("stage") == "completed"]
         total_revenue = sum(d.get("amount", 0) for d in completed_deals)
         total_cost = sum(d.get("cost", 0) for d in completed_deals)
         net_profit = total_revenue - total_cost
@@ -46,7 +46,6 @@ def get_dashboard_metrics() -> Dict[str, Any]:
         clients_res = db.table("clients").select("id", count="exact").execute()
         equipment_res = db.table("equipment").select("id", count="exact").execute()
         
-        # Безопасный запрос к таблице users (если её еще нет, не падаем)
         try:
             users_res = db.table("users").select("id", count="exact").execute()
             total_users = users_res.count if users_res.count is not None else 0
