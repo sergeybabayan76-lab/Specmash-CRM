@@ -192,7 +192,8 @@ def create_client(client: ClientCreate):
         res = db.table("clients").insert(client_data).execute()
         return {"message": "Клиент добавлен", "data": res.data}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"CLIENT INSERT ERROR: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Ошибка сохранения клиента: {str(e)}")
 
 # Equipment
 @app.get("/api/equipment")
