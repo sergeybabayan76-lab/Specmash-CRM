@@ -31,12 +31,35 @@ STATIC_DIR = os.path.join(BASE_DIR, "static")
 if os.path.exists(STATIC_DIR):
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
+# ----------------- Pydantic Models -----------------
+
 class DealStageUpdate(BaseModel):
     stage: str
 
+class ClientCreate(BaseModel):
+    name: str
+    company: Optional[str] = ""
+    phone: str
+    email: Optional[str] = ""
+    address: Optional[str] = ""
+    notes: Optional[str] = ""
+
+class DealCreate(BaseModel):
+    title: str
+    client_id: Optional[int] = None
+    equipment_id: Optional[int] = None
+    stage: str = "new"
+    amount: float = 0.0
+    cost: float = 0.0
+    priority: str = "normal"
+    responsible: str = "Мастер-приемщик"
+    description: Optional[str] = ""
+    deadline: Optional[str] = ""
+
+# ----------------- Routes -----------------
+
 @app.get("/")
 def read_root():
-    # Если в папке static есть index.html, отдаем его как главный интерфейс CRM
     index_path = os.path.join(STATIC_DIR, "index.html")
     if os.path.exists(index_path):
         return FileResponse(index_path)
@@ -71,39 +94,6 @@ def list_deals(stage: Optional[str] = None, q: Optional[str] = None):
     except Exception:
         return []
 
-@app.patch("/api/deals/{deal_id}/stage")
-@app.post("/api/deals/{deal_id}/stage")
-def update_deal_stage(deal_id: int, update: DealStageUpdate):
-    db = database.get_supabase()
-    if not db:
-        raise HTTPException(status_code=500, detail="Нет подключения к базе данных")
-    try:
-        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        update_data = {"stage": update.stage}
-        if update.stage == "completed":
-            update_data["completed_at"] = now_str
-        else:
-            update_data["completed_at"] = None
-  class ClientCreate(BaseModel):
-    name: str
-    company: Optional[str] = ""
-    phone: str
-    email: Optional[str] = ""
-    address: Optional[str] = ""
-    notes: Optional[str] = ""
-
-class DealCreate(BaseModel):
-    title: str
-    client_id: Optional[int] = None
-    equipment_id: Optional[int] = None
-    stage: str = "new"
-    amount: float = 0.0
-    cost: float = 0.0
-    priority: str = "normal"
-    responsible: str = "Мастер-приемщик"
-    description: Optional[str] = ""
-    deadline: Optional[str] = ""
-
 @app.post("/api/deals")
 def create_deal(deal: DealCreate):
     db = database.get_supabase()
@@ -129,6 +119,25 @@ def create_deal(deal: DealCreate):
         }
         res = db.table("deals").insert(deal_data).execute()
         return {"message": "Сделка успешно создана", "data": res.data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.patch("/api/deals/{deal_id}/stage")
+@app.post("/api/deals/{deal_id}/stage")
+def update_deal_stage(deal_id: int, update: DealStageUpdate):
+    db = database.get_supabase()
+    if not db:
+        raise HTTPException(status_code=500, detail="Нет подключения к базе данных")
+    try:
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        update_data = {"stage": update.stage}
+        if update.stage == "completed":
+            update_data["completed_at"] = now_str
+        else:
+            update_data["completed_at"] = None
+        
+        res = db.table("deals").update(update_data).eq("id", deal_id).execute()
+        return {"message": "Статус сделки обновлен", "data": res.data}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -161,9 +170,5 @@ def create_client(client: ClientCreate):
         }
         res = db.table("clients").insert(client_data).execute()
         return {"message": "Клиент добавлен", "data": res.data}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))      
-        res = db.table("deals").update(update_data).eq("id", deal_id).execute()
-        return {"message": "Статус сделки обновлен", "data": res.data}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
