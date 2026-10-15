@@ -27,7 +27,6 @@ app.add_middleware(
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 
-# Подключаем статические файлы, если папка существует
 if os.path.exists(STATIC_DIR):
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -42,6 +41,16 @@ class ClientCreate(BaseModel):
     phone: str
     email: Optional[str] = ""
     address: Optional[str] = ""
+    notes: Optional[str] = ""
+
+class EquipmentCreate(BaseModel):
+    client_id: Optional[int] = None
+    name: str
+    category: str
+    serial_vin: Optional[str] = ""
+    year: Optional[int] = None
+    operating_hours: Optional[str] = ""
+    status: Optional[str] = "Исправна"
     notes: Optional[str] = ""
 
 class DealCreate(BaseModel):
@@ -80,6 +89,7 @@ def get_settings():
 def get_dashboard():
     return database.get_dashboard_metrics()
 
+# Deals
 @app.get("/api/deals")
 def list_deals(stage: Optional[str] = None, q: Optional[str] = None):
     db = database.get_supabase()
@@ -141,6 +151,7 @@ def update_deal_stage(deal_id: int, update: DealStageUpdate):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# Clients
 @app.get("/api/clients")
 def list_clients(q: Optional[str] = None):
     db = database.get_supabase()
@@ -170,5 +181,43 @@ def create_client(client: ClientCreate):
         }
         res = db.table("clients").insert(client_data).execute()
         return {"message": "Клиент добавлен", "data": res.data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Equipment
+@app.get("/api/equipment")
+def list_equipment(category: Optional[str] = None, q: Optional[str] = None):
+    db = database.get_supabase()
+    if not db:
+        return []
+    try:
+        query = db.table("equipment").select("*, clients(name, company, phone)")
+        if category and category != "all":
+            query = query.eq("category", category)
+        res = query.order("id", desc=True).execute()
+        return res.data or []
+    except Exception:
+        return []
+
+@app.post("/api/equipment")
+def create_equipment(eq: EquipmentCreate):
+    db = database.get_supabase()
+    if not db:
+        raise HTTPException(status_code=500, detail="Нет подключения к базе данных")
+    try:
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        eq_data = {
+            "client_id": eq.client_id if eq.client_id and eq.client_id > 0 else None,
+            "name": eq.name.strip(),
+            "category": eq.category,
+            "serial_vin": (eq.serial_vin or "").strip(),
+            "year": eq.year,
+            "operating_hours": (eq.operating_hours or "").strip(),
+            "status": eq.status or "Исправна",
+            "notes": (eq.notes or "").strip(),
+            "created_at": now_str
+        }
+        res = db.table("equipment").insert(eq_data).execute()
+        return {"message": "Техника зарегистрирована", "data": res.data}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
