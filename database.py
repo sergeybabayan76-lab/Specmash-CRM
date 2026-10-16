@@ -36,13 +36,126 @@ if os.path.exists(_env_path):
         pass
 
 # Supabase PostgreSQL Configuration via Environment Variables
-raw_url = os.getenv("SUPABASE_URL", "https://wnrnbptadgvmyibszpvk.supabase.co")
-url_match = re.search(r'https://[^\s)\]]+', raw_url)
-SUPABASE_URL = url_match.group(0).rstrip("/") if url_match else "https://wnrnbptadgvmyibszpvk.supabase.co"
+SUPABASE_URL = ""
+SUPABASE_KEY = ""
 
-raw_key = os.getenv("SUPABASE_KEY") or os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY") or ""
-key_match = re.search(r'[A-Za-z0-9_\-]+', raw_key)
-SUPABASE_KEY = key_match.group(0).strip() if key_match else ""
+def get_supabase_url() -> str:
+    global SUPABASE_URL
+    if SUPABASE_URL:
+        return SUPABASE_URL
+    raw_url = os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL") or os.getenv("VITE_SUPABASE_URL")
+    if not raw_url:
+        for k, v in os.environ.items():
+            if "SUPABASE" in k.upper() and ("URL" in k.upper() or "HOST" in k.upper()):
+                raw_url = v
+                break
+    if not raw_url:
+        raw_url = "https://wnrnbptadgvmyibszpvk.supabase.co"
+    url_match = re.search(r'https://[^\s)\]"\']+', raw_url)
+    SUPABASE_URL = url_match.group(0).rstrip("/") if url_match else "https://wnrnbptadgvmyibszpvk.supabase.co"
+    return SUPABASE_URL
+
+def get_supabase_key() -> str:
+    global SUPABASE_KEY
+    if SUPABASE_KEY:
+        return SUPABASE_KEY
+
+    # 1. Direct environment variable names
+    candidates = [
+        "SUPABASE_KEY",
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "SUPABASE_ANON_KEY",
+        "SUPABASE_SECRET",
+        "SUPABASE_SECRET_KEY",
+        "SB_SECRET",
+        "SECRET_COD",
+        "SECRET_CODE",
+        "SECRET_KEY",
+        "SUPABASE_API_KEY",
+        "SUPABASE_TOKEN",
+        "SUPABASE_SERVICE_KEY",
+    ]
+    for cand in candidates:
+        val = os.getenv(cand)
+        if val and len(val.strip().strip("'\"`")) > 10:
+            SUPABASE_KEY = val.strip().strip("'\"`")
+            break
+
+    # 2. Check normalized environment variable keys (e.g. "secret cod" -> "SECRETCOD")
+    if not SUPABASE_KEY:
+        for k, v in os.environ.items():
+            norm_k = re.sub(r'[^A-Z0-9]', '', k.upper())
+            if norm_k in ("SECRETCOD", "SECRETCODE", "SUPABASEKEY", "SUPABASESECRET", "SBSECRET", "SUPABASETOKEN"):
+                cleaned = str(v).strip().strip("'\"`")
+                if len(cleaned) > 10:
+                    SUPABASE_KEY = cleaned
+                    break
+
+    # 3. Check values in os.environ that look like Supabase keys (sb_secret_*, sb_publishable_*, eyJhbGci...)
+    if not SUPABASE_KEY:
+        for k, v in os.environ.items():
+            cleaned = str(v).strip().strip("'\"`")
+            if cleaned.startswith("sb_secret_") or cleaned.startswith("sb_publishable_") or cleaned.startswith("eyJhbGci"):
+                SUPABASE_KEY = cleaned
+                break
+
+    # 4. Fallback search for any variable with SUPABASE or SECRET in name
+    if not SUPABASE_KEY:
+        for k, v in os.environ.items():
+            k_upper = k.upper()
+            if ("SUPABASE" in k_upper or "SECRET" in k_upper) and "KEY" in k_upper:
+                cleaned = str(v).strip().strip("'\"`")
+                if len(cleaned) > 20:
+                    SUPABASE_KEY = cleaned
+                    break
+
+    if SUPABASE_KEY:
+        m = re.search(r'(sb_secret_[A-Za-z0-9_\-]+|eyJhbGci[A-Za-z0-9_\-\.]+|[A-Za-z0-9_\-]{20,})', SUPABASE_KEY)
+        if m:
+            SUPABASE_KEY = m.group(0).strip()
+
+    return SUPABASE_KEY
+
+# Initialize on import
+SUPABASE_URL = get_supabase_url()
+SUPABASE_KEY = get_supabase_key()
+
+def check_connection() -> Dict[str, Any]:
+    key = get_supabase_key()
+    url = get_supabase_url()
+    if not key:
+        return {
+            "connected": False,
+            "error": "SUPABASE_KEY не найдена в переменных окружения Vercel",
+            "url": url,
+            "has_key": False
+        }
+    try:
+        with get_sb_client() as client:
+            r = client.get("/settings", params={"select": "key", "limit": "1"})
+            if r.status_code == 200:
+                return {
+                    "connected": True,
+                    "status_code": r.status_code,
+                    "url": url,
+                    "has_key": True,
+                    "key_prefix": key[:12] + "..." if len(key) >= 12 else "***"
+                }
+            else:
+                return {
+                    "connected": False,
+                    "status_code": r.status_code,
+                    "error": f"Supabase HTTP {r.status_code}: {r.text[:200]}",
+                    "url": url,
+                    "has_key": True
+                }
+    except Exception as e:
+        return {
+            "connected": False,
+            "error": str(e),
+            "url": url,
+            "has_key": True
+        }
 
 DEFAULT_SETTINGS = {
     "company_name": "СТО Спецмаш",
@@ -60,23 +173,25 @@ DEFAULT_SETTINGS = {
 }
 
 def get_sb_client() -> httpx.Client:
+    key = get_supabase_key()
+    url = get_supabase_url()
     headers = {
         "Content-Type": "application/json",
         "Prefer": "return=representation",
         "User-Agent": "SpecMash-CRM/FastAPI"
     }
-    if SUPABASE_KEY:
-        headers["apikey"] = SUPABASE_KEY
-        headers["Authorization"] = f"Bearer {SUPABASE_KEY}"
+    if key:
+        headers["apikey"] = key
+        headers["Authorization"] = f"Bearer {key}"
     return httpx.Client(
-        base_url=f"{SUPABASE_URL}/rest/v1",
+        base_url=f"{url}/rest/v1",
         headers=headers,
         timeout=20.0
     )
 
 def init_db():
     """Verifies connection to Supabase PostgreSQL and ensures default data."""
-    if not SUPABASE_KEY:
+    if not get_supabase_key():
         print("[Supabase Warning] SUPABASE_KEY is not set. Please configure SUPABASE_KEY in Vercel or .env.")
         return
     try:

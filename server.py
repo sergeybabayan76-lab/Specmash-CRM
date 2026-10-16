@@ -102,12 +102,27 @@ async def websocket_kanban_endpoint(websocket: WebSocket):
     except Exception:
         manager.disconnect(websocket)
 
+@app.get("/api/health")
+def health_check():
+    """Diagnostic endpoint to verify environment variables and database connectivity on Vercel."""
+    conn_info = database.check_connection()
+    detected_vars = [
+        k for k in os.environ.keys()
+        if any(term in k.upper() for term in ["SUPABASE", "SECRET", "KEY", "TOKEN", "DATABASE", "POSTGRES"])
+    ]
+    return {
+        "status": "ok" if conn_info.get("connected") else "warning",
+        "database": conn_info,
+        "environment_variables_detected": detected_vars,
+        "server_time": datetime.now().isoformat()
+    }
+
 @app.get("/api/realtime/config")
 def get_realtime_config():
     """Provides Supabase Realtime endpoint parameters securely to authenticated frontend."""
     return {
-        "url": database.SUPABASE_URL,
-        "key": database.SUPABASE_KEY
+        "url": database.get_supabase_url(),
+        "key": database.get_supabase_key()
     }
 
 # ----------------- Pydantic Models -----------------
@@ -208,7 +223,7 @@ class TaskCreate(BaseModel):
 
 @app.post("/api/auth/login")
 def login(req: LoginRequest):
-    if not database.SUPABASE_KEY:
+    if not database.get_supabase_key():
         raise HTTPException(
             status_code=503,
             detail="База данных Supabase не подключена. Пожалуйста, добавьте переменную SUPABASE_KEY в настройках Vercel."
