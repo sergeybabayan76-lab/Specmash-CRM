@@ -43,16 +43,9 @@ def get_supabase_url() -> str:
     global SUPABASE_URL
     if SUPABASE_URL:
         return SUPABASE_URL
-    raw_url = os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL") or os.getenv("VITE_SUPABASE_URL")
-    if not raw_url:
-        for k, v in os.environ.items():
-            if "SUPABASE" in k.upper() and ("URL" in k.upper() or "HOST" in k.upper()):
-                raw_url = v
-                break
-    if not raw_url:
-        raw_url = "https://wnrnbptadgvmyibszpvk.supabase.co"
-    url_match = re.search(r'https://[^\s)\]"\']+', raw_url)
-    SUPABASE_URL = url_match.group(0).rstrip("/") if url_match else "https://wnrnbptadgvmyibszpvk.supabase.co"
+    raw_url = os.getenv("SUPABASE_URL", "").strip()
+    url_match = re.fullmatch(r"https://[A-Za-z0-9.-]+\.supabase\.co/?", raw_url)
+    SUPABASE_URL = url_match.group(0).rstrip("/") if url_match else ""
     return SUPABASE_URL
 
 def get_supabase_key() -> str:
@@ -60,60 +53,12 @@ def get_supabase_key() -> str:
     if SUPABASE_KEY:
         return SUPABASE_KEY
 
-    # 1. Direct environment variable names
-    candidates = [
-        "SUPABASE_KEY",
-        "SUPABASE_SERVICE_ROLE_KEY",
-        "SUPABASE_ANON_KEY",
-        "SUPABASE_SECRET",
-        "SUPABASE_SECRET_KEY",
-        "SB_SECRET",
-        "SECRET_COD",
-        "SECRET_CODE",
-        "SECRET_KEY",
-        "SUPABASE_API_KEY",
-        "SUPABASE_TOKEN",
-        "SUPABASE_SERVICE_KEY",
-    ]
-    for cand in candidates:
-        val = os.getenv(cand)
-        if val and len(val.strip().strip("'\"`")) > 10:
-            SUPABASE_KEY = val.strip().strip("'\"`")
-            break
-
-    # 2. Check normalized environment variable keys (e.g. "secret cod" -> "SECRETCOD")
-    if not SUPABASE_KEY:
-        for k, v in os.environ.items():
-            norm_k = re.sub(r'[^A-Z0-9]', '', k.upper())
-            if norm_k in ("SECRETCOD", "SECRETCODE", "SUPABASEKEY", "SUPABASESECRET", "SBSECRET", "SUPABASETOKEN"):
-                cleaned = str(v).strip().strip("'\"`")
-                if len(cleaned) > 10:
-                    SUPABASE_KEY = cleaned
-                    break
-
-    # 3. Check values in os.environ that look like Supabase keys (sb_secret_*, sb_publishable_*, eyJhbGci...)
-    if not SUPABASE_KEY:
-        for k, v in os.environ.items():
-            cleaned = str(v).strip().strip("'\"`")
-            if cleaned.startswith("sb_secret_") or cleaned.startswith("sb_publishable_") or cleaned.startswith("eyJhbGci"):
-                SUPABASE_KEY = cleaned
-                break
-
-    # 4. Fallback search for any variable with SUPABASE or SECRET in name
-    if not SUPABASE_KEY:
-        for k, v in os.environ.items():
-            k_upper = k.upper()
-            if ("SUPABASE" in k_upper or "SECRET" in k_upper) and "KEY" in k_upper:
-                cleaned = str(v).strip().strip("'\"`")
-                if len(cleaned) > 20:
-                    SUPABASE_KEY = cleaned
-                    break
-
-    if SUPABASE_KEY:
-        m = re.search(r'(sb_secret_[A-Za-z0-9_\-]+|eyJhbGci[A-Za-z0-9_\-\.]+|[A-Za-z0-9_\-]{20,})', SUPABASE_KEY)
-        if m:
-            SUPABASE_KEY = m.group(0).strip()
-
+    SUPABASE_KEY = (
+        os.getenv("SUPABASE_KEY")
+        or os.getenv("SUPABASE_SECRET_KEY")
+        or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+        or ""
+    ).strip().strip("'\"`")
     return SUPABASE_KEY
 
 # Initialize on import
@@ -126,9 +71,16 @@ def check_connection() -> Dict[str, Any]:
     if not key:
         return {
             "connected": False,
-            "error": "SUPABASE_KEY не найдена в переменных окружения Vercel",
+            "error": "SUPABASE_KEY не задана в .env или окружении сервера",
             "url": url,
             "has_key": False
+        }
+    if not url:
+        return {
+            "connected": False,
+            "error": "SUPABASE_URL не задан или имеет неверный формат",
+            "url": "",
+            "has_key": True
         }
     try:
         with get_sb_client() as client:
@@ -138,8 +90,7 @@ def check_connection() -> Dict[str, Any]:
                     "connected": True,
                     "status_code": r.status_code,
                     "url": url,
-                    "has_key": True,
-                    "key_prefix": key[:12] + "..." if len(key) >= 12 else "***"
+                    "has_key": True
                 }
             else:
                 return {
@@ -175,13 +126,15 @@ DEFAULT_SETTINGS = {
 def get_sb_client() -> httpx.Client:
     key = get_supabase_key()
     url = get_supabase_url()
+    if not key or not url:
+        raise RuntimeError("Настройте SUPABASE_URL и серверный SUPABASE_KEY в .env")
     headers = {
         "Content-Type": "application/json",
         "Prefer": "return=representation",
-        "User-Agent": "SpecMash-CRM/FastAPI"
+        "User-Agent": "SpecMash-CRM/FastAPI",
+        "apikey": key,
     }
-    if key:
-        headers["apikey"] = key
+    if not key.startswith("sb_secret_"):
         headers["Authorization"] = f"Bearer {key}"
     return httpx.Client(
         base_url=f"{url}/rest/v1",
@@ -190,14 +143,17 @@ def get_sb_client() -> httpx.Client:
     )
 
 def init_db():
-    """Verifies connection to Supabase PostgreSQL and ensures default data."""
-    if not get_supabase_key():
-        print("[Supabase Warning] SUPABASE_KEY is not set. Please configure SUPABASE_KEY in Vercel or .env.")
+    """Verifies Supabase schema and optionally creates an admin from explicit credentials."""
+    if not get_supabase_key() or not get_supabase_url():
+        print("[Supabase Warning] Set SUPABASE_URL and a server-only SUPABASE_KEY in .env.")
         return
     try:
-        ensure_default_users()
-    except Exception as e:
-        print(f"[Supabase Init Warning] {e}")
+        ensure_bootstrap_admin()
+    except Exception as exc:
+        raise RuntimeError(
+            "Cannot initialize Supabase. Verify the project URL/key and run schema.sql "
+            "in the new project's SQL Editor."
+        ) from exc
 
 def hash_password(password: str, salt: Optional[str] = None) -> tuple[str, str]:
     if not salt:
@@ -295,30 +251,34 @@ def delete_user(user_id: int) -> Dict[str, Any]:
         r = client.delete(f"/users?id=eq.{user_id}")
         return {"id": user_id, "message": "Сотрудник удален"}
 
-def ensure_default_users():
-    admin_user = os.getenv("DEFAULT_ADMIN_USERNAME", "admin")
-    admin_pass = os.getenv("DEFAULT_ADMIN_PASSWORD", "admin123")
-    mod_user = os.getenv("DEFAULT_MODERATOR_USERNAME", "moderator")
-    mod_pass = os.getenv("DEFAULT_MODERATOR_PASSWORD", "mod123")
-    mech_user = os.getenv("DEFAULT_MECHANIC_USERNAME", "mechanic")
-    mech_pass = os.getenv("DEFAULT_MECHANIC_PASSWORD", "mech123")
+def ensure_bootstrap_admin():
+    admin_user = os.getenv("BOOTSTRAP_ADMIN_USERNAME", "").strip().lower()
+    admin_pass = os.getenv("BOOTSTRAP_ADMIN_PASSWORD", "")
+    if bool(admin_user) != bool(admin_pass):
+        raise RuntimeError("Both BOOTSTRAP_ADMIN_USERNAME and BOOTSTRAP_ADMIN_PASSWORD must be set.")
+    if admin_user and (len(admin_user) < 3 or len(admin_pass) < 12):
+        raise RuntimeError("Bootstrap username must be at least 3 characters and password at least 12 characters.")
 
-    defaults = [
-        (admin_user, admin_pass, "Иванов Алексей (Администратор)", "admin", "+37499112233"),
-        (mod_user, mod_pass, "Смирнова Елена (Модератор)", "moderator", "+37499223344"),
-        (mech_user, mech_pass, "Петров Сергей (Механик)", "mechanic", "+37499334455"),
-    ]
     with get_sb_client() as client:
-        for u, p, fn, r, ph in defaults:
-            existing = client.get("/users", params={"username": f"ilike.{u}"}).json()
-            if not existing:
-                nid = get_next_id(client, "users")
-                h, s = hash_password(p)
-                client.post("/users", json={
-                    "id": nid, "username": u, "password_hash": h, "salt": s,
-                    "full_name": fn, "role": r, "phone": ph,
-                    "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                })
+        response = client.get("/users", params={"select": "id", "limit": "1"})
+        response.raise_for_status()
+        if response.json() or not admin_user:
+            if not admin_user:
+                print("[Supabase] Database verified; no users created. Set bootstrap credentials to create the first admin.")
+            return
+
+        password_hash, salt = hash_password(admin_pass)
+        response = client.post("/users?on_conflict=username", json={
+            "id": 1,
+            "username": admin_user,
+            "password_hash": password_hash,
+            "salt": salt,
+            "full_name": "Администратор",
+            "role": "admin",
+            "phone": "",
+            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }, headers={"Prefer": "resolution=ignore-duplicates,return=minimal"})
+        response.raise_for_status()
 
 # ==================== SETTINGS ====================
 
@@ -348,8 +308,8 @@ def get_system_stats() -> Dict[str, Any]:
             "version": "2.0.0 (Supabase PostgreSQL)",
             "db_type": "PostgreSQL (Cloud Supabase)",
             "configured": False,
-            "message": "Пожалуйста, добавьте SUPABASE_KEY в Vercel Environment Variables",
-            "db_size_kb": 0.0,
+            "message": "Настройте Supabase URL и серверный ключ в окружении приложения",
+            "db_size_kb": None,
             "counts": {"clients": 0, "equipment": 0, "parts": 0, "deals": 0, "users": 0, "tasks": 0}
         }
     with get_sb_client() as client:
@@ -360,7 +320,7 @@ def get_system_stats() -> Dict[str, Any]:
         return {
             "version": "2.0.0 (Supabase PostgreSQL)",
             "db_type": "PostgreSQL (Cloud Supabase)",
-            "db_size_kb": 128.0,
+            "db_size_kb": None,
             "counts": {
                 "clients": count("clients"),
                 "equipment": count("equipment"),

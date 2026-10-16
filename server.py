@@ -8,13 +8,15 @@ import csv
 import io
 import json
 import base64
+import hashlib
+import hmac
+import time
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 
-from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Form, Response, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Form, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, StreamingResponse
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 # Load environment variables from .env if present
@@ -31,13 +33,85 @@ database.init_db()
 
 app = FastAPI(title="СТО Спецмаш CRM API", version="2.0.0")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+SESSION_COOKIE = "specmash_session"
+SESSION_TTL_SECONDS = 12 * 60 * 60
+
+def _session_secret() -> str:
+    secret = os.getenv("APP_SESSION_SECRET", "")
+    if len(secret) < 32:
+        raise RuntimeError("APP_SESSION_SECRET must be set to a random value of at least 32 characters.")
+    return secret
+
+if database.get_supabase_key():
+    _session_secret()
+
+def _encode_session(user: Dict[str, Any]) -> str:
+    payload = {
+        "id": user["id"],
+        "username": user["username"],
+        "full_name": user["full_name"],
+        "role": user["role"],
+        "phone": user.get("phone") or "",
+        "exp": int(time.time()) + SESSION_TTL_SECONDS,
+    }
+    encoded = base64.urlsafe_b64encode(
+        json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    ).rstrip(b"=").decode("ascii")
+    signature = hmac.new(
+        _session_secret().encode("utf-8"), encoded.encode("ascii"), hashlib.sha256
+    ).digest()
+    signed = base64.urlsafe_b64encode(signature).rstrip(b"=").decode("ascii")
+    return f"{encoded}.{signed}"
+
+def _decode_session(token: Optional[str]) -> Optional[Dict[str, Any]]:
+    if not token or "." not in token:
+        return None
+    encoded, supplied_signature = token.rsplit(".", 1)
+    expected = hmac.new(
+        _session_secret().encode("utf-8"), encoded.encode("ascii"), hashlib.sha256
+    ).digest()
+    expected_signature = base64.urlsafe_b64encode(expected).rstrip(b"=").decode("ascii")
+    if not hmac.compare_digest(supplied_signature, expected_signature):
+        return None
+    try:
+        payload = json.loads(
+            base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
+        )
+    except (ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict) or payload.get("exp", 0) < time.time():
+        return None
+    return payload
+
+@app.middleware("http")
+async def require_authenticated_api(request: Request, call_next):
+    path = request.url.path
+    if not path.startswith("/api/") or request.method == "OPTIONS":
+        return await call_next(request)
+    if path in {"/api/health", "/api/auth/login"}:
+        return await call_next(request)
+
+    try:
+        user = _decode_session(request.cookies.get(SESSION_COOKIE))
+    except RuntimeError:
+        user = None
+    if path == "/api/auth/session":
+        request.state.user = user
+        return await call_next(request)
+    if not user:
+        return JSONResponse(status_code=401, content={"detail": "Требуется войти в систему"})
+    request.state.user = user
+
+    admin_only = path.startswith("/api/backup") or path == "/api/settings/backup" or (
+        request.method in {"POST", "PUT", "PATCH", "DELETE"}
+        and (
+            path.startswith("/api/users")
+            or path.startswith("/api/settings")
+        )
+    ) or path == "/api/settings/stats"
+    if admin_only and user.get("role") != "admin":
+        return JSONResponse(status_code=403, content={"detail": "Доступно только администратору"})
+    return await call_next(request)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
@@ -77,6 +151,13 @@ manager = KanbanConnectionManager()
 
 @app.websocket("/ws/kanban")
 async def websocket_kanban_endpoint(websocket: WebSocket):
+    try:
+        user = _decode_session(websocket.cookies.get(SESSION_COOKIE))
+    except RuntimeError:
+        user = None
+    if not user:
+        await websocket.close(code=4401)
+        return
     await manager.connect(websocket)
     try:
         while True:
@@ -115,14 +196,6 @@ def health_check():
         "database": conn_info,
         "environment_variables_detected": detected_vars,
         "server_time": datetime.now().isoformat()
-    }
-
-@app.get("/api/realtime/config")
-def get_realtime_config():
-    """Provides Supabase Realtime endpoint parameters securely to authenticated frontend."""
-    return {
-        "url": database.get_supabase_url(),
-        "key": database.get_supabase_key()
     }
 
 # ----------------- Pydantic Models -----------------
@@ -222,12 +295,14 @@ class TaskCreate(BaseModel):
 # ----------------- Auth & Users -----------------
 
 @app.post("/api/auth/login")
-def login(req: LoginRequest):
-    if not database.get_supabase_key():
+def login(req: LoginRequest, request: Request, response: Response):
+    if not database.get_supabase_key() or not database.get_supabase_url():
         raise HTTPException(
             status_code=503,
-            detail="База данных Supabase не подключена. Пожалуйста, добавьте переменную SUPABASE_KEY в настройках Vercel."
+            detail="Supabase не настроен. Проверьте SUPABASE_URL и серверный SUPABASE_KEY в .env."
         )
+    _session_secret()
+
     user = database.get_user_by_username(req.username.strip().lower())
     if not user:
         raise HTTPException(status_code=401, detail="Неверный логин или пароль")
@@ -235,13 +310,41 @@ def login(req: LoginRequest):
     if not database.verify_password(req.password, user["password_hash"], user["salt"]):
         raise HTTPException(status_code=401, detail="Неверный логин или пароль")
 
-    return {
+    user_info = {
         "id": user["id"],
         "username": user["username"],
         "full_name": user["full_name"],
         "role": user["role"],
         "phone": user.get("phone") or "",
     }
+    response.set_cookie(
+        key=SESSION_COOKIE,
+        value=_encode_session(user_info),
+        max_age=SESSION_TTL_SECONDS,
+        httponly=True,
+        secure=(request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"),
+        samesite="strict",
+        path="/",
+    )
+    return user_info
+
+@app.get("/api/auth/session")
+def get_auth_session(request: Request):
+    user = getattr(request.state, "user", None)
+    if not user:
+        raise HTTPException(status_code=401, detail="Требуется войти в систему")
+    return {key: user[key] for key in ("id", "username", "full_name", "role", "phone")}
+
+@app.post("/api/auth/logout")
+def logout(request: Request, response: Response):
+    response.delete_cookie(
+        key=SESSION_COOKIE,
+        httponly=True,
+        secure=(request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"),
+        samesite="strict",
+        path="/",
+    )
+    return {"message": "Вы вышли из системы"}
 
 @app.get("/api/users")
 def list_users():
@@ -665,11 +768,6 @@ async def import_parts(file: UploadFile = File(...)):
             pass
 
     return {"imported": imported_count, "message": f"Успешно импортировано {imported_count} запчастей"}
-
-@app.post("/api/reset-demo")
-def reset_demo_data():
-    database.init_db()
-    return {"message": "База данных успешно инициализирована данными СТО Спецмаш"}
 
 # ----------------- Static Frontend -----------------
 

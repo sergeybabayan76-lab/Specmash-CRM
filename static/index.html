@@ -93,58 +93,9 @@
         </button>
       </form>
 
-      <!-- Quick-login Accounts -->
-      <div class="relative my-5 text-center">
-        <hr class="border-slate-800">
-        <span class="bg-slate-900 px-3 text-[10px] uppercase tracking-wider text-slate-500 font-bold absolute top-1/2 -translate-y-1/2 left-1/2 -translate-x-1/2">
-          Демо-доступ / Быстрый выбор
-        </span>
-      </div>
-
-      <div class="grid grid-cols-1 gap-2">
-        <button type="button" onclick="quickFillAndLogin('admin', 'admin123')" class="group flex items-center justify-between p-2.5 rounded-xl bg-slate-800/50 hover:bg-slate-800 border border-slate-700/60 hover:border-purple-500/50 text-left transition-all">
-          <div class="flex items-center gap-2.5">
-            <div class="w-7 h-7 rounded-lg bg-purple-600/20 text-purple-400 flex items-center justify-center font-bold text-xs border border-purple-500/30">
-              👑
-            </div>
-            <div>
-              <div class="text-xs font-bold text-white group-hover:text-purple-300">Иванов Алексей</div>
-              <div class="text-[10px] text-slate-400">Администратор (полный доступ)</div>
-            </div>
-          </div>
-          <span class="text-[10px] font-mono text-purple-300 bg-purple-950/80 px-2 py-0.5 rounded border border-purple-800/60">admin</span>
-        </button>
-
-        <button type="button" onclick="quickFillAndLogin('moderator', 'mod123')" class="group flex items-center justify-between p-2.5 rounded-xl bg-slate-800/50 hover:bg-slate-800 border border-slate-700/60 hover:border-blue-500/50 text-left transition-all">
-          <div class="flex items-center gap-2.5">
-            <div class="w-7 h-7 rounded-lg bg-blue-600/20 text-blue-400 flex items-center justify-center font-bold text-xs border border-blue-500/30">
-              🛡️
-            </div>
-            <div>
-              <div class="text-xs font-bold text-white group-hover:text-blue-300">Смирнова Елена</div>
-              <div class="text-[10px] text-slate-400">Модератор (приемка и наряды)</div>
-            </div>
-          </div>
-          <span class="text-[10px] font-mono text-blue-300 bg-blue-950/80 px-2 py-0.5 rounded border border-blue-800/60">moderator</span>
-        </button>
-
-        <button type="button" onclick="quickFillAndLogin('mechanic', 'mech123')" class="group flex items-center justify-between p-2.5 rounded-xl bg-slate-800/50 hover:bg-slate-800 border border-slate-700/60 hover:border-amber-500/50 text-left transition-all">
-          <div class="flex items-center gap-2.5">
-            <div class="w-7 h-7 rounded-lg bg-amber-600/20 text-amber-400 flex items-center justify-center font-bold text-xs border border-amber-500/30">
-              🔧
-            </div>
-            <div>
-              <div class="text-xs font-bold text-white group-hover:text-amber-300">Петров Сергей</div>
-              <div class="text-[10px] text-slate-400">Механик (ремонт и склад)</div>
-            </div>
-          </div>
-          <span class="text-[10px] font-mono text-amber-300 bg-amber-950/80 px-2 py-0.5 rounded border border-amber-800/60">mechanic</span>
-        </button>
-      </div>
-
       <div class="mt-5 pt-3.5 border-t border-slate-800/80 text-[11px] text-slate-500 flex items-center justify-between">
         <span>СТО Спецмаш (AMD)</span>
-        <span class="font-mono text-slate-600">SQLite Protected</span>
+        <span class="font-mono text-slate-600">Supabase PostgreSQL</span>
       </div>
     </div>
   </div>
@@ -252,9 +203,9 @@
       <div class="flex items-center justify-between">
         <span class="flex items-center gap-1.5">
           <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-          <span>База SQLite</span>
+          <span>Supabase PostgreSQL</span>
         </span>
-        <span class="font-mono text-slate-400">crm.db</span>
+        <span class="font-mono text-slate-400">облако</span>
       </div>
       <div class="text-[11px] text-slate-400 flex items-center justify-between">
         <span>СТО Спецмаш (AMD)</span>
@@ -919,19 +870,6 @@
           </div>
         </div>
 
-        <!-- Database Maintenance & Demo Reset -->
-        <div class="bg-rose-50/50 p-6 rounded-xl border border-rose-200 space-y-3">
-          <div class="flex items-center gap-2 text-rose-700 font-bold text-sm">
-            <i data-lucide="alert-triangle" class="w-4 h-4"></i>
-            <span>Сброс к демонстрационным данным СТО Спецмаш</span>
-          </div>
-          <p class="text-xs text-slate-600">
-            Восстанавливает начальный демонстрационный парк техники CASE, клиентов, заказ-нарядов воронки и сотрудников СТО.
-          </p>
-          <button onclick="handleResetDemo()" class="bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold px-4 py-2 rounded-lg transition-colors">
-            Сбросить базу данных к демо-данным
-          </button>
-        </div>
       </section>
 
       <!-- ================= 9. TAB: ADMINISTRATOR SETTINGS ================= -->
@@ -1155,8 +1093,8 @@
                 <i data-lucide="database" class="w-5 h-5"></i>
               </div>
               <div>
-                <h3 class="font-bold text-slate-900 text-base">База данных SQLite и Резервные копии</h3>
-                <p class="text-xs text-slate-400">Состояние локального хранилища crm.db и создание аварийных копий</p>
+                <h3 class="font-bold text-slate-900 text-base">Supabase PostgreSQL и резервные копии</h3>
+                <p class="text-xs text-slate-400">Состояние облачной базы, экспорт и восстановление JSON</p>
               </div>
             </div>
 
@@ -1198,7 +1136,7 @@
                     <span>Активно</span>
                   </span>
                 </div>
-                <p class="text-[11px] text-slate-400">Данные синхронизируются локально и на сервере. Скачайте копию базы или восстановите из файла в один клик.</p>
+                <p class="text-[11px] text-slate-400">Данные хранятся в Supabase. Экспортируйте резервную копию JSON или восстановите данные из файла.</p>
               </div>
               <div class="flex flex-wrap items-center gap-2">
                 <button type="button" onclick="exportJsonBackup()" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5 shadow-sm transition-colors">
@@ -1210,12 +1148,9 @@
                   <span>Восстановить JSON</span>
                   <input type="file" id="backup-file-input" accept=".json" onchange="handleRestoreJsonFile(event)" class="hidden">
                 </label>
-                <button type="button" onclick="downloadDatabaseBackup()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5 shadow-sm transition-colors" title="Скачать файл SQLite">
+                <button type="button" onclick="downloadDatabaseBackup()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5 shadow-sm transition-colors" title="Скачать резервную копию JSON">
                   <i data-lucide="download" class="w-4 h-4"></i>
-                  <span>Скачать .db</span>
-                </button>
-                <button type="button" onclick="handleResetDemo()" class="text-rose-600 hover:text-rose-700 hover:bg-rose-50 text-xs font-semibold px-3 py-2 rounded-lg border border-rose-200 transition-colors">
-                  Сбросить демо
+                  <span>Скачать JSON</span>
                 </button>
               </div>
             </div>
@@ -1301,39 +1236,9 @@
         <button onclick="closeModal('modal-login')" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-5 h-5"></i></button>
       </div>
 
-      <!-- Quick Switcher Demo Buttons -->
-      <div class="mt-4 space-y-2">
-        <span class="text-[11px] font-bold uppercase text-slate-400 tracking-wider">Быстрый выбор для демонстрации:</span>
-        <div class="grid grid-cols-1 gap-1.5">
-          <button onclick="quickLogin('admin')" class="flex items-center justify-between p-2 rounded-lg bg-purple-50/70 hover:bg-purple-100 border border-purple-200 text-left transition-colors text-xs">
-            <div>
-              <div class="font-bold text-purple-900">👑 Иванов Алексей</div>
-              <div class="text-[10px] text-purple-700">Роль: Администратор (полный доступ)</div>
-            </div>
-            <span class="text-[10px] font-mono text-purple-600 bg-white px-1.5 py-0.5 rounded border border-purple-200">admin</span>
-          </button>
-
-          <button onclick="quickLogin('moderator')" class="flex items-center justify-between p-2 rounded-lg bg-blue-50/70 hover:bg-blue-100 border border-blue-200 text-left transition-colors text-xs">
-            <div>
-              <div class="font-bold text-blue-900">🛡️ Смирнова Елена</div>
-              <div class="text-[10px] text-blue-700">Роль: Модератор (приемка и наряды)</div>
-            </div>
-            <span class="text-[10px] font-mono text-blue-600 bg-white px-1.5 py-0.5 rounded border border-blue-200">moderator</span>
-          </button>
-
-          <button onclick="quickLogin('mechanic')" class="flex items-center justify-between p-2 rounded-lg bg-amber-50/70 hover:bg-amber-100 border border-amber-200 text-left transition-colors text-xs">
-            <div>
-              <div class="font-bold text-amber-900">🔧 Петров Сергей</div>
-              <div class="text-[10px] text-amber-700">Роль: Механик (ремонт и склад)</div>
-            </div>
-            <span class="text-[10px] font-mono text-amber-600 bg-white px-1.5 py-0.5 rounded border border-amber-200">mechanic</span>
-          </button>
-        </div>
-      </div>
-
       <div class="relative my-4 text-center">
         <hr class="border-slate-200">
-        <span class="bg-white px-2 text-[11px] text-slate-400 absolute top-1/2 -translate-y-1/2 left-1/2 -translate-x-1/2">или ввод логина</span>
+        <span class="bg-white px-2 text-[11px] text-slate-400 absolute top-1/2 -translate-y-1/2 left-1/2 -translate-x-1/2">вход сотрудника</span>
       </div>
 
       <!-- Manual login form -->

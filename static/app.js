@@ -75,8 +75,6 @@ const crmStore = {
 // ================= REAL-TIME WEBSOCKETS & SUPABASE REALTIME =================
 
 let fastApiWs = null;
-let supabaseWs = null;
-let realtimeHeartbeatInterval = null;
 let kanbanPollingTimer = null;
 let isRealtimeConnected = false;
 
@@ -102,7 +100,6 @@ function updateRealtimeStatus(status, text) {
 
 function initRealtimeSync() {
   initFastApiWebSocket();
-  initSupabaseRealtime();
   startKanbanBackgroundPolling();
 }
 
@@ -129,9 +126,7 @@ function initFastApiWebSocket() {
     };
 
     fastApiWs.onerror = () => {
-      if (!supabaseWs || supabaseWs.readyState !== WebSocket.OPEN) {
-        updateRealtimeStatus('syncing', 'Supabase Realtime');
-      }
+      updateRealtimeStatus('syncing', 'Переподключение...');
     };
 
     fastApiWs.onclose = () => {
@@ -144,96 +139,6 @@ function initFastApiWebSocket() {
     };
   } catch (e) {
     console.warn('[FastAPI WS Init Warning]', e);
-  }
-}
-
-async function initSupabaseRealtime() {
-  if (supabaseWs && (supabaseWs.readyState === WebSocket.OPEN || supabaseWs.readyState === WebSocket.CONNECTING)) {
-    return;
-  }
-
-  let sbHost = 'wnrnbptadgvmyibszpvk.supabase.co';
-  let sbKey = '';
-
-  try {
-    const res = await fetch('/api/realtime/config');
-    if (res.ok) {
-      const cfg = await res.json();
-      if (cfg.url) sbHost = cfg.url.replace(/^https?:\/\//, '');
-      if (cfg.key) sbKey = cfg.key;
-    }
-  } catch (e) {}
-
-  if (!sbKey) return;
-  const sbUrl = `wss://${sbHost}/realtime/v1/websocket?apikey=${encodeURIComponent(sbKey)}&vsn=1.0.0`;
-
-  try {
-    supabaseWs = new WebSocket(sbUrl);
-
-    supabaseWs.onopen = () => {
-      updateRealtimeStatus('connected', 'Supabase Realtime Онлайн');
-      // Join realtime channel for deals table postgres_changes
-      const joinMsg = {
-        topic: 'realtime:public:deals',
-        event: 'phx_join',
-        payload: {
-          config: {
-            broadcast: { self: true },
-            postgres_changes: [{ event: '*', schema: 'public', table: 'deals' }]
-          }
-        },
-        ref: '1'
-      };
-      supabaseWs.send(JSON.stringify(joinMsg));
-
-      if (realtimeHeartbeatInterval) clearInterval(realtimeHeartbeatInterval);
-      realtimeHeartbeatInterval = setInterval(() => {
-        if (supabaseWs && supabaseWs.readyState === WebSocket.OPEN) {
-          supabaseWs.send(JSON.stringify({
-            topic: 'phoenix',
-            event: 'heartbeat',
-            payload: {},
-            ref: 'hb'
-          }));
-        }
-      }, 25000);
-    };
-
-    supabaseWs.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-        if (msg.event === 'postgres_changes' && msg.payload && msg.payload.data) {
-          const change = msg.payload.data;
-          const changeType = change.type;
-          const record = change.record;
-          const oldRecord = change.old_record;
-
-          if (changeType === 'UPDATE' && record) {
-            handleRemoteDealStageChange(record.id, record.stage, record);
-          } else if (changeType === 'INSERT' && record) {
-            handleRemoteDealCreated(record);
-          } else if (changeType === 'DELETE' && oldRecord) {
-            handleRemoteDealDeleted(oldRecord.id);
-          }
-        }
-      } catch (e) {}
-    };
-
-    supabaseWs.onerror = () => {
-      updateRealtimeStatus('idle', 'Авто-синхронизация');
-    };
-
-    supabaseWs.onclose = () => {
-      supabaseWs = null;
-      if (realtimeHeartbeatInterval) clearInterval(realtimeHeartbeatInterval);
-      setTimeout(() => {
-        if (state.currentUser && state.currentUser.id) {
-          initSupabaseRealtime();
-        }
-      }, 5000);
-    };
-  } catch (e) {
-    console.warn('[Supabase Realtime Init Warning]', e);
   }
 }
 
@@ -417,20 +322,15 @@ function showToast(message, type = 'success') {
 
 // ================= INITIALIZATION & AUTH =================
 
-function initAuth() {
-  const saved = localStorage.getItem('specmash_user');
-  if (saved) {
-    try {
-      state.currentUser = JSON.parse(saved);
-    } catch (e) {
-      state.currentUser = null;
-    }
-  } else {
+async function initAuth() {
+  try {
+    const response = await fetch('/api/auth/session');
+    if (!response.ok) throw new Error('No active session');
+    state.currentUser = await response.json();
+    localStorage.setItem('specmash_user', JSON.stringify(state.currentUser));
+  } catch (e) {
+    localStorage.removeItem('specmash_user');
     state.currentUser = null;
-  }
-
-  // Enforce auth: if no logged-in user, strictly show auth screen and block all views
-  if (!state.currentUser || !state.currentUser.id) {
     showAuthScreen();
     return;
   }
@@ -539,15 +439,14 @@ async function handleAuthScreenLogin(e) {
   }
 }
 
-function quickFillAndLogin(u, p) {
-  const usernameInput = document.getElementById('auth-username');
-  const passwordInput = document.getElementById('auth-password');
-  if (usernameInput) usernameInput.value = u;
-  if (passwordInput) passwordInput.value = p;
-  handleAuthScreenLogin();
-}
-
-function handleLogout() {
+async function handleLogout() {
+  try {
+    const response = await fetch('/api/auth/logout', { method: 'POST' });
+    if (!response.ok) throw new Error('Не удалось завершить сессию на сервере');
+  } catch (err) {
+    showToast(err.message || 'Не удалось выйти из системы', 'error');
+    return;
+  }
   localStorage.removeItem('specmash_user');
   state.currentUser = null;
   closeUserDropdown();
@@ -632,36 +531,6 @@ function applyUserPermissions() {
 function openLoginModal() {
   openModal('modal-login');
   if (window.lucide) lucide.createIcons();
-}
-
-async function quickLogin(role) {
-  const credentials = {
-    admin: { username: 'admin', password: 'admin123' },
-    moderator: { username: 'moderator', password: 'mod123' },
-    mechanic: { username: 'mechanic', password: 'mech123' },
-  };
-
-  const cred = credentials[role];
-  if (!cred) return;
-
-  try {
-    const res = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(cred)
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка входа');
-
-    state.currentUser = data;
-    localStorage.setItem('specmash_user', JSON.stringify(data));
-    applyUserPermissions();
-    closeModal('modal-login');
-    showToast(`Вы вошли как ${data.full_name} (${ROLE_DEFINITIONS[data.role]?.label})`);
-    loadDashboard();
-  } catch (err) {
-    showToast(err.message, 'error');
-  }
 }
 
 async function handleManualLogin(e) {
@@ -957,7 +826,7 @@ async function loadAdminSettings() {
     // Populate System Database Stats
     if (statsData) {
       const dbSizeEl = document.getElementById('settings-db-size');
-      if (dbSizeEl) dbSizeEl.textContent = `${statsData.db_size_kb || 0} KB`;
+      if (dbSizeEl) dbSizeEl.textContent = statsData.db_size_kb == null ? 'См. Supabase' : `${statsData.db_size_kb} KB`;
 
       if (statsData.counts) {
         const setTxt = (id, val) => {
@@ -1014,7 +883,7 @@ async function saveAdminSettings(e) {
 }
 
 function downloadDatabaseBackup() {
-  showToast('Формирование и скачивание резервной копии crm.db...', 'info');
+  showToast('Формирование и скачивание JSON-резервной копии...', 'info');
   window.location.href = '/api/settings/backup';
 }
 
@@ -3166,33 +3035,6 @@ async function handleRestoreJsonFile(event) {
   } catch (err) {
     showToast('Ошибка при чтении файла: ' + err.message, 'error');
     event.target.value = '';
-  }
-}
-
-async function handleResetDemo() {
-  if (!confirm('Вы уверены? Это сбросит базу данных к демонстрационному набору техники CASE, клиентов, склада и сотрудников СТО Спецмаш.')) return;
-  try {
-    const res = await fetch('/api/reset-demo', { method: 'POST' });
-    const data = await res.json();
-
-    // Clear local storage cache for CRM entities
-    ['users', 'clients', 'equipment', 'deals', 'parts'].forEach(k => {
-      localStorage.removeItem(crmStore.KEY_PREFIX + k);
-    });
-
-    showToast(data.message, 'success');
-    await Promise.all([
-      loadSettings(),
-      loadDashboard(),
-      loadDeals(),
-      loadClients(),
-      loadEquipment(),
-      loadParts(),
-      loadTasks(),
-      loadUsers()
-    ]);
-  } catch (err) {
-    showToast('Ошибка при сбросе базы', 'error');
   }
 }
 
