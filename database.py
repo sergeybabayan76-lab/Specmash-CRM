@@ -7,22 +7,42 @@ import os
 import hashlib
 import secrets
 from datetime import datetime
-import base64
+import re
 from typing import List, Dict, Any, Optional
 import httpx
 
-import re
+# Load environment variables from .env if present
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
-# Supabase PostgreSQL Configuration
-_DEFAULT_KEY = base64.b64decode("c2Jfc2VjcmV0X2dlUEdmdzJIRFVwVm8xU21NdXZhTEFfRkMxcHVSNVg=").decode("utf-8")
+# Fallback: load .env manually if python-dotenv is not available
+_env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+if os.path.exists(_env_path):
+    try:
+        with open(_env_path, "r", encoding="utf-8") as _f:
+            for _line in _f:
+                _line = _line.strip()
+                if not _line or _line.startswith("#") or "=" not in _line:
+                    continue
+                _k, _v = _line.split("=", 1)
+                _k = _k.strip()
+                _v = _v.strip().strip("'\"")
+                if _k and _k not in os.environ:
+                    os.environ[_k] = _v
+    except Exception:
+        pass
 
-raw_url = os.environ.get("SUPABASE_URL", "https://wnrnbptadgvmyibszpvk.supabase.co")
+# Supabase PostgreSQL Configuration via Environment Variables
+raw_url = os.getenv("SUPABASE_URL", "https://wnrnbptadgvmyibszpvk.supabase.co")
 url_match = re.search(r'https://[^\s)\]]+', raw_url)
 SUPABASE_URL = url_match.group(0).rstrip("/") if url_match else "https://wnrnbptadgvmyibszpvk.supabase.co"
 
-raw_key = os.environ.get("SUPABASE_KEY", _DEFAULT_KEY)
+raw_key = os.getenv("SUPABASE_KEY") or os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY") or ""
 key_match = re.search(r'[A-Za-z0-9_\-]+', raw_key)
-SUPABASE_KEY = key_match.group(0).strip() if key_match else _DEFAULT_KEY
+SUPABASE_KEY = key_match.group(0).strip() if key_match else ""
 
 DEFAULT_SETTINGS = {
     "company_name": "СТО Спецмаш",
@@ -153,10 +173,17 @@ def delete_user(user_id: int) -> Dict[str, Any]:
         return {"id": user_id, "message": "Сотрудник удален"}
 
 def ensure_default_users():
+    admin_user = os.getenv("DEFAULT_ADMIN_USERNAME", "admin")
+    admin_pass = os.getenv("DEFAULT_ADMIN_PASSWORD", "admin123")
+    mod_user = os.getenv("DEFAULT_MODERATOR_USERNAME", "moderator")
+    mod_pass = os.getenv("DEFAULT_MODERATOR_PASSWORD", "mod123")
+    mech_user = os.getenv("DEFAULT_MECHANIC_USERNAME", "mechanic")
+    mech_pass = os.getenv("DEFAULT_MECHANIC_PASSWORD", "mech123")
+
     defaults = [
-        ("admin", "admin123", "Иванов Алексей (Администратор)", "admin", "+37499112233"),
-        ("moderator", "mod123", "Смирнова Елена (Модератор)", "moderator", "+37499223344"),
-        ("mechanic", "mech123", "Петров Сергей (Механик)", "mechanic", "+37499334455"),
+        (admin_user, admin_pass, "Иванов Алексей (Администратор)", "admin", "+37499112233"),
+        (mod_user, mod_pass, "Смирнова Елена (Модератор)", "moderator", "+37499223344"),
+        (mech_user, mech_pass, "Петров Сергей (Механик)", "mechanic", "+37499334455"),
     ]
     with get_sb_client() as client:
         for u, p, fn, r, ph in defaults:
