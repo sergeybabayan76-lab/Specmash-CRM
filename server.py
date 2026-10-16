@@ -208,6 +208,11 @@ class TaskCreate(BaseModel):
 
 @app.post("/api/auth/login")
 def login(req: LoginRequest):
+    if not database.SUPABASE_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="База данных Supabase не подключена. Пожалуйста, добавьте переменную SUPABASE_KEY в настройках Vercel."
+        )
     user = database.get_user_by_username(req.username.strip().lower())
     if not user:
         raise HTTPException(status_code=401, detail="Неверный логин или пароль")

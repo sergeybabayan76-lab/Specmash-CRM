@@ -61,12 +61,13 @@ DEFAULT_SETTINGS = {
 
 def get_sb_client() -> httpx.Client:
     headers = {
-        "apikey": SUPABASE_KEY,
-        "Authorization": f"Bearer {SUPABASE_KEY}",
         "Content-Type": "application/json",
         "Prefer": "return=representation",
         "User-Agent": "SpecMash-CRM/FastAPI"
     }
+    if SUPABASE_KEY:
+        headers["apikey"] = SUPABASE_KEY
+        headers["Authorization"] = f"Bearer {SUPABASE_KEY}"
     return httpx.Client(
         base_url=f"{SUPABASE_URL}/rest/v1",
         headers=headers,
@@ -75,6 +76,9 @@ def get_sb_client() -> httpx.Client:
 
 def init_db():
     """Verifies connection to Supabase PostgreSQL and ensures default data."""
+    if not SUPABASE_KEY:
+        print("[Supabase Warning] SUPABASE_KEY is not set. Please configure SUPABASE_KEY in Vercel or .env.")
+        return
     try:
         ensure_default_users()
     except Exception as e:
@@ -108,6 +112,8 @@ def get_next_id(client: httpx.Client, table: str) -> int:
 # ==================== USERS & AUTH ====================
 
 def get_user_by_username(username: str) -> Optional[Dict[str, Any]]:
+    if not SUPABASE_KEY:
+        return None
     with get_sb_client() as client:
         r = client.get("/users", params={"username": f"ilike.{username.strip()}", "limit": "1"})
         users = r.json()
@@ -116,6 +122,8 @@ def get_user_by_username(username: str) -> Optional[Dict[str, Any]]:
     return None
 
 def list_users() -> List[Dict[str, Any]]:
+    if not SUPABASE_KEY:
+        return []
     with get_sb_client() as client:
         r = client.get("/users", params={"select": "id,username,full_name,role,phone,created_at", "order": "id.asc"})
         return r.json() if r.status_code == 200 else []
@@ -200,6 +208,8 @@ def ensure_default_users():
 # ==================== SETTINGS ====================
 
 def get_settings() -> Dict[str, Any]:
+    if not SUPABASE_KEY:
+        return dict(DEFAULT_SETTINGS)
     with get_sb_client() as client:
         r = client.get("/settings", params={"select": "*"})
         settings_dict = dict(DEFAULT_SETTINGS)
@@ -209,6 +219,8 @@ def get_settings() -> Dict[str, Any]:
         return settings_dict
 
 def update_settings(payload: Dict[str, Any]) -> Dict[str, Any]:
+    if not SUPABASE_KEY:
+        return {"message": "SUPABASE_KEY не настроен"}
     with get_sb_client() as client:
         for key, value in payload.items():
             if value is not None:
@@ -216,6 +228,15 @@ def update_settings(payload: Dict[str, Any]) -> Dict[str, Any]:
         return {"message": "Основные настройки программы успешно сохранены"}
 
 def get_system_stats() -> Dict[str, Any]:
+    if not SUPABASE_KEY:
+        return {
+            "version": "2.0.0 (Supabase PostgreSQL)",
+            "db_type": "PostgreSQL (Cloud Supabase)",
+            "configured": False,
+            "message": "Пожалуйста, добавьте SUPABASE_KEY в Vercel Environment Variables",
+            "db_size_kb": 0.0,
+            "counts": {"clients": 0, "equipment": 0, "parts": 0, "deals": 0, "users": 0, "tasks": 0}
+        }
     with get_sb_client() as client:
         def count(table):
             r = client.get(f"/{table}", params={"select": "id"})
@@ -238,6 +259,8 @@ def get_system_stats() -> Dict[str, Any]:
 # ==================== CLIENTS ====================
 
 def list_clients(q: Optional[str] = None) -> List[Dict[str, Any]]:
+    if not SUPABASE_KEY:
+        return []
     with get_sb_client() as client:
         params = {
             "select": "*,equipment(id),deals(id,amount,stage)",
@@ -342,6 +365,8 @@ def delete_client(client_id: int) -> Dict[str, Any]:
 # ==================== EQUIPMENT ====================
 
 def list_equipment(q: Optional[str] = None, category: Optional[str] = None) -> List[Dict[str, Any]]:
+    if not SUPABASE_KEY:
+        return []
     with get_sb_client() as client:
         params = {
             "select": "*,clients(name,company,phone)",
@@ -436,6 +461,8 @@ def delete_equipment(eq_id: int) -> Dict[str, Any]:
 # ==================== PARTS & WAREHOUSE ====================
 
 def list_parts(q: Optional[str] = None, low_stock: bool = False, category: Optional[str] = None) -> List[Dict[str, Any]]:
+    if not SUPABASE_KEY:
+        return []
     with get_sb_client() as client:
         params = {"select": "*", "order": "id.desc"}
         if category and category != "all":
@@ -568,6 +595,8 @@ def get_stock_movements(limit: int = 50) -> List[Dict[str, Any]]:
 # ==================== DEALS & KANBAN ====================
 
 def list_deals(stage: Optional[str] = None, q: Optional[str] = None) -> List[Dict[str, Any]]:
+    if not SUPABASE_KEY:
+        return []
     with get_sb_client() as client:
         params = {
             "select": "*,clients(name,company,phone),equipment(name,serial_vin),deal_parts(quantity)",
@@ -823,6 +852,8 @@ def remove_part_from_deal(deal_id: int, deal_part_id: int) -> Dict[str, Any]:
 # ==================== TASKS ====================
 
 def list_tasks(status: Optional[str] = None) -> List[Dict[str, Any]]:
+    if not SUPABASE_KEY:
+        return []
     with get_sb_client() as client:
         params = {"select": "*,clients(name,company),deals(title)", "order": "due_date.asc"}
         if status and status != "all":
@@ -886,6 +917,19 @@ def delete_task(task_id: int) -> Dict[str, Any]:
 # ==================== DASHBOARD METRICS ====================
 
 def get_dashboard_metrics() -> Dict[str, Any]:
+    if not SUPABASE_KEY:
+        return {
+            "total_revenue": 0,
+            "net_profit": 0,
+            "margin_percent": 0,
+            "active_deals_count": 0,
+            "total_clients": 0,
+            "warehouse_value": 0,
+            "critical_parts_count": 0,
+            "monthly_data": [],
+            "top_clients": [],
+            "critical_parts": []
+        }
     with get_sb_client() as client:
         deals = client.get("/deals", params={"select": "*,clients(name),equipment(name)", "order": "id.desc"}).json() or []
         completed = [d for d in deals if d.get("stage") == "completed"]
