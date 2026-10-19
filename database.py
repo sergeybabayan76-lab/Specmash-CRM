@@ -301,12 +301,15 @@ def ensure_default_users():
     admin_pass = os.getenv("DEFAULT_ADMIN_PASSWORD", "admin123")
     mod_user = os.getenv("DEFAULT_MODERATOR_USERNAME", "moderator")
     mod_pass = os.getenv("DEFAULT_MODERATOR_PASSWORD", "mod123")
+    mgr_user = os.getenv("DEFAULT_MANAGER_USERNAME", "manager")
+    mgr_pass = os.getenv("DEFAULT_MANAGER_PASSWORD", "manager123")
     mech_user = os.getenv("DEFAULT_MECHANIC_USERNAME", "mechanic")
     mech_pass = os.getenv("DEFAULT_MECHANIC_PASSWORD", "mech123")
 
     defaults = [
         (admin_user, admin_pass, "Иванов Алексей (Администратор)", "admin", "+37499112233"),
         (mod_user, mod_pass, "Смирнова Елена (Модератор)", "moderator", "+37499223344"),
+        (mgr_user, mgr_pass, "Мкртчян Армен (Менеджер)", "manager", "+37499445566"),
         (mech_user, mech_pass, "Петров Сергей (Механик)", "mechanic", "+37499334455"),
     ]
     with get_sb_client() as client:
@@ -793,7 +796,29 @@ def get_stock_movements(limit: int = 50) -> List[Dict[str, Any]]:
 
 # ==================== DEALS & KANBAN ====================
 
-def list_deals(stage: Optional[str] = None, q: Optional[str] = None) -> List[Dict[str, Any]]:
+def serialize_deal_description(description: str, deal_type: str = "service") -> str:
+    clean_desc = (description or "").strip()
+    clean_desc = re.sub(r'\[DEAL_TYPE:.*?\]', '', clean_desc, flags=re.DOTALL).strip()
+    if deal_type and str(deal_type).strip().lower() == "parts_sale":
+        tag = "[DEAL_TYPE:parts_sale]"
+        return f"{clean_desc}\n{tag}".strip() if clean_desc else tag
+    return clean_desc
+
+def parse_deal_description(raw_description: str, title: str = "") -> tuple[str, str]:
+    if not raw_description:
+        if title and any(term in title.lower() for term in ("продажа запчаст", "продажа з/ч", "заказ запчаст", "реализация з/ч", "отгрузка з/ч")):
+            return "", "parts_sale"
+        return "", "service"
+    match = re.search(r'\[DEAL_TYPE:(.*?)\]', raw_description, flags=re.DOTALL)
+    if match:
+        dtype = match.group(1).strip().lower()
+        clean_desc = re.sub(r'\[DEAL_TYPE:.*?\]', '', raw_description, flags=re.DOTALL).strip()
+        return clean_desc, dtype
+    if title and any(term in title.lower() for term in ("продажа запчаст", "продажа з/ч", "заказ запчаст", "реализация з/ч", "отгрузка з/ч")):
+        return raw_description.strip(), "parts_sale"
+    return raw_description.strip(), "service"
+
+def list_deals(stage: Optional[str] = None, q: Optional[str] = None, deal_type: Optional[str] = None) -> List[Dict[str, Any]]:
     if not SUPABASE_KEY:
         return []
     with get_sb_client() as client:
@@ -820,6 +845,11 @@ def list_deals(stage: Optional[str] = None, q: Optional[str] = None) -> List[Dic
             item.pop("clients", None)
             item.pop("equipment", None)
             item.pop("deal_parts", None)
+            clean_desc, dtype = parse_deal_description(d.get("description") or "", d.get("title") or "")
+            if deal_type and deal_type != "all" and dtype != deal_type:
+                continue
+            item["description"] = clean_desc
+            item["deal_type"] = dtype
             item["client_name"] = cl.get("name", "")
             item["client_company"] = cl.get("company", "")
             item["client_phone"] = cl.get("phone", "")
@@ -834,10 +864,12 @@ def create_deal(deal_data: Dict[str, Any]) -> Dict[str, Any]:
         next_id = get_next_id(client, "deals")
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         stage = deal_data.get("stage", "new")
-        completed_at = now_str if stage == "completed" else None
+        completed_at = now_str if stage in ("ready", "completed") else None
 
         client_id = deal_data.get("client_id") if deal_data.get("client_id") and deal_data.get("client_id") > 0 else None
         eq_id = deal_data.get("equipment_id") if deal_data.get("equipment_id") and deal_data.get("equipment_id") > 0 else None
+        deal_type = (deal_data.get("deal_type") or "service").strip().lower()
+        serialized_desc = serialize_deal_description(deal_data.get("description") or "", deal_type=deal_type)
 
         payload = {
             "id": next_id,
@@ -849,7 +881,7 @@ def create_deal(deal_data: Dict[str, Any]) -> Dict[str, Any]:
             "cost": float(deal_data.get("cost") or 0.0),
             "priority": deal_data.get("priority", "normal"),
             "responsible": deal_data.get("responsible", "Мастер-приемщик"),
-            "description": (deal_data.get("description") or "").strip(),
+            "description": serialized_desc,
             "deadline": deal_data.get("deadline") or None,
             "created_at": now_str,
             "completed_at": completed_at
@@ -879,6 +911,8 @@ def create_deal(deal_data: Dict[str, Any]) -> Dict[str, Any]:
 
         return {
             **payload,
+            "description": (deal_data.get("description") or "").strip(),
+            "deal_type": deal_type,
             "client_name": cl_name,
             "client_company": cl_comp,
             "client_phone": cl_phone,
@@ -899,6 +933,9 @@ def get_deal(deal_id: int) -> Dict[str, Any]:
         eq = d.get("equipment") or {}
         d.pop("clients", None)
         d.pop("equipment", None)
+        clean_desc, dtype = parse_deal_description(d.get("description") or "", d.get("title") or "")
+        d["description"] = clean_desc
+        d["deal_type"] = dtype
         d["client_name"] = cl.get("name", "")
         d["client_company"] = cl.get("company", "")
         d["client_phone"] = cl.get("phone", "")
@@ -938,9 +975,20 @@ def update_deal_stage(deal_id: int, stage: str) -> Dict[str, Any]:
 def update_deal(deal_id: int, deal_data: Dict[str, Any]) -> Dict[str, Any]:
     with get_sb_client() as client:
         stage = deal_data.get("stage", "new")
-        completed_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S") if stage == "completed" else None
+        completed_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S") if stage in ("ready", "completed") else None
         client_id = deal_data.get("client_id") if deal_data.get("client_id") and deal_data.get("client_id") > 0 else None
         eq_id = deal_data.get("equipment_id") if deal_data.get("equipment_id") and deal_data.get("equipment_id") > 0 else None
+
+        existing_r = client.get("/deals", params={"id": f"eq.{deal_id}", "select": "description,title"})
+        existing_desc = ""
+        existing_title = ""
+        if existing_r.status_code == 200 and existing_r.json():
+            existing_desc = existing_r.json()[0].get("description") or ""
+            existing_title = existing_r.json()[0].get("title") or ""
+        old_desc, old_dtype = parse_deal_description(existing_desc, existing_title)
+        new_dtype = (deal_data.get("deal_type") or old_dtype or "service").strip().lower()
+        raw_desc = deal_data.get("description") if "description" in deal_data and deal_data["description"] is not None else old_desc
+        serialized_desc = serialize_deal_description(raw_desc or "", deal_type=new_dtype)
 
         payload = {
             "title": deal_data["title"].strip(),
@@ -951,7 +999,7 @@ def update_deal(deal_id: int, deal_data: Dict[str, Any]) -> Dict[str, Any]:
             "cost": float(deal_data.get("cost") or 0.0),
             "priority": deal_data.get("priority", "normal"),
             "responsible": deal_data.get("responsible", "Мастер-приемщик"),
-            "description": (deal_data.get("description") or "").strip(),
+            "description": serialized_desc,
             "deadline": deal_data.get("deadline") or None,
             "completed_at": completed_at
         }
@@ -960,7 +1008,7 @@ def update_deal(deal_id: int, deal_data: Dict[str, Any]) -> Dict[str, Any]:
             payload["id"] = deal_id
             payload["created_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             client.post("/deals", json=payload, headers={"Prefer": "resolution=merge-duplicates"})
-        return {"id": deal_id, **payload, "message": "Сделка обновлена"}
+        return {"id": deal_id, **payload, "description": raw_desc, "deal_type": new_dtype, "message": "Сделка обновлена"}
 
 def delete_deal(deal_id: int) -> Dict[str, Any]:
     with get_sb_client() as client:
@@ -1130,11 +1178,28 @@ def get_dashboard_metrics() -> Dict[str, Any]:
         }
     with get_sb_client() as client:
         deals = client.get("/deals", params={"select": "*,clients(name),equipment(name)", "order": "id.desc"}).json() or []
+        for d in deals:
+            _, dtype = parse_deal_description(d.get("description") or "", d.get("title") or "")
+            d["deal_type"] = dtype
+
         completed = [d for d in deals if d.get("stage") == "completed"]
         active = [d for d in deals if d.get("stage") not in ("completed", "cancelled")]
 
-        total_rev = sum(d.get("amount", 0) for d in completed)
-        total_cost = sum(d.get("cost", 0) for d in completed)
+        # Requirement #2: Separate Revenue Calculation for Parts Sales & Service
+        service_completed = [d for d in completed if d.get("deal_type") != "parts_sale"]
+        service_active = [d for d in active if d.get("deal_type") != "parts_sale"]
+        service_rev = sum(d.get("amount", 0) for d in service_completed)
+        service_cost = sum(d.get("cost", 0) for d in service_completed)
+        service_profit = service_rev - service_cost
+
+        parts_completed = [d for d in completed if d.get("deal_type") == "parts_sale"]
+        parts_active = [d for d in active if d.get("deal_type") == "parts_sale"]
+        parts_rev = sum(d.get("amount", 0) for d in parts_completed)
+        parts_cost = sum(d.get("cost", 0) for d in parts_completed)
+        parts_profit = parts_rev - parts_cost
+
+        total_rev = service_rev + parts_rev
+        total_cost = service_cost + parts_cost
         net_profit = total_rev - total_cost
 
         parts = client.get("/parts", params={"select": "*"}).json() or []
@@ -1160,12 +1225,14 @@ def get_dashboard_metrics() -> Dict[str, Any]:
 
         # Recent deals format
         recent = []
-        for d in deals[:5]:
+        for d in deals[:6]:
             cl = d.get("clients") or {}
             eq = d.get("equipment") or {}
+            clean_desc, dtype = parse_deal_description(d.get("description") or "", d.get("title") or "")
             recent.append({
                 "id": d.get("id"),
                 "title": d.get("title"),
+                "deal_type": dtype,
                 "amount": d.get("amount"),
                 "stage": d.get("stage"),
                 "created_at": d.get("created_at"),
@@ -1178,6 +1245,27 @@ def get_dashboard_metrics() -> Dict[str, Any]:
             "total_cost": round(total_cost, 2),
             "net_profit": round(net_profit, 2),
             "margin_percent": round((net_profit / total_rev * 100), 1) if total_rev > 0 else 0,
+            
+            # Parts Sales revenue metrics (Requirement #2)
+            "parts_sales_revenue": round(parts_rev, 2),
+            "parts_sales_cost": round(parts_cost, 2),
+            "parts_sales_profit": round(parts_profit, 2),
+            "parts_sales_margin": round((parts_profit / parts_rev * 100), 1) if parts_rev > 0 else 0,
+            "parts_sales_count": len([d for d in deals if d.get("deal_type") == "parts_sale"]),
+            "parts_sales_completed_count": len(parts_completed),
+            "parts_sales_active_count": len(parts_active),
+            "parts_sales_active_volume": round(sum(d.get("amount", 0) for d in parts_active), 2),
+
+            # Service revenue metrics
+            "service_revenue": round(service_rev, 2),
+            "service_cost": round(service_cost, 2),
+            "service_profit": round(service_profit, 2),
+            "service_margin": round((service_profit / service_rev * 100), 1) if service_rev > 0 else 0,
+            "service_deals_count": len([d for d in deals if d.get("deal_type") != "parts_sale"]),
+            "service_completed_count": len(service_completed),
+            "service_active_count": len(service_active),
+            "service_active_volume": round(sum(d.get("amount", 0) for d in service_active), 2),
+
             "completed_count": len(completed),
             "avg_deal": round(total_rev / len(completed), 2) if completed else 0,
             "active_deals_count": len(active),

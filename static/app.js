@@ -351,6 +351,7 @@ const state = {
   currentTab: 'dashboard',
   currentUser: null,
   dealsViewMode: 'kanban', // 'kanban' | 'list'
+  dealsDepartment: 'service', // 'service' | 'parts_sale'
   settings: {
     company_name: 'СТО Спецмаш',
     logo_url: ''
@@ -365,8 +366,8 @@ const state = {
   draggedDealId: null,
 };
 
-// Kanban Stage Definitions (with Bitrix24 short labels)
-const KANBAN_STAGES = [
+// Kanban Stage Definitions (СТО: Service & Repairs)
+const SERVICE_KANBAN_STAGES = [
   { id: 'new', label: 'Новые заявки', short: 'Новая', icon: 'inbox', color: 'border-blue-500' },
   { id: 'diagnostic', label: 'Диагностика', short: 'Диагн.', icon: 'search', color: 'border-purple-500' },
   { id: 'estimate', label: 'Согласование сметы', short: 'Смета', icon: 'file-text', color: 'border-indigo-500' },
@@ -375,11 +376,26 @@ const KANBAN_STAGES = [
   { id: 'ready', label: 'Готово к выдаче', short: 'Готово', icon: 'check-circle', color: 'border-emerald-500' },
   { id: 'completed', label: 'Оплачено / Закрыто', short: 'Оплачено', icon: 'badge-dollar-sign', color: 'border-green-600' },
 ];
+const KANBAN_STAGES = SERVICE_KANBAN_STAGES;
 
-// Role names & badges
+// Dedicated Kanban Stages: Продажа запчастей (Requirement #1)
+const PARTS_KANBAN_STAGES = [
+  { id: 'new', label: 'Новые запросы', short: 'Запрос', icon: 'inbox', color: 'border-blue-500' },
+  { id: 'estimate', label: 'Подбор и расчет', short: 'Подбор', icon: 'file-text', color: 'border-indigo-500' },
+  { id: 'parts_waiting', label: 'Ожидание поставки', short: 'Поставка', icon: 'truck', color: 'border-amber-500' },
+  { id: 'ready', label: 'Скомплектовано / Готово', short: 'Скомпл.', icon: 'check-circle', color: 'border-emerald-500' },
+  { id: 'completed', label: 'Оплачено и выдано', short: 'Выдано', icon: 'badge-dollar-sign', color: 'border-green-600' },
+];
+
+function getActiveStages() {
+  return state.dealsDepartment === 'parts_sale' ? PARTS_KANBAN_STAGES : SERVICE_KANBAN_STAGES;
+}
+
+// Role names & badges (Requirement #3: Роль "Менеджер" с допуском "Механика")
 const ROLE_DEFINITIONS = {
   admin: { label: 'Администратор', badge: 'bg-purple-100 text-purple-800 border-purple-200', icon: '👑' },
   moderator: { label: 'Модератор', badge: 'bg-blue-100 text-blue-800 border-blue-200', icon: '🛡️' },
+  manager: { label: 'Менеджер', badge: 'bg-emerald-100 text-emerald-800 border-emerald-200', icon: '💼' },
   mechanic: { label: 'Механик', badge: 'bg-amber-100 text-amber-800 border-amber-200', icon: '🔧' },
 };
 
@@ -602,40 +618,46 @@ function applyUserPermissions() {
     avatarEl.textContent = initials || 'СП';
     if (u.role === 'admin') avatarEl.className = 'w-8 h-8 rounded-full bg-purple-600 text-white font-bold text-xs flex items-center justify-center uppercase shadow-sm';
     else if (u.role === 'moderator') avatarEl.className = 'w-8 h-8 rounded-full bg-blue-600 text-white font-bold text-xs flex items-center justify-center uppercase shadow-sm';
+    else if (u.role === 'manager') avatarEl.className = 'w-8 h-8 rounded-full bg-emerald-600 text-white font-bold text-xs flex items-center justify-center uppercase shadow-sm';
     else avatarEl.className = 'w-8 h-8 rounded-full bg-amber-600 text-white font-bold text-xs flex items-center justify-center uppercase shadow-sm';
   }
 
-  // Role visibility: Hide finance details & cost from mechanic
-  const isMechanic = u.role === 'mechanic';
+  // Role visibility: Hide finance details & cost from mechanic and manager (допуск Механика)
+  const isRestricted = u.role === 'mechanic' || u.role === 'manager';
   const isAdmin = u.role === 'admin';
   const financeBlock = document.getElementById('header-finance-block');
   const revCard = document.getElementById('dash-card-revenue');
+  const partsRevCard = document.getElementById('dash-card-parts-revenue');
+  const servRevCard = document.getElementById('dash-card-service-revenue');
   const chartsRow = document.getElementById('dash-charts-row');
 
-  if (financeBlock) financeBlock.classList.toggle('hidden', isMechanic);
-  if (revCard) revCard.classList.toggle('hidden', isMechanic);
-  if (chartsRow) chartsRow.classList.toggle('hidden', isMechanic);
+  if (financeBlock) financeBlock.classList.toggle('hidden', isRestricted);
+  if (revCard) revCard.classList.toggle('hidden', isRestricted);
+  if (partsRevCard) partsRevCard.classList.toggle('hidden', isRestricted);
+  if (servRevCard) servRevCard.classList.toggle('hidden', isRestricted);
+  if (chartsRow) chartsRow.classList.toggle('hidden', isRestricted);
 
   // Settings: strictly visible to Admin only
   const navSettings = document.getElementById('nav-settings');
   if (navSettings) navSettings.classList.toggle('hidden', !isAdmin);
 
-  // Requirement #4: Employees tab strictly visible to Admin only (hidden for mechanic & moderator)
+  // Requirement #4: Employees tab strictly visible to Admin only (hidden for mechanic, manager & moderator)
   const navUsers = document.getElementById('nav-users');
   if (navUsers) navUsers.classList.toggle('hidden', !isAdmin);
 
-  // Requirement #2: Import & Export tab hidden for mechanic
+  // Requirement #2 & Requirement #3: Import & Export tab hidden for mechanic and manager
   const navExport = document.getElementById('nav-export');
-  if (navExport) navExport.classList.toggle('hidden', isMechanic);
+  if (navExport) navExport.classList.toggle('hidden', isRestricted);
 
-  // Requirement #3: Reset to demo data hidden for moderators & mechanics (Admin only)
+  // Requirement #3: Reset to demo data hidden for moderators, managers & mechanics (Admin only)
   const blockResetDemo = document.getElementById('block-reset-demo');
   if (blockResetDemo) blockResetDemo.classList.toggle('hidden', !isAdmin);
   const btnSettingsResetDemo = document.getElementById('btn-settings-reset-demo');
   if (btnSettingsResetDemo) btnSettingsResetDemo.classList.toggle('hidden', !isAdmin);
 
   // Body classes for global CSS role hiding (e.g. .role-mechanic .col-deal-cost)
-  document.body.classList.toggle('role-mechanic', isMechanic);
+  document.body.classList.toggle('role-mechanic', u.role === 'mechanic');
+  document.body.classList.toggle('role-manager', u.role === 'manager');
   document.body.classList.toggle('role-moderator', u.role === 'moderator');
   document.body.classList.toggle('role-admin', isAdmin);
 }
@@ -649,6 +671,7 @@ async function quickLogin(role) {
   const credentials = {
     admin: { username: 'admin', password: 'admin123' },
     moderator: { username: 'moderator', password: 'mod123' },
+    manager: { username: 'manager', password: 'manager123' },
     mechanic: { username: 'mechanic', password: 'mech123' },
   };
 
@@ -1069,9 +1092,9 @@ function switchTab(tabName) {
     return switchTab('dashboard');
   }
 
-  // Requirement #2: Security check: Mechanics cannot access Import & Export tab
-  if (tabName === 'export' && state.currentUser.role === 'mechanic') {
-    showToast('Раздел "Импорт & Экспорт" недоступен для роли Механик', 'warning');
+  // Requirement #2 & Requirement #3: Security check: Mechanics & Managers cannot access Import & Export tab
+  if (tabName === 'export' && (state.currentUser.role === 'mechanic' || state.currentUser.role === 'manager')) {
+    showToast('Раздел "Импорт & Экспорт" недоступен для роли Механик / Менеджер', 'warning');
     return switchTab('dashboard');
   }
 
@@ -1093,6 +1116,21 @@ function switchTab(tabName) {
       }
     }
   });
+
+  // Department-specific highlight for Kanban vs Parts Sales
+  const navKanban = document.getElementById('nav-kanban');
+  const navParts = document.getElementById('nav-parts-sales');
+  if (tabName === 'kanban') {
+    if (state.dealsDepartment === 'parts_sale') {
+      if (navParts) navParts.className = 'nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-white bg-emerald-600/20 border-l-4 border-emerald-500';
+      if (navKanban) navKanban.className = 'nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800';
+    } else {
+      if (navKanban) navKanban.className = 'nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-white bg-blue-600/20 border-l-4 border-blue-500';
+      if (navParts) navParts.className = 'nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800';
+    }
+  } else {
+    if (navParts) navParts.className = 'nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800';
+  }
 
   if (tabName === 'dashboard') loadDashboard();
   else if (tabName === 'kanban') loadDeals();
@@ -1143,6 +1181,26 @@ async function loadDashboard() {
     document.getElementById('stat-profit').textContent = formatMoney(data.net_profit);
     document.getElementById('stat-margin').textContent = `${data.margin_percent}% маржа`;
 
+    // Parts Sales Revenue Metrics (Requirement #2)
+    const statPartsRev = document.getElementById('stat-parts-revenue');
+    if (statPartsRev) statPartsRev.textContent = formatMoney(data.parts_sales_revenue || 0);
+    const statPartsProfit = document.getElementById('stat-parts-profit');
+    if (statPartsProfit) statPartsProfit.textContent = formatMoney(data.parts_sales_profit || 0);
+    const statPartsMargin = document.getElementById('stat-parts-margin');
+    if (statPartsMargin) statPartsMargin.textContent = `${data.parts_sales_margin || 0}% маржа`;
+    const statPartsCount = document.getElementById('stat-parts-completed-count');
+    if (statPartsCount) statPartsCount.textContent = `${data.parts_sales_completed_count || 0} продаж`;
+
+    // Service & Repair Revenue Metrics
+    const statServRev = document.getElementById('stat-service-revenue');
+    if (statServRev) statServRev.textContent = formatMoney(data.service_revenue || 0);
+    const statServProfit = document.getElementById('stat-service-profit');
+    if (statServProfit) statServProfit.textContent = formatMoney(data.service_profit || 0);
+    const statServMargin = document.getElementById('stat-service-margin');
+    if (statServMargin) statServMargin.textContent = `${data.service_margin || 0}% маржа`;
+    const statServCount = document.getElementById('stat-service-completed-count');
+    if (statServCount) statServCount.textContent = `${data.service_completed_count || 0} нарядов`;
+
     document.getElementById('stat-active-deals').textContent = data.active_deals_count;
     document.getElementById('stat-active-volume').textContent = formatMoney(data.active_deals_volume);
 
@@ -1154,10 +1212,12 @@ async function loadDashboard() {
     document.getElementById('stat-equipment-count').textContent = data.total_equipment;
     document.getElementById('stat-overdue-tasks').textContent = data.overdue_tasks;
 
-    const kanbanCount = (typeof data.total_deals_count === 'number') 
-      ? data.total_deals_count 
-      : (state.deals && state.deals.length > 0 ? state.deals.length : data.active_deals_count);
-    document.getElementById('badge-kanban-count').textContent = kanbanCount;
+    const kanbanCount = typeof data.service_deals_count === 'number' ? data.service_deals_count : (data.total_deals_count || 0);
+    const partsCount = typeof data.parts_sales_count === 'number' ? data.parts_sales_count : 0;
+    const badgeKanban = document.getElementById('badge-kanban-count');
+    if (badgeKanban) badgeKanban.textContent = kanbanCount;
+    const badgeParts = document.getElementById('badge-parts-sales-count');
+    if (badgeParts) badgeParts.textContent = partsCount;
     document.getElementById('badge-clients-count').textContent = data.total_clients;
     document.getElementById('badge-equipment-count').textContent = data.total_equipment;
     const userBadge = document.getElementById('badge-users-count');
@@ -1303,11 +1363,20 @@ function renderRecentDeals(deals) {
   }
 
   container.innerHTML = deals.map(d => {
-    const stageObj = KANBAN_STAGES.find(s => s.id === d.stage) || { label: d.stage };
+    const isParts = d.deal_type === 'parts_sale';
+    const stageList = isParts ? PARTS_KANBAN_STAGES : SERVICE_KANBAN_STAGES;
+    const stageObj = stageList.find(s => s.id === d.stage) || { label: d.stage };
+    const deptBadge = isParts 
+      ? '<span class="text-[9px] font-bold px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800 border border-emerald-200">📦 Продажа з/ч</span>'
+      : '<span class="text-[9px] font-bold px-1.5 py-0.2 rounded bg-blue-100 text-blue-800 border border-blue-200">🔧 Наряд СТО</span>';
+
     return `
       <div onclick="openDealModal(${d.id})" class="p-2.5 rounded-lg border border-slate-100 hover:border-blue-300 hover:bg-blue-50/30 transition-all cursor-pointer flex items-center justify-between text-xs">
         <div>
-          <div class="font-bold text-slate-800">${d.title}</div>
+          <div class="font-bold text-slate-800 flex items-center gap-1.5">
+            <span>${d.title}</span>
+            ${deptBadge}
+          </div>
           <div class="text-[11px] text-slate-500 mt-0.5">
             ${d.client_name || 'Без клиента'} • ${d.equipment_name || 'Техника не выбрана'}
           </div>
@@ -1371,9 +1440,72 @@ async function loadDeals() {
   }
 }
 
+function switchDealsDepartment(dept) {
+  state.dealsDepartment = dept || 'service';
+  const isParts = state.dealsDepartment === 'parts_sale';
+
+  const btnService = document.getElementById('dept-btn-service');
+  const btnParts = document.getElementById('dept-btn-parts-sale');
+  if (btnService && btnParts) {
+    if (isParts) {
+      btnParts.className = 'flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-emerald-800 shadow-sm transition-all font-bold';
+      btnService.className = 'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-slate-600 hover:text-slate-900 transition-all font-semibold';
+    } else {
+      btnService.className = 'flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-blue-900 shadow-sm transition-all font-bold';
+      btnParts.className = 'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-slate-600 hover:text-slate-900 transition-all font-semibold';
+    }
+  }
+
+  // Nav item highlighting in sidebar
+  const navKanban = document.getElementById('nav-kanban');
+  const navParts = document.getElementById('nav-parts-sales');
+  if (state.currentTab === 'kanban') {
+    if (isParts) {
+      if (navParts) navParts.className = 'nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-white bg-emerald-600/20 border-l-4 border-emerald-500';
+      if (navKanban) navKanban.className = 'nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800';
+    } else {
+      if (navKanban) navKanban.className = 'nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-white bg-blue-600/20 border-l-4 border-blue-500';
+      if (navParts) navParts.className = 'nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800';
+    }
+  }
+
+  const titleEl = document.getElementById('kanban-board-title');
+  const subEl = document.getElementById('kanban-board-subtitle');
+  const btnText = document.getElementById('btn-create-deal-text');
+  if (titleEl) titleEl.textContent = isParts ? 'Отдел: Продажа запчастей' : 'Сделки и заказ-наряды СТО';
+  if (subEl) subEl.textContent = isParts 
+    ? 'СТО Спецмаш • Воронка продаж запчастей, подбор по каталогу, бронирование и отгрузка со склада'
+    : 'СТО Спецмаш • Воронка ремонтов, контроль этапов и списание запчастей';
+  if (btnText) btnText.textContent = isParts ? 'Новая продажа з/ч' : 'Создать наряд';
+
+  updateDealsStageFilterOptions();
+  renderDeals();
+}
+
+function updateDealsStageFilterOptions() {
+  const select = document.getElementById('deals-stage-filter');
+  if (!select) return;
+  const currentVal = select.value;
+  const activeStages = getActiveStages();
+  select.innerHTML = '<option value="all">Все стадии воронки</option>' + activeStages.map(s => `
+    <option value="${s.id}">${s.label}</option>
+  `).join('');
+  if (activeStages.some(s => s.id === currentVal) || currentVal === 'all') {
+    select.value = currentVal;
+  } else {
+    select.value = 'all';
+  }
+}
+
 function renderDeals() {
+  const serviceDeals = (state.deals || []).filter(d => d.deal_type !== 'parts_sale');
+  const partsDeals = (state.deals || []).filter(d => d.deal_type === 'parts_sale');
+
   const badgeKanban = document.getElementById('badge-kanban-count');
-  if (badgeKanban) badgeKanban.textContent = state.deals ? state.deals.length : 0;
+  if (badgeKanban) badgeKanban.textContent = serviceDeals.length;
+
+  const badgeParts = document.getElementById('badge-parts-sales-count');
+  if (badgeParts) badgeParts.textContent = partsDeals.length;
 
   if (state.dealsViewMode === 'list') {
     renderDealsList();
@@ -1387,8 +1519,14 @@ function renderKanban() {
   if (!wrapper) return;
 
   const filterText = (document.getElementById('kanban-filter')?.value || '').toLowerCase().trim();
+  const isPartsDept = state.dealsDepartment === 'parts_sale';
+  const activeStages = getActiveStages();
 
-  const filteredDeals = state.deals.filter(d => {
+  const filteredDeals = (state.deals || []).filter(d => {
+    // Filter by department (Requirement #1: отдельный Канбан "Продажа запчастей")
+    const dIsParts = d.deal_type === 'parts_sale';
+    if (isPartsDept !== dIsParts) return false;
+
     if (!filterText) return true;
     return (
       d.title.toLowerCase().includes(filterText) ||
@@ -1398,7 +1536,7 @@ function renderKanban() {
     );
   });
 
-  wrapper.innerHTML = KANBAN_STAGES.map(stage => {
+  wrapper.innerHTML = activeStages.map(stage => {
     const stageDeals = filteredDeals.filter(d => d.stage === stage.id);
     const stageTotal = stageDeals.reduce((sum, d) => sum + (d.amount || 0), 0);
 
@@ -1412,7 +1550,7 @@ function renderKanban() {
             </div>
             <div class="text-[10px] font-mono text-slate-400 mt-0.5">${formatMoney(stageTotal)}</div>
           </div>
-          <button onclick="openDealModal(null, '${stage.id}')" class="text-slate-400 hover:text-blue-600 p-1 rounded hover:bg-slate-100" title="Добавить наряд">
+          <button onclick="openDealModal(null, '${stage.id}', '${state.dealsDepartment}')" class="text-slate-400 hover:text-blue-600 p-1 rounded hover:bg-slate-100" title="${isPartsDept ? 'Оформить продажу' : 'Добавить наряд'}">
             <i data-lucide="plus" class="w-4 h-4"></i>
           </button>
         </div>
@@ -1437,8 +1575,14 @@ function renderDealsList() {
 
   const filterText = (document.getElementById('kanban-filter')?.value || '').toLowerCase().trim();
   const stageFilter = document.getElementById('deals-stage-filter')?.value || 'all';
+  const isPartsDept = state.dealsDepartment === 'parts_sale';
+  const activeStages = getActiveStages();
 
-  const filteredDeals = state.deals.filter(d => {
+  const filteredDeals = (state.deals || []).filter(d => {
+    // Filter by department (Requirement #1)
+    const dIsParts = d.deal_type === 'parts_sale';
+    if (isPartsDept !== dIsParts) return false;
+
     if (stageFilter !== 'all' && d.stage !== stageFilter) return false;
     if (!filterText) return true;
     return (
@@ -1456,7 +1600,8 @@ function renderDealsList() {
   if (totalAmountEl) totalAmountEl.textContent = formatMoney(totalAmount);
 
   if (filteredDeals.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="9" class="p-8 text-center text-slate-400 text-xs">Заказ-наряды не найдены по заданным условиям</td></tr>`;
+    const emptyMsg = isPartsDept ? 'Продажи запчастей не найдены по заданным условиям' : 'Заказ-наряды не найдены по заданным условиям';
+    tbody.innerHTML = `<tr><td colspan="9" class="p-8 text-center text-slate-400 text-xs">${emptyMsg}</td></tr>`;
     return;
   }
 
@@ -1466,11 +1611,11 @@ function renderDealsList() {
     else if (deal.priority === 'high') priorityBadge = '<span class="badge-high text-[10px] font-bold px-1.5 py-0.5 rounded">Высокий</span>';
     else if (deal.priority === 'low') priorityBadge = '<span class="badge-low text-[10px] font-medium px-1.5 py-0.5 rounded">Низкий</span>';
 
-    const currIdx = KANBAN_STAGES.findIndex(s => s.id === deal.stage);
-    const stageObj = KANBAN_STAGES.find(s => s.id === deal.stage) || { label: deal.stage };
+    const currIdx = activeStages.findIndex(s => s.id === deal.stage);
+    const stageObj = activeStages.find(s => s.id === deal.stage) || { label: deal.stage };
 
-    // Bitrix24 Pipeline Chevrons
-    const chevronsHtml = KANBAN_STAGES.map((s, idx) => {
+    // Bitrix24 Pipeline Chevrons using activeStages
+    const chevronsHtml = activeStages.map((s, idx) => {
       let stateClass = 'future';
       if (idx < currIdx) stateClass = 'passed';
       else if (idx === currIdx) stateClass = `current stage-${s.id}`;
@@ -1502,6 +1647,7 @@ function renderDealsList() {
               <div class="mt-1 flex items-center gap-1.5 flex-wrap">
                 ${priorityBadge}
                 ${isOverdue ? `<span class="bg-rose-600 text-white font-bold text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1 w-fit shadow-xs"><i data-lucide="clock" class="w-3 h-3"></i> Ожидает выдачи &gt; 30 дней</span>` : ''}
+                ${deal.deal_type === 'parts_sale' ? `<span class="bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold">📦 Продажа з/ч</span>` : ''}
                 ${Number(deal.parts_count || 0) > 0 ? `<span class="bg-amber-50 text-amber-700 border border-amber-200 text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold" title="Списано со склада">${deal.parts_count} з/ч</span>` : ''}
               </div>
             </div>
@@ -1515,8 +1661,8 @@ function renderDealsList() {
 
         <td class="p-3.5 text-xs">
           <div class="font-bold text-slate-700 flex items-center gap-1.5">
-            <i data-lucide="truck" class="w-3.5 h-3.5 text-emerald-600"></i>
-            <span>${deal.equipment_name || (state.equipment && state.equipment.find(eq => eq.id === deal.equipment_id)?.name) || 'Не привязана'}</span>
+            <i data-lucide="${deal.deal_type === 'parts_sale' ? 'shopping-cart' : 'truck'}" class="w-3.5 h-3.5 ${deal.deal_type === 'parts_sale' ? 'text-emerald-600' : 'text-blue-600'}"></i>
+            <span>${deal.deal_type === 'parts_sale' ? 'Продажа со склада' : (deal.equipment_name || (state.equipment && state.equipment.find(eq => eq.id === deal.equipment_id)?.name) || 'Не привязана')}</span>
           </div>
           <div class="text-[11px] text-slate-400 font-mono">${deal.equipment_category || ''}</div>
         </td>
@@ -1532,7 +1678,7 @@ function renderDealsList() {
             <div class="flex items-center gap-2">
               <span class="text-[10px] text-slate-400 font-medium">Стадия:</span>
               <select onchange="updateDealStageQuick(${deal.id}, this.value, event)" class="b24-stage-select bg-white border border-slate-200 text-[11px] font-semibold rounded px-2 py-0.5 outline-none focus:border-blue-500 cursor-pointer">
-                ${KANBAN_STAGES.map(s => `
+                ${activeStages.map(s => `
                   <option value="${s.id}" ${s.id === deal.stage ? 'selected' : ''}>${s.label}</option>
                 `).join('')}
               </select>
@@ -1608,13 +1754,15 @@ async function updateDealStageQuick(dealId, newStage, event) {
     }
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка обновления стадии');
-    const stageName = KANBAN_STAGES.find(s => s.id === newStage)?.label || newStage;
-    showToast(`Наряд #${dealId}: стадия изменена на «${stageName}»`, 'info');
+    const activeStages = getActiveStages();
+    const stageName = activeStages.find(s => s.id === newStage)?.label || newStage;
+    showToast(`Сделка #${dealId}: стадия изменена на «${stageName}»`, 'info');
     loadDashboard();
   } catch (err) {
     console.warn('Deal stage update warning:', err);
-    const stageName = KANBAN_STAGES.find(s => s.id === newStage)?.label || newStage;
-    showToast(`Стадия наряда сохранена: «${stageName}»`, 'info');
+    const activeStages = getActiveStages();
+    const stageName = activeStages.find(s => s.id === newStage)?.label || newStage;
+    showToast(`Стадия сделки сохранена: «${stageName}»`, 'info');
   }
 }
 
@@ -1673,7 +1821,10 @@ function renderKanbanCard(deal) {
 
       <div class="flex items-start justify-between gap-2">
         <h4 class="font-bold ${isOverdue ? 'text-rose-950' : 'text-slate-800'} text-xs leading-snug hover:text-blue-600 transition-colors">${deal.title}</h4>
-        ${priorityBadge}
+        <div class="flex items-center gap-1">
+          ${deal.deal_type === 'parts_sale' ? '<span class="bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-bold px-1.5 py-0.5 rounded">📦 З/Ч</span>' : ''}
+          ${priorityBadge}
+        </div>
       </div>
 
       <div class="space-y-1 text-[11px] text-slate-500 border-t border-slate-100 pt-2">
@@ -1681,10 +1832,15 @@ function renderKanbanCard(deal) {
           <i data-lucide="user" class="w-3.5 h-3.5 text-slate-400"></i>
           <span class="truncate">${deal.client_name || 'Клиент не указан'}</span>
         </div>
+        ${deal.deal_type === 'parts_sale' ? `
+        <div class="flex items-center gap-1.5 text-emerald-700 font-medium text-[11px]">
+          <i data-lucide="shopping-cart" class="w-3.5 h-3.5 text-emerald-600"></i>
+          <span>Отдел: Продажа запчастей</span>
+        </div>` : `
         <div class="flex items-center gap-1.5 text-slate-600">
           <i data-lucide="truck" class="w-3.5 h-3.5 text-emerald-500"></i>
           <span class="truncate">${deal.equipment_name || (state.equipment && state.equipment.find(eq => eq.id === deal.equipment_id)?.name) || 'Техника не привязана'}</span>
-        </div>
+        </div>`}
       </div>
 
       <div class="flex items-center justify-between pt-1 text-xs">
@@ -2533,7 +2689,59 @@ function clearDealClientSearch() {
 }
 
 // DEAL MODAL
-async function openDealModal(dealId = null, defaultStage = 'new') {
+function setDealModalType(type) {
+  const isParts = type === 'parts_sale';
+  const typeInput = document.getElementById('deal-type');
+  if (typeInput) typeInput.value = isParts ? 'parts_sale' : 'service';
+
+  const btnService = document.getElementById('deal-type-btn-service');
+  const btnParts = document.getElementById('deal-type-btn-parts');
+  if (btnService && btnParts) {
+    if (isParts) {
+      btnParts.className = 'flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition-all bg-white text-emerald-800 shadow-xs flex items-center justify-center gap-1.5';
+      btnService.className = 'flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold transition-all text-slate-600 hover:text-slate-900 flex items-center justify-center gap-1.5';
+    } else {
+      btnService.className = 'flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition-all bg-white text-blue-900 shadow-xs flex items-center justify-center gap-1.5';
+      btnParts.className = 'flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold transition-all text-slate-600 hover:text-slate-900 flex items-center justify-center gap-1.5';
+    }
+  }
+
+  const titleLabel = document.getElementById('deal-title-label');
+  const titleInput = document.getElementById('deal-title');
+  if (titleLabel) titleLabel.textContent = isParts ? 'Тема / Заказ на запчасти *' : 'Тема / Название наряда *';
+  if (titleInput && (!titleInput.value || titleInput.value.includes('Например:'))) {
+    titleInput.placeholder = isParts ? 'Например: Комплект фильтров и гидронасос для CASE 580' : 'Например: Капитальный ремонт гидравлики CASE';
+  }
+
+  // Populate stages in deal-stage select
+  const stageSelect = document.getElementById('deal-stage');
+  if (stageSelect) {
+    const curVal = stageSelect.value;
+    const stages = isParts ? PARTS_KANBAN_STAGES : SERVICE_KANBAN_STAGES;
+    stageSelect.innerHTML = stages.map(s => `
+      <option value="${s.id}">${s.label}</option>
+    `).join('') + `<option value="cancelled">❌ Отказ / Архив</option>`;
+    if (stages.some(s => s.id === curVal) || curVal === 'cancelled') {
+      stageSelect.value = curVal;
+    } else {
+      stageSelect.value = stages[0]?.id || 'new';
+    }
+  }
+
+  const dealId = document.getElementById('deal-id')?.value;
+  const modalTitle = document.getElementById('modal-deal-title');
+  if (modalTitle) {
+    if (dealId) {
+      modalTitle.textContent = isParts ? 'Редактирование заказа на запчасти' : 'Редактирование наряда';
+    } else {
+      modalTitle.textContent = isParts ? 'Новый заказ на продажу запчастей' : 'Новый заказ-наряд СТО Спецмаш';
+    }
+  }
+
+  if (window.lucide) lucide.createIcons();
+}
+
+async function openDealModal(dealId = null, defaultStage = 'new', defaultType = null) {
   await Promise.all([loadClientsListOptions(), loadWarehousePartsOptions(), loadEmployeesSelectOptions(), loadEquipment()]);
   
   const form = document.getElementById('form-deal');
@@ -2545,14 +2753,18 @@ async function openDealModal(dealId = null, defaultStage = 'new') {
   // Reset search & auto-fill
   clearDealClientSearch();
 
+  let targetType = defaultType || (state.dealsDepartment === 'parts_sale' ? 'parts_sale' : 'service');
+
   if (dealId) {
-    document.getElementById('modal-deal-title').textContent = 'Редактирование наряда';
     document.getElementById('btn-delete-deal').classList.remove('hidden');
     document.getElementById('deal-parts-section').classList.remove('hidden');
 
     try {
       const res = await fetch(`/api/deals/${dealId}`);
       const deal = await res.json();
+      targetType = deal.deal_type || 'service';
+      setDealModalType(targetType);
+
       document.getElementById('deal-id').value = deal.id;
       document.getElementById('deal-title').value = deal.title;
       document.getElementById('deal-client').value = deal.client_id || '';
@@ -2586,8 +2798,8 @@ async function openDealModal(dealId = null, defaultStage = 'new') {
       showToast('Ошибка загрузки сделки', 'error');
     }
   } else {
-    document.getElementById('modal-deal-title').textContent = 'Новый заказ-наряд СТО Спецмаш';
-    document.getElementById('deal-stage').value = defaultStage;
+    setDealModalType(targetType);
+    document.getElementById('deal-stage').value = defaultStage || 'new';
     await handleDealClientChange(document.getElementById('deal-client').value);
   }
 
@@ -2817,9 +3029,11 @@ async function saveDeal(e) {
   const eqSelect = document.getElementById('deal-equipment');
   const eqId = parseInt(eqSelect.value) || null;
   const clientId = parseInt(document.getElementById('deal-client').value) || null;
+  const dealType = document.getElementById('deal-type')?.value || 'service';
 
   const payload = {
     title: document.getElementById('deal-title').value.trim(),
+    deal_type: dealType,
     client_id: clientId,
     equipment_id: eqId,
     stage: document.getElementById('deal-stage').value,
@@ -2867,6 +3081,7 @@ async function saveDeal(e) {
     crmStore.saveItem('deals', {
       ...payload,
       id: savedId,
+      deal_type: data.deal_type || payload.deal_type,
       client_name: data.client_name || (clientObj ? clientObj.name : ''),
       client_company: data.client_company || (clientObj ? clientObj.company : ''),
       client_phone: data.client_phone || (clientObj ? clientObj.phone : ''),
@@ -2875,7 +3090,8 @@ async function saveDeal(e) {
       _updated_at: Date.now()
     });
 
-    showToast(dealId ? 'Сделка обновлена' : 'Сделка создана');
+    const isParts = payload.deal_type === 'parts_sale';
+    showToast(dealId ? (isParts ? 'Заказ на запчасти обновлен' : 'Заказ-наряд обновлен') : (isParts ? 'Заказ на запчасти создан' : 'Заказ-наряд создан'));
     closeModal('modal-deal');
     await loadDeals();
     loadDashboard();
@@ -3517,8 +3733,8 @@ async function handleRestoreJsonFile(event) {
 }
 
 function downloadTableExport(table, format = 'xlsx') {
-  if (state.currentUser?.role === 'mechanic') {
-    showToast('Выгрузка базы недоступна для роли Механик', 'error');
+  if (state.currentUser?.role === 'mechanic' || state.currentUser?.role === 'manager') {
+    showToast('Выгрузка базы недоступна для роли Механик / Менеджер', 'error');
     return;
   }
   const role = state.currentUser?.role || 'admin';

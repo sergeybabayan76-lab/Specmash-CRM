@@ -128,6 +128,19 @@
           <span class="text-[10px] font-mono text-blue-300 bg-blue-950/80 px-2 py-0.5 rounded border border-blue-800/60">moderator</span>
         </button>
 
+        <button type="button" onclick="quickFillAndLogin('manager', 'manager123')" class="group flex items-center justify-between p-2.5 rounded-xl bg-slate-800/50 hover:bg-slate-800 border border-slate-700/60 hover:border-emerald-500/50 text-left transition-all">
+          <div class="flex items-center gap-2.5">
+            <div class="w-7 h-7 rounded-lg bg-emerald-600/20 text-emerald-400 flex items-center justify-center font-bold text-xs border border-emerald-500/30">
+              💼
+            </div>
+            <div>
+              <div class="text-xs font-bold text-white group-hover:text-emerald-300">Мкртчян Армен</div>
+              <div class="text-[10px] text-slate-400">Менеджер (продажи и склад)</div>
+            </div>
+          </div>
+          <span class="text-[10px] font-mono text-emerald-300 bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-800/60">manager</span>
+        </button>
+
         <button type="button" onclick="quickFillAndLogin('mechanic', 'mech123')" class="group flex items-center justify-between p-2.5 rounded-xl bg-slate-800/50 hover:bg-slate-800 border border-slate-700/60 hover:border-amber-500/50 text-left transition-all">
           <div class="flex items-center gap-2.5">
             <div class="w-7 h-7 rounded-lg bg-amber-600/20 text-amber-400 flex items-center justify-center font-bold text-xs border border-amber-500/30">
@@ -177,7 +190,7 @@
         <h1 id="sidebar-company-name" class="font-bold text-white text-base leading-tight truncate">СТО Спецмаш</h1>
         <p class="text-xs text-slate-400 truncate flex items-center gap-1.5">
           <span>Сервис спецтехники</span>
-          <span class="text-[9px] bg-blue-900/60 text-blue-300 border border-blue-700/50 px-1.5 py-0.2 rounded font-mono font-semibold">v1.2</span>
+          <span class="text-[9px] bg-blue-900/60 text-blue-300 border border-blue-700/50 px-1.5 py-0.2 rounded font-mono font-semibold">v1.2.1</span>
         </p>
       </div>
 
@@ -202,10 +215,18 @@
         <span>Дашборд & Выручка</span>
       </a>
 
-      <a href="#kanban" onclick="switchTab('kanban')" id="nav-kanban" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
-        <i data-lucide="trello" class="w-4 h-4"></i>
-        <span>Воронка & Канбан</span>
+      <!-- 1. Kanban СТО (Заказ-наряды) -->
+      <a href="#kanban" onclick="switchDealsDepartment('service'); switchTab('kanban')" id="nav-kanban" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
+        <i data-lucide="wrench" class="w-4 h-4 text-blue-400"></i>
+        <span>Заказ-наряды (СТО)</span>
         <span id="badge-kanban-count" class="ml-auto bg-slate-800 text-slate-300 text-xs px-2 py-0.5 rounded-full font-mono">0</span>
+      </a>
+
+      <!-- 2. Kanban Продажа запчастей (Requirement #1) -->
+      <a href="#kanban" onclick="switchDealsDepartment('parts_sale'); switchTab('kanban')" id="nav-parts-sales" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
+        <i data-lucide="shopping-cart" class="w-4 h-4 text-emerald-400"></i>
+        <span>Продажа запчастей</span>
+        <span id="badge-parts-sales-count" class="ml-auto bg-slate-800 text-slate-300 text-xs px-2 py-0.5 rounded-full font-mono">0</span>
       </a>
 
       <a href="#clients" onclick="switchTab('clients')" id="nav-clients" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
@@ -356,61 +377,104 @@
       <!-- ================= 1. TAB: DASHBOARD ================= -->
       <section id="tab-dashboard" class="space-y-6">
         <!-- Top Metrics Cards (AMD) -->
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
-          <!-- Card 1: Revenue (Visible for Admin & Moderator) -->
-          <div id="dash-card-revenue" class="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm relative overflow-hidden">
-            <div class="flex items-center justify-between mb-3">
-              <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">Общая выручка</span>
-              <span class="p-2 rounded-lg bg-emerald-50 text-emerald-600"><i data-lucide="badge-dollar-sign" class="w-5 h-5"></i></span>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+          <!-- Card 1: Total Revenue (Visible for Admin & Moderator) -->
+          <div id="dash-card-revenue" class="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm relative overflow-hidden flex flex-col justify-between">
+            <div>
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-xs font-bold uppercase tracking-wider text-slate-500">Общая выручка СТО</span>
+                <span class="p-2 rounded-lg bg-emerald-50 text-emerald-600"><i data-lucide="badge-dollar-sign" class="w-5 h-5"></i></span>
+              </div>
+              <div id="stat-revenue" class="text-2xl font-black text-slate-900 font-mono">0 AMD</div>
             </div>
-            <div id="stat-revenue" class="text-2xl font-black text-slate-900 font-mono">0 AMD</div>
-            <div class="mt-2 text-xs flex items-center gap-2">
-              <span class="text-emerald-700 font-medium">Чистая прибыль:</span>
-              <span id="stat-profit" class="font-bold font-mono text-emerald-600">0 AMD</span>
-              <span id="stat-margin" class="ml-auto px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[11px] font-mono font-semibold">0% маржа</span>
+            <div class="mt-3 pt-2.5 border-t border-slate-100 text-xs flex items-center justify-between">
+              <span class="text-slate-500">Прибыль: <strong id="stat-profit" class="font-mono text-emerald-600 font-bold">0 AMD</strong></span>
+              <span id="stat-margin" class="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[11px] font-mono font-semibold">0% маржа</span>
             </div>
           </div>
 
-          <!-- Card 2: Active Pipeline -->
-          <div class="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm relative overflow-hidden">
-            <div class="flex items-center justify-between mb-3">
-              <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">Наряды в работе</span>
-              <span class="p-2 rounded-lg bg-blue-50 text-blue-600"><i data-lucide="trello" class="w-5 h-5"></i></span>
+          <!-- Card 2: Parts Sales Revenue (Requirement #2) -->
+          <div id="dash-card-parts-revenue" class="bg-white p-5 rounded-xl border border-emerald-200/80 bg-gradient-to-br from-white to-emerald-50/20 shadow-sm relative overflow-hidden flex flex-col justify-between">
+            <div>
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-xs font-bold uppercase tracking-wider text-emerald-700">Выручка: Продажа запчастей</span>
+                <span class="p-2 rounded-lg bg-emerald-100/70 text-emerald-700"><i data-lucide="shopping-cart" class="w-5 h-5"></i></span>
+              </div>
+              <div id="stat-parts-revenue" class="text-2xl font-black text-emerald-700 font-mono">0 AMD</div>
             </div>
-            <div id="stat-active-deals" class="text-2xl font-black text-slate-900 font-mono">0</div>
-            <div class="mt-2 text-xs text-slate-500 flex items-center justify-between">
-              <span>Сумма в работе:</span>
+            <div class="mt-3 pt-2.5 border-t border-emerald-100/80 text-xs flex items-center justify-between">
+              <span class="text-slate-600">Прибыль: <strong id="stat-parts-profit" class="font-mono text-emerald-700">0 AMD</strong></span>
+              <div class="flex items-center gap-1.5">
+                <span id="stat-parts-margin" class="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[11px] font-mono font-semibold">0% маржа</span>
+                <span id="stat-parts-completed-count" class="text-[11px] text-slate-500 font-mono font-medium">0 продаж</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card 3: Service & Repair Revenue -->
+          <div id="dash-card-service-revenue" class="bg-white p-5 rounded-xl border border-blue-200/80 bg-gradient-to-br from-white to-blue-50/20 shadow-sm relative overflow-hidden flex flex-col justify-between">
+            <div>
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-xs font-bold uppercase tracking-wider text-blue-700">Выручка: Заказ-наряды (СТО)</span>
+                <span class="p-2 rounded-lg bg-blue-100/70 text-blue-700"><i data-lucide="wrench" class="w-5 h-5"></i></span>
+              </div>
+              <div id="stat-service-revenue" class="text-2xl font-black text-blue-800 font-mono">0 AMD</div>
+            </div>
+            <div class="mt-3 pt-2.5 border-t border-blue-100/80 text-xs flex items-center justify-between">
+              <span class="text-slate-600">Прибыль: <strong id="stat-service-profit" class="font-mono text-blue-700">0 AMD</strong></span>
+              <div class="flex items-center gap-1.5">
+                <span id="stat-service-margin" class="px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 text-[11px] font-mono font-semibold">0% маржа</span>
+                <span id="stat-service-completed-count" class="text-[11px] text-slate-500 font-mono font-medium">0 нарядов</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card 4: Active Deals Pipeline -->
+          <div class="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm relative overflow-hidden flex flex-col justify-between">
+            <div>
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-xs font-bold uppercase tracking-wider text-slate-500">Сделки и наряды в работе</span>
+                <span class="p-2 rounded-lg bg-indigo-50 text-indigo-600"><i data-lucide="trello" class="w-5 h-5"></i></span>
+              </div>
+              <div id="stat-active-deals" class="text-2xl font-black text-slate-900 font-mono">0</div>
+            </div>
+            <div class="mt-3 pt-2.5 border-t border-slate-100 text-xs flex items-center justify-between">
+              <span class="text-slate-500">Сумма в работе:</span>
               <span id="stat-active-volume" class="font-bold text-blue-600 font-mono">0 AMD</span>
             </div>
           </div>
 
-          <!-- Card 3: Warehouse & Inventory -->
-          <div class="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm relative overflow-hidden">
-            <div class="flex items-center justify-between mb-3">
-              <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">Оценка склада запчастей</span>
-              <span class="p-2 rounded-lg bg-amber-50 text-amber-600"><i data-lucide="boxes" class="w-5 h-5"></i></span>
+          <!-- Card 5: Warehouse & Inventory -->
+          <div class="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm relative overflow-hidden flex flex-col justify-between">
+            <div>
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-xs font-bold uppercase tracking-wider text-slate-500">Оценка склада запчастей</span>
+                <span class="p-2 rounded-lg bg-amber-50 text-amber-600"><i data-lucide="boxes" class="w-5 h-5"></i></span>
+              </div>
+              <div id="stat-inventory-retail" class="text-2xl font-black text-slate-900 font-mono">0 AMD</div>
             </div>
-            <div id="stat-inventory-retail" class="text-2xl font-black text-slate-900 font-mono">0 AMD</div>
-            <div class="mt-2 text-xs text-slate-500 flex items-center justify-between">
-              <span id="stat-inventory-cost-wrapper">Себестоимость: <strong id="stat-inventory-cost" class="font-mono">0 AMD</strong></span>
+            <div class="mt-3 pt-2.5 border-t border-slate-100 text-xs flex items-center justify-between">
+              <span id="stat-inventory-cost-wrapper" class="text-slate-500">Себест.: <strong id="stat-inventory-cost" class="font-mono text-slate-700">0 AMD</strong></span>
               <span id="stat-low-stock-pill" class="px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 font-semibold font-mono text-[11px]">0 в дефиците</span>
             </div>
           </div>
 
-          <!-- Card 4: Clients & Fleet -->
-          <div class="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm relative overflow-hidden">
-            <div class="flex items-center justify-between mb-3">
-              <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">Клиенты и Парк СТО</span>
-              <span class="p-2 rounded-lg bg-indigo-50 text-indigo-600"><i data-lucide="truck" class="w-5 h-5"></i></span>
+          <!-- Card 6: Clients & Fleet -->
+          <div class="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm relative overflow-hidden flex flex-col justify-between">
+            <div>
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-xs font-bold uppercase tracking-wider text-slate-500">Клиенты и Парк СТО</span>
+                <span class="p-2 rounded-lg bg-purple-50 text-purple-600"><i data-lucide="truck" class="w-5 h-5"></i></span>
+              </div>
+              <div class="flex items-baseline gap-2">
+                <span id="stat-clients-count" class="text-2xl font-black text-slate-900 font-mono">0</span>
+                <span class="text-xs text-slate-500">клиентов /</span>
+                <span id="stat-equipment-count" class="text-2xl font-black text-purple-600 font-mono">0</span>
+                <span class="text-xs text-slate-500">машин</span>
+              </div>
             </div>
-            <div class="flex items-baseline gap-2">
-              <span id="stat-clients-count" class="text-2xl font-black text-slate-900 font-mono">0</span>
-              <span class="text-xs text-slate-500">клиентов /</span>
-              <span id="stat-equipment-count" class="text-2xl font-black text-indigo-600 font-mono">0</span>
-              <span class="text-xs text-slate-500">машин</span>
-            </div>
-            <div class="mt-2 text-xs text-slate-500 flex items-center justify-between">
-              <span>Просрочено задач:</span>
+            <div class="mt-3 pt-2.5 border-t border-slate-100 text-xs flex items-center justify-between">
+              <span class="text-slate-500">Просрочено задач:</span>
               <span id="stat-overdue-tasks" class="font-bold text-rose-600 font-mono">0</span>
             </div>
           </div>
@@ -491,8 +555,20 @@
         <div class="flex flex-wrap items-center justify-between gap-4 mb-4 pb-3 border-b border-slate-200">
           <div class="flex items-center gap-3">
             <div>
-              <h2 class="text-xl font-bold text-slate-900">Сделки и заказ-наряды СТО</h2>
-              <p class="text-xs text-slate-500">СТО Спецмаш • Воронка ремонтов, контроль этапов и списание запчастей</p>
+              <h2 id="kanban-board-title" class="text-xl font-bold text-slate-900">Сделки и заказ-наряды СТО</h2>
+              <p id="kanban-board-subtitle" class="text-xs text-slate-500">СТО Спецмаш • Воронка ремонтов, контроль этапов и списание запчастей</p>
+            </div>
+
+            <!-- Department Switcher (Requirement #1: Отдельный Канбан "Продажа запчастей") -->
+            <div class="inline-flex p-1 bg-slate-200/90 rounded-xl shadow-inner text-xs font-semibold ml-1">
+              <button id="dept-btn-service" type="button" onclick="switchDealsDepartment('service')" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-blue-900 shadow-sm transition-all font-bold">
+                <i data-lucide="wrench" class="w-3.5 h-3.5 text-blue-600"></i>
+                <span>Заказ-наряды СТО</span>
+              </button>
+              <button id="dept-btn-parts-sale" type="button" onclick="switchDealsDepartment('parts_sale')" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-slate-600 hover:text-slate-900 transition-all font-semibold">
+                <i data-lucide="shopping-cart" class="w-3.5 h-3.5 text-emerald-600"></i>
+                <span>Продажа запчастей</span>
+              </button>
             </div>
           </div>
 
@@ -528,9 +604,9 @@
               <span id="realtime-status-text">WebSockets Live</span>
             </div>
 
-            <button onclick="openDealModal()" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-sm transition-colors">
+            <button onclick="openDealModal(null, null, state.dealsDepartment)" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-sm transition-colors">
               <i data-lucide="plus" class="w-4 h-4"></i>
-              <span>Создать наряд</span>
+              <span id="btn-create-deal-text">Создать наряд</span>
             </button>
           </div>
         </div>
@@ -1350,6 +1426,7 @@
             <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Роль *</label>
             <select id="user-role" required class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white font-medium">
               <option value="mechanic">🔧 Механик</option>
+              <option value="manager">💼 Менеджер (допуск Механика)</option>
               <option value="moderator">🛡️ Модератор</option>
               <option value="admin">👑 Администратор</option>
             </select>
@@ -1407,6 +1484,14 @@
               <div class="text-[10px] text-blue-700">Роль: Модератор (приемка и наряды)</div>
             </div>
             <span class="text-[10px] font-mono text-blue-600 bg-white px-1.5 py-0.5 rounded border border-blue-200">moderator</span>
+          </button>
+
+          <button onclick="quickLogin('manager')" class="flex items-center justify-between p-2 rounded-lg bg-emerald-50/70 hover:bg-emerald-100 border border-emerald-200 text-left transition-colors text-xs">
+            <div>
+              <div class="font-bold text-emerald-900">💼 Мкртчян Армен</div>
+              <div class="text-[10px] text-emerald-700">Роль: Менеджер (допуск Механика)</div>
+            </div>
+            <span class="text-[10px] font-mono text-emerald-600 bg-white px-1.5 py-0.5 rounded border border-emerald-200">manager</span>
           </button>
 
           <button onclick="quickLogin('mechanic')" class="flex items-center justify-between p-2 rounded-lg bg-amber-50/70 hover:bg-amber-100 border border-amber-200 text-left transition-colors text-xs">
@@ -1492,9 +1577,22 @@
 
       <form id="form-deal" onsubmit="saveDeal(event)" class="mt-4 space-y-4">
         <input type="hidden" id="deal-id">
+        <input type="hidden" id="deal-type" value="service">
         
+        <!-- Deal Type Switcher (СТО vs Продажа запчастей) -->
+        <div class="flex items-center gap-2 p-1 bg-slate-100 rounded-xl">
+          <button type="button" id="deal-type-btn-service" onclick="setDealModalType('service')" class="flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition-all bg-white text-blue-900 shadow-xs flex items-center justify-center gap-1.5">
+            <i data-lucide="wrench" class="w-3.5 h-3.5 text-blue-600"></i>
+            <span>Заказ-наряд СТО</span>
+          </button>
+          <button type="button" id="deal-type-btn-parts" onclick="setDealModalType('parts_sale')" class="flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold transition-all text-slate-600 hover:text-slate-900 flex items-center justify-center gap-1.5">
+            <i data-lucide="shopping-cart" class="w-3.5 h-3.5 text-emerald-600"></i>
+            <span>Продажа запчастей</span>
+          </button>
+        </div>
+
         <div>
-          <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Тема / Название наряда *</label>
+          <label id="deal-title-label" class="block text-xs font-bold text-slate-700 uppercase mb-1">Тема / Название наряда *</label>
           <input type="text" id="deal-title" required placeholder="Например: Капитальный ремонт гидравлики CASE" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
         </div>
 
