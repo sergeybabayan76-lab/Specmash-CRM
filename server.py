@@ -11,11 +11,19 @@ import base64
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 
-from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Form, Response, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Form, Response, WebSocket, WebSocketDisconnect, Header
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+
+# Openpyxl for Excel .xlsx export
+try:
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+except ImportError:
+    openpyxl = None
 
 # Load environment variables from .env if present
 try:
@@ -29,7 +37,7 @@ import database
 # Initialize database on startup
 database.init_db()
 
-app = FastAPI(title="СТО Спецмаш CRM API", version="2.0.0")
+app = FastAPI(title="СТО Спецмаш CRM API", version="1.2.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -165,6 +173,9 @@ class ClientCreate(BaseModel):
     email: Optional[str] = ""
     address: Optional[str] = ""
     notes: Optional[str] = ""
+    inn: Optional[str] = ""
+    bank_name: Optional[str] = ""
+    bank_account: Optional[str] = ""
 
 class EquipmentCreate(BaseModel):
     client_id: Optional[int] = None
@@ -247,8 +258,19 @@ def login(req: LoginRequest):
 def list_users():
     return database.list_users()
 
+def check_effective_role(x_user_role: Any = None, role: Any = None) -> str:
+    if isinstance(x_user_role, str) and x_user_role.strip():
+        return x_user_role.lower().strip()
+    if isinstance(role, str) and role.strip():
+        return role.lower().strip()
+    return ""
+
 @app.post("/api/users")
-def create_user(u: UserCreate):
+def create_user(u: UserCreate, x_user_role: Optional[str] = Header(None, alias="X-User-Role"), role: Optional[str] = None):
+    effective_role = check_effective_role(x_user_role, role)
+    if effective_role and effective_role != "admin":
+        raise HTTPException(status_code=403, detail="Управление сотрудниками доступно исключительно Администратору")
+
     valid_roles = ["admin", "moderator", "mechanic"]
     if u.role not in valid_roles:
         raise HTTPException(status_code=400, detail="Недопустимая роль. Доступны: admin, moderator, mechanic")
@@ -268,7 +290,11 @@ def create_user(u: UserCreate):
 
 @app.put("/api/users/{user_id}")
 @app.post("/api/users/{user_id}")
-def update_user(user_id: int, u: UserUpdate):
+def update_user(user_id: int, u: UserUpdate, x_user_role: Optional[str] = Header(None, alias="X-User-Role"), role: Optional[str] = None):
+    effective_role = check_effective_role(x_user_role, role)
+    if effective_role and effective_role != "admin":
+        raise HTTPException(status_code=403, detail="Управление сотрудниками доступно исключительно Администратору")
+
     valid_roles = ["admin", "moderator", "mechanic"]
     if u.role not in valid_roles:
         raise HTTPException(status_code=400, detail="Недопустимая роль")
@@ -280,7 +306,11 @@ def update_user(user_id: int, u: UserUpdate):
 
 @app.delete("/api/users/{user_id}")
 @app.post("/api/users/{user_id}/delete")
-def delete_user(user_id: str):
+def delete_user(user_id: str, x_user_role: Optional[str] = Header(None, alias="X-User-Role"), role: Optional[str] = None):
+    effective_role = check_effective_role(x_user_role, role)
+    if effective_role and effective_role != "admin":
+        raise HTTPException(status_code=403, detail="Управление сотрудниками доступно исключительно Администратору")
+
     if user_id in ('undefined', 'null', '0'):
         return {"message": "Некорректный сотрудник удален"}
     try:
@@ -577,8 +607,140 @@ def delete_task(task_id: int):
 
 # ----------------- Export / Import -----------------
 
+ROLE_LABELS = {
+    'admin': 'Администратор',
+    'moderator': 'Модератор / Менеджер',
+    'mechanic': 'Мастер-механик'
+}
+
+STAGE_LABELS = {
+    'new': 'Новая заявка',
+    'diagnostic': 'Диагностика',
+    'estimate': 'Согласование сметы',
+    'in_progress': 'В работе',
+    'parts_waiting': 'Ожидание запчастей',
+    'ready': 'Готово к выдаче',
+    'completed': 'Оплачено (Завершено)',
+    'cancelled': 'Отказ / Архив'
+}
+
+def generate_table_xlsx(table: str) -> bytes:
+    if not openpyxl:
+        raise HTTPException(status_code=500, detail="Модуль openpyxl не установлен на сервере")
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    header_fill = PatternFill(start_color='1E293B', end_color='1E293B', fill_type='solid')
+    header_font = Font(name='Calibri', size=11, bold=True, color='FFFFFF')
+    header_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+    thin_border = Border(
+        left=Side(style='thin', color='CBD5E1'), right=Side(style='thin', color='CBD5E1'),
+        top=Side(style='thin', color='CBD5E1'), bottom=Side(style='thin', color='CBD5E1')
+    )
+
+    headers = []
+    rows_data = []
+
+    if table == 'clients':
+        ws.title = 'База клиентов'
+        headers = ['ID', 'ФИО / Контактное лицо', 'Компания', 'Телефон', 'Email', 'ИНН', 'Банк', 'Расчетный счет', 'Фактический адрес', 'Заметки', 'Дата регистрации']
+        for c in database.list_clients():
+            rows_data.append([
+                c.get('id'), c.get('name', ''), c.get('company', ''), c.get('phone', ''),
+                c.get('email', ''), c.get('inn', ''), c.get('bank_name', ''), c.get('bank_account', ''),
+                c.get('address', ''), c.get('notes', ''), c.get('created_at', '')
+            ])
+    elif table == 'equipment':
+        ws.title = 'База техники'
+        headers = ['ID', 'Марка и модель техники', 'Категория', 'VIN / Серийный №', 'Год выпуска', 'Наработка', 'Статус', 'Владелец (Клиент)', 'Примечания', 'Дата добавления']
+        for eq in database.list_equipment():
+            rows_data.append([
+                eq.get('id'), eq.get('name', ''), eq.get('category', ''), eq.get('serial_vin', ''),
+                eq.get('year') or '', eq.get('operating_hours', ''), eq.get('status', ''),
+                eq.get('client_name', ''), eq.get('notes', ''), eq.get('created_at', '')
+            ])
+    elif table == 'parts':
+        ws.title = 'Склад запчастей'
+        headers = ['ID', 'Артикул (SKU)', 'Наименование запчасти', 'Категория', 'Остаток на складе', 'Мин. порог', 'Себестоимость (AMD)', 'Розничная цена (AMD)', 'Место хранения']
+        for p in database.list_parts():
+            rows_data.append([
+                p.get('id'), p.get('sku', ''), p.get('name', ''), p.get('category', ''),
+                p.get('quantity', 0), p.get('min_threshold', 2),
+                float(p.get('purchase_price') or 0.0), float(p.get('selling_price') or 0.0),
+                p.get('location', '')
+            ])
+    elif table == 'deals':
+        ws.title = 'Заказ-наряды и сделки'
+        headers = ['ID', 'Тема наряда / Заказ-наряд', 'Клиент / Заказчик', 'Техника заказчика', 'VIN номер', 'Стадия воронки', 'Приоритет', 'Ответственный', 'Сумма (AMD)', 'Себестоимость (AMD)', 'Прибыль (AMD)', 'Срок (Дедлайн)', 'Дата создания', 'Дата завершения']
+        for d in database.list_deals():
+            stage_ru = STAGE_LABELS.get(d.get('stage'), d.get('stage', ''))
+            amt = float(d.get('amount') or 0.0)
+            cst = float(d.get('cost') or 0.0)
+            rows_data.append([
+                d.get('id'), d.get('title', ''), d.get('client_name', ''), d.get('equipment_name', ''),
+                d.get('equipment_vin', ''), stage_ru, d.get('priority', 'normal'), d.get('responsible', ''),
+                amt, cst, amt - cst, d.get('deadline') or '', d.get('created_at', ''), d.get('completed_at') or ''
+            ])
+    elif table == 'users':
+        ws.title = 'Сотрудники СТО'
+        headers = ['ID', 'ФИО сотрудника', 'Логин', 'Роль в системе', 'Телефон', 'Дата регистрации']
+        for u in database.list_users():
+            role_ru = ROLE_LABELS.get(u.get('role'), u.get('role', ''))
+            rows_data.append([
+                u.get('id'), u.get('full_name', ''), u.get('username', ''),
+                role_ru, u.get('phone', ''), u.get('created_at', '')
+            ])
+    else:
+        raise HTTPException(status_code=400, detail="Неверная таблица для экспорта")
+
+    ws.append(headers)
+    ws.row_dimensions[1].height = 28
+    for cell in ws[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = header_align
+        cell.border = thin_border
+
+    for row_idx, r in enumerate(rows_data, 2):
+        ws.append(r)
+        ws.row_dimensions[row_idx].height = 20
+        for cell in ws[row_idx]:
+            cell.border = thin_border
+            cell.alignment = Alignment(vertical='center')
+
+    for col in ws.columns:
+        max_len = max(len(str(cell.value or '')) for cell in col)
+        col_letter = get_column_letter(col[0].column)
+        ws.column_dimensions[col_letter].width = min(max(max_len + 4, 12), 45)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+@app.get("/api/export/{table}/xlsx")
+def export_table_xlsx(table: str, x_user_role: Optional[str] = Header(None, alias="X-User-Role"), role: Optional[str] = None):
+    effective_role = check_effective_role(x_user_role, role)
+    if effective_role == "mechanic":
+        raise HTTPException(status_code=403, detail="Доступ к разделу 'Импорт & Экспорт' запрещен для роли Механик")
+
+    xlsx_bytes = generate_table_xlsx(table)
+    filename = f"specmash_{table}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    response = Response(
+        content=xlsx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    response.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
+
 @app.get("/api/export/{table}")
-def export_table_csv(table: str):
+def export_table(table: str, format: str = "xlsx", x_user_role: Optional[str] = Header(None, alias="X-User-Role"), role: Optional[str] = None):
+    effective_role = check_effective_role(x_user_role, role)
+    if effective_role == "mechanic":
+        raise HTTPException(status_code=403, detail="Доступ к разделу 'Импорт & Экспорт' запрещен для роли Механик")
+
+    if format == "xlsx":
+        return export_table_xlsx(table, x_user_role, role)
+
     valid_tables = ["clients", "equipment", "parts", "deals", "tasks", "users"]
     if table not in valid_tables:
         raise HTTPException(status_code=400, detail="Неверная таблица для экспорта")
@@ -604,7 +766,11 @@ def export_table_csv(table: str):
     return response
 
 @app.post("/api/import/clients")
-async def import_clients(file: UploadFile = File(...)):
+async def import_clients(file: UploadFile = File(...), x_user_role: Optional[str] = Header(None, alias="X-User-Role"), role: Optional[str] = None):
+    effective_role = check_effective_role(x_user_role, role)
+    if effective_role == "mechanic":
+        raise HTTPException(status_code=403, detail="Доступ к импорту запрещен для роли Механик")
+
     content = await file.read()
     try:
         text = content.decode('utf-8-sig')
@@ -626,6 +792,9 @@ async def import_clients(file: UploadFile = File(...)):
                 "email": (row.get("email") or row.get("Email") or "").strip(),
                 "address": (row.get("address") or row.get("Адрес") or "").strip(),
                 "notes": (row.get("notes") or row.get("Заметки") or "Импортировано из CSV").strip(),
+                "inn": (row.get("inn") or row.get("ИНН") or "").strip(),
+                "bank_name": (row.get("bank_name") or row.get("Банк") or "").strip(),
+                "bank_account": (row.get("bank_account") or row.get("Счет") or "").strip(),
             })
             imported_count += 1
         except Exception:
@@ -634,7 +803,11 @@ async def import_clients(file: UploadFile = File(...)):
     return {"imported": imported_count, "message": f"Успешно импортировано {imported_count} клиентов"}
 
 @app.post("/api/import/parts")
-async def import_parts(file: UploadFile = File(...)):
+async def import_parts(file: UploadFile = File(...), x_user_role: Optional[str] = Header(None, alias="X-User-Role"), role: Optional[str] = None):
+    effective_role = check_effective_role(x_user_role, role)
+    if effective_role == "mechanic":
+        raise HTTPException(status_code=403, detail="Доступ к импорту запрещен для роли Механик")
+
     content = await file.read()
     try:
         text = content.decode('utf-8-sig')
@@ -667,7 +840,10 @@ async def import_parts(file: UploadFile = File(...)):
     return {"imported": imported_count, "message": f"Успешно импортировано {imported_count} запчастей"}
 
 @app.post("/api/reset-demo")
-def reset_demo_data():
+def reset_demo_data(x_user_role: Optional[str] = Header(None, alias="X-User-Role"), role: Optional[str] = None):
+    effective_role = check_effective_role(x_user_role, role)
+    if effective_role and effective_role != "admin":
+        raise HTTPException(status_code=403, detail="Сброс к демонстрационным данным разрешен только Администратору системы")
     database.init_db()
     return {"message": "База данных успешно инициализирована данными СТО Спецмаш"}
 

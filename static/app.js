@@ -616,16 +616,27 @@ function applyUserPermissions() {
   if (revCard) revCard.classList.toggle('hidden', isMechanic);
   if (chartsRow) chartsRow.classList.toggle('hidden', isMechanic);
 
-  // Settings: strictly visible to Admin only (Requirement #10)
+  // Settings: strictly visible to Admin only
   const navSettings = document.getElementById('nav-settings');
   if (navSettings) navSettings.classList.toggle('hidden', !isAdmin);
 
-  // Employees tab: hidden for mechanic
+  // Requirement #4: Employees tab strictly visible to Admin only (hidden for mechanic & moderator)
   const navUsers = document.getElementById('nav-users');
-  if (navUsers) navUsers.classList.toggle('hidden', isMechanic);
+  if (navUsers) navUsers.classList.toggle('hidden', !isAdmin);
+
+  // Requirement #2: Import & Export tab hidden for mechanic
+  const navExport = document.getElementById('nav-export');
+  if (navExport) navExport.classList.toggle('hidden', isMechanic);
+
+  // Requirement #3: Reset to demo data hidden for moderators & mechanics (Admin only)
+  const blockResetDemo = document.getElementById('block-reset-demo');
+  if (blockResetDemo) blockResetDemo.classList.toggle('hidden', !isAdmin);
+  const btnSettingsResetDemo = document.getElementById('btn-settings-reset-demo');
+  if (btnSettingsResetDemo) btnSettingsResetDemo.classList.toggle('hidden', !isAdmin);
 
   // Body classes for global CSS role hiding (e.g. .role-mechanic .col-deal-cost)
   document.body.classList.toggle('role-mechanic', isMechanic);
+  document.body.classList.toggle('role-moderator', u.role === 'moderator');
   document.body.classList.toggle('role-admin', isAdmin);
 }
 
@@ -1046,15 +1057,21 @@ function switchTab(tabName) {
     return;
   }
 
-  // Security check: Only Admin can access Settings (Requirement #10)
+  // Security check: Only Admin can access Settings
   if (tabName === 'settings' && state.currentUser.role !== 'admin') {
     showToast('Настройки СТО доступны исключительно Администратору', 'warning');
     return switchTab('dashboard');
   }
 
-  // Security check: Mechanics do not access Users tab
-  if (tabName === 'users' && state.currentUser.role === 'mechanic') {
-    showToast('Раздел недоступен для роли Механик', 'warning');
+  // Requirement #4: Security check: Only Admin can access Users tab (blocked for mechanic & moderator)
+  if (tabName === 'users' && state.currentUser.role !== 'admin') {
+    showToast('Раздел "Сотрудники & Роли" доступен исключительно Администратору', 'warning');
+    return switchTab('dashboard');
+  }
+
+  // Requirement #2: Security check: Mechanics cannot access Import & Export tab
+  if (tabName === 'export' && state.currentUser.role === 'mechanic') {
+    showToast('Раздел "Импорт & Экспорт" недоступен для роли Механик', 'warning');
     return switchTab('dashboard');
   }
 
@@ -1468,8 +1485,13 @@ function renderDealsList() {
       `;
     }).join('');
 
+    const isOverdue = isDealReadyOverdue(deal);
+    const rowClass = isOverdue 
+      ? 'bg-rose-50/70 hover:bg-rose-100/60 border-l-4 border-l-rose-600 transition-colors' 
+      : 'hover:bg-slate-50/80 transition-colors';
+
     return `
-      <tr class="hover:bg-slate-50/80 transition-colors">
+      <tr class="${rowClass}">
         <td class="p-3.5">
           <div class="flex items-start gap-2">
             <span class="font-mono text-xs font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">#${deal.id}</span>
@@ -1477,8 +1499,9 @@ function renderDealsList() {
               <button onclick="openDealModal(${deal.id})" class="font-bold text-slate-800 hover:text-blue-600 text-left block text-sm transition-colors">
                 ${deal.title}
               </button>
-              <div class="mt-1 flex items-center gap-1.5">
+              <div class="mt-1 flex items-center gap-1.5 flex-wrap">
                 ${priorityBadge}
+                ${isOverdue ? `<span class="bg-rose-600 text-white font-bold text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1 w-fit shadow-xs"><i data-lucide="clock" class="w-3 h-3"></i> Ожидает выдачи &gt; 30 дней</span>` : ''}
                 ${Number(deal.parts_count || 0) > 0 ? `<span class="bg-amber-50 text-amber-700 border border-amber-200 text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold" title="Списано со склада">${deal.parts_count} з/ч</span>` : ''}
               </div>
             </div>
@@ -1608,14 +1631,37 @@ async function quickDeleteDeal(dealId) {
   }
 }
 
+// Check if deal in "ready" stage has been waiting > 30 days (Requirement #7)
+function isDealReadyOverdue(deal) {
+  if (!deal || deal.stage !== 'ready') return false;
+  const refDateStr = deal.completed_at || deal.created_at;
+  if (!refDateStr) return false;
+  const refTime = new Date(refDateStr).getTime();
+  if (isNaN(refTime)) return false;
+  const diffDays = (Date.now() - refTime) / (1000 * 60 * 60 * 24);
+  return diffDays > 30;
+}
+
 function renderKanbanCard(deal) {
   let priorityBadge = '';
   if (deal.priority === 'urgent') priorityBadge = '<span class="badge-urgent text-[10px] font-bold px-1.5 py-0.5 rounded">🔥 Срочно</span>';
   else if (deal.priority === 'high') priorityBadge = '<span class="badge-high text-[10px] font-bold px-1.5 py-0.5 rounded">Высокий</span>';
   else if (deal.priority === 'low') priorityBadge = '<span class="badge-low text-[10px] font-medium px-1.5 py-0.5 rounded">Низкий</span>';
 
+  const isOverdue = isDealReadyOverdue(deal);
+  const cardStyling = isOverdue
+    ? 'bg-rose-50/95 border-2 border-rose-500 shadow-sm shadow-rose-200 ring-2 ring-rose-400/40 text-rose-950'
+    : 'bg-white border border-slate-200/90 shadow-sm';
+
+  const overdueBanner = isOverdue ? `
+    <div class="flex items-center gap-1.5 text-[10px] font-bold text-rose-700 bg-rose-100/90 border border-rose-300 px-2 py-0.5 rounded-md w-fit">
+      <i data-lucide="clock" class="w-3 h-3 text-rose-600 flex-shrink-0"></i>
+      <span>Ожидает выдачи &gt; 30 дней</span>
+    </div>
+  ` : '';
+
   return `
-    <div class="kanban-card bg-white p-3.5 rounded-xl border border-slate-200/90 shadow-sm relative space-y-2 transition-all duration-300" 
+    <div class="kanban-card ${cardStyling} p-3.5 rounded-xl relative space-y-2 transition-all duration-300" 
          id="kanban-card-${deal.id}"
          data-deal-id="${deal.id}"
          draggable="true" 
@@ -1623,8 +1669,10 @@ function renderKanbanCard(deal) {
          ondragend="handleDragEnd(event)"
          onclick="openDealModal(${deal.id})">
       
+      ${overdueBanner}
+
       <div class="flex items-start justify-between gap-2">
-        <h4 class="font-bold text-slate-800 text-xs leading-snug hover:text-blue-600 transition-colors">${deal.title}</h4>
+        <h4 class="font-bold ${isOverdue ? 'text-rose-950' : 'text-slate-800'} text-xs leading-snug hover:text-blue-600 transition-colors">${deal.title}</h4>
         ${priorityBadge}
       </div>
 
@@ -1795,6 +1843,14 @@ async function viewClientDetails(clientId) {
     document.getElementById('view-client-phone').textContent = client.phone;
     document.getElementById('view-client-email').textContent = client.email || 'Не указан';
     document.getElementById('view-client-address').textContent = client.address || 'Не указан';
+
+    // Requirement #5: Display Requisites
+    const innEl = document.getElementById('view-client-inn');
+    const bankNameEl = document.getElementById('view-client-bank-name');
+    const bankAccEl = document.getElementById('view-client-bank-account');
+    if (innEl) innEl.textContent = client.inn || '—';
+    if (bankNameEl) bankNameEl.textContent = client.bank_name || '—';
+    if (bankAccEl) bankAccEl.textContent = client.bank_account || '—';
 
     const eqList = document.getElementById('view-client-equipment-list');
     if (client.equipment && client.equipment.length > 0) {
@@ -2364,6 +2420,118 @@ function closeModal(id) {
   if (modal) modal.classList.add('hidden');
 }
 
+// DEAL CLIENT SEARCH & AUTO-FILL (Requirement #8)
+function handleDealClientSearch(query) {
+  const clearBtn = document.getElementById('deal-client-search-clear');
+  const resultsDropdown = document.getElementById('deal-client-search-results');
+  if (!resultsDropdown) return;
+
+  const q = (query || '').trim().toLowerCase();
+  const digits = q.replace(/\D/g, '');
+
+  if (clearBtn) clearBtn.classList.toggle('hidden', !q);
+
+  if (q.length < 2 && digits.length < 3) {
+    resultsDropdown.classList.add('hidden');
+    resultsDropdown.innerHTML = '';
+    return;
+  }
+
+  const matches = (state.clients || []).filter(c => {
+    const nameMatch = (c.name || '').toLowerCase().includes(q);
+    const companyMatch = (c.company || '').toLowerCase().includes(q);
+    const innMatch = (c.inn || '').toLowerCase().includes(q);
+    const phoneDigits = (c.phone || '').replace(/\D/g, '');
+    const phoneMatch = digits.length >= 3 && phoneDigits.includes(digits);
+    return nameMatch || companyMatch || innMatch || phoneMatch;
+  });
+
+  if (matches.length === 0) {
+    resultsDropdown.innerHTML = '<div class="p-3 text-xs text-slate-400 text-center font-medium">Клиенты не найдены</div>';
+    resultsDropdown.classList.remove('hidden');
+    return;
+  }
+
+  resultsDropdown.innerHTML = matches.map(c => `
+    <div onclick="selectDealClient(${c.id})" class="p-2.5 hover:bg-blue-50 cursor-pointer transition-colors group">
+      <div class="flex items-center justify-between text-xs font-bold text-slate-800 group-hover:text-blue-700">
+        <span>${c.name}</span>
+        <span class="font-mono text-blue-600 font-semibold text-[11px]">${c.phone}</span>
+      </div>
+      <div class="text-[11px] text-slate-500 flex items-center gap-2 mt-0.5">
+        ${c.company ? `<span>${c.company}</span>` : '<span class="text-slate-400">Физлицо</span>'}
+        ${c.inn ? `<span class="font-mono text-slate-600 bg-slate-100 px-1 rounded">ИНН: ${c.inn}</span>` : ''}
+      </div>
+    </div>
+  `).join('');
+  resultsDropdown.classList.remove('hidden');
+}
+
+async function selectDealClient(clientId) {
+  const client = (state.clients || []).find(c => c.id == clientId);
+  if (!client) return;
+
+  const clientSelect = document.getElementById('deal-client');
+  if (clientSelect) clientSelect.value = client.id;
+
+  // Auto-fill equipment for this client
+  await handleDealClientChange(client.id);
+
+  // If client has exactly one piece of equipment, auto-select it!
+  const clientEquipment = (state.equipment || []).filter(e => e.client_id == client.id);
+  const eqSelect = document.getElementById('deal-equipment');
+  if (clientEquipment.length === 1 && eqSelect) {
+    eqSelect.value = clientEquipment[0].id;
+  }
+
+  // Update search input & badge
+  const searchInput = document.getElementById('deal-client-search');
+  if (searchInput) searchInput.value = client.name;
+
+  const clearBtn = document.getElementById('deal-client-search-clear');
+  if (clearBtn) clearBtn.classList.remove('hidden');
+
+  const resultsDropdown = document.getElementById('deal-client-search-results');
+  if (resultsDropdown) {
+    resultsDropdown.classList.add('hidden');
+    resultsDropdown.innerHTML = '';
+  }
+
+  const badge = document.getElementById('deal-client-selected-badge');
+  const badgeText = document.getElementById('deal-client-selected-text');
+  if (badge && badgeText) {
+    badgeText.textContent = `${client.name} (${client.phone})${client.company ? ' • ' + client.company : ''}${client.inn ? ' • ИНН: ' + client.inn : ''}`;
+    badge.classList.remove('hidden');
+  }
+
+  showToast(`Клиент «${client.name}» выбран и данные автозаполнены`, 'info');
+  if (window.lucide) lucide.createIcons();
+}
+
+function clearDealClientSearch() {
+  const searchInput = document.getElementById('deal-client-search');
+  if (searchInput) searchInput.value = '';
+
+  const clearBtn = document.getElementById('deal-client-search-clear');
+  if (clearBtn) clearBtn.classList.add('hidden');
+
+  const resultsDropdown = document.getElementById('deal-client-search-results');
+  if (resultsDropdown) {
+    resultsDropdown.classList.add('hidden');
+    resultsDropdown.innerHTML = '';
+  }
+
+  const badge = document.getElementById('deal-client-selected-badge');
+  if (badge) badge.classList.add('hidden');
+
+  const dealId = document.getElementById('deal-id')?.value;
+  if (!dealId) {
+    const clientSelect = document.getElementById('deal-client');
+    if (clientSelect) clientSelect.value = '';
+    handleDealClientChange('');
+  }
+}
+
 // DEAL MODAL
 async function openDealModal(dealId = null, defaultStage = 'new') {
   await Promise.all([loadClientsListOptions(), loadWarehousePartsOptions(), loadEmployeesSelectOptions(), loadEquipment()]);
@@ -2373,6 +2541,9 @@ async function openDealModal(dealId = null, defaultStage = 'new') {
   document.getElementById('deal-id').value = '';
   document.getElementById('deal-parts-section').classList.add('hidden');
   document.getElementById('btn-delete-deal').classList.add('hidden');
+
+  // Reset search & auto-fill
+  clearDealClientSearch();
 
   if (dealId) {
     document.getElementById('modal-deal-title').textContent = 'Редактирование наряда';
@@ -2393,6 +2564,22 @@ async function openDealModal(dealId = null, defaultStage = 'new') {
       document.getElementById('deal-responsible').value = deal.responsible;
       document.getElementById('deal-deadline').value = deal.deadline || '';
       document.getElementById('deal-description').value = deal.description || '';
+
+      if (deal.client_id) {
+        const client = state.clients.find(c => c.id == deal.client_id);
+        if (client) {
+          const searchInput = document.getElementById('deal-client-search');
+          if (searchInput) searchInput.value = client.name;
+          const clearBtn = document.getElementById('deal-client-search-clear');
+          if (clearBtn) clearBtn.classList.remove('hidden');
+          const badge = document.getElementById('deal-client-selected-badge');
+          const badgeText = document.getElementById('deal-client-selected-text');
+          if (badge && badgeText) {
+            badgeText.textContent = `${client.name} (${client.phone})${client.company ? ' • ' + client.company : ''}${client.inn ? ' • ИНН: ' + client.inn : ''}`;
+            badge.classList.remove('hidden');
+          }
+        }
+      }
 
       renderDealAttachedParts(deal.parts || []);
     } catch (e) {
@@ -2437,6 +2624,26 @@ async function handleDealClientChange(clientId, selectedEqId = null) {
   const eqSelect = document.getElementById('deal-equipment');
   if (!eqSelect) return;
   const defaultOption = '<option value="">(Без привязки к технике / Запчасти / Консультация)</option>';
+
+  // Sync client search and badge if user changes select dropdown
+  const client = (state.clients || []).find(c => c.id == clientId);
+  const badge = document.getElementById('deal-client-selected-badge');
+  const badgeText = document.getElementById('deal-client-selected-text');
+  const searchInput = document.getElementById('deal-client-search');
+  const clearBtn = document.getElementById('deal-client-search-clear');
+
+  if (client) {
+    if (searchInput) searchInput.value = client.name;
+    if (clearBtn) clearBtn.classList.remove('hidden');
+    if (badge && badgeText) {
+      badgeText.textContent = `${client.name} (${client.phone})${client.company ? ' • ' + client.company : ''}${client.inn ? ' • ИНН: ' + client.inn : ''}`;
+      badge.classList.remove('hidden');
+    }
+  } else if (!clientId) {
+    if (searchInput) searchInput.value = '';
+    if (clearBtn) clearBtn.classList.add('hidden');
+    if (badge) badge.classList.add('hidden');
+  }
 
   if (!state.equipment || state.equipment.length === 0) {
     try {
@@ -2698,12 +2905,87 @@ async function deleteDeal() {
   }
 }
 
+// CLIENT DUPLICATE DETECTION (Requirement #6)
+function checkClientDuplicate() {
+  const clientId = document.getElementById('client-id')?.value;
+  const warn = document.getElementById('client-duplicate-warning');
+  const info = document.getElementById('client-duplicate-info');
+  if (!warn || !info) return;
+
+  // Only check for duplicates when creating a new client
+  if (clientId) {
+    warn.classList.add('hidden');
+    info.innerHTML = '';
+    return;
+  }
+
+  const name = (document.getElementById('client-name')?.value || '').trim().toLowerCase();
+  const phone = (document.getElementById('client-phone')?.value || '').replace(/\D/g, '');
+  const inn = (document.getElementById('client-inn')?.value || '').trim();
+
+  if (name.length < 3 && phone.length < 5 && inn.length < 3) {
+    warn.classList.add('hidden');
+    info.innerHTML = '';
+    return;
+  }
+
+  const duplicates = (state.clients || []).filter(c => {
+    // Phone match
+    if (phone.length >= 6) {
+      const cPhone = String(c.phone || '').replace(/\D/g, '');
+      if (cPhone && (cPhone.includes(phone) || phone.includes(cPhone))) return true;
+    }
+    // INN match
+    if (inn.length >= 5 && c.inn) {
+      if (c.inn.trim() === inn) return true;
+    }
+    // Name exact match
+    if (name.length >= 4 && c.name) {
+      if (c.name.trim().toLowerCase() === name) return true;
+    }
+    return false;
+  });
+
+  if (duplicates.length > 0) {
+    warn.classList.remove('hidden');
+    info.innerHTML = duplicates.map(d => `
+      <div class="flex items-center justify-between py-1 border-b border-amber-200/60 last:border-b-0">
+        <div>
+          <span class="font-bold text-amber-950">${d.name}</span>
+          ${d.company ? `<span class="text-amber-800"> (${d.company})</span>` : ''}
+          <span class="text-amber-800"> • Тел: ${d.phone}</span>
+          ${d.inn ? `<span class="font-mono text-amber-900 font-bold"> • ИНН: ${d.inn}</span>` : ''}
+        </div>
+        <button type="button" onclick="openClientModal(${d.id})" class="text-[11px] text-blue-700 hover:underline font-bold ml-2">Открыть #${d.id}</button>
+      </div>
+    `).join('');
+    if (window.lucide) lucide.createIcons();
+  } else {
+    warn.classList.add('hidden');
+    info.innerHTML = '';
+  }
+}
+
 // CLIENT MODAL
 function openClientModal(clientId = null) {
   const form = document.getElementById('form-client');
   form.reset();
   document.getElementById('client-id').value = '';
   document.getElementById('btn-delete-client').classList.add('hidden');
+
+  // Clear duplicate warning
+  const warn = document.getElementById('client-duplicate-warning');
+  const info = document.getElementById('client-duplicate-info');
+  if (warn) warn.classList.add('hidden');
+  if (info) info.innerHTML = '';
+
+  // Clear requisites fields (Requirement #5)
+  const innEl = document.getElementById('client-inn');
+  const bankNameEl = document.getElementById('client-bank-name');
+  const bankAccEl = document.getElementById('client-bank-account');
+  if (innEl) innEl.value = '';
+  if (bankNameEl) bankNameEl.value = '';
+  if (bankAccEl) bankAccEl.value = '';
 
   if (clientId) {
     document.getElementById('modal-client-title').textContent = 'Редактировать клиента';
@@ -2717,12 +2999,16 @@ function openClientModal(clientId = null) {
       document.getElementById('client-email').value = client.email || '';
       document.getElementById('client-address').value = client.address || '';
       document.getElementById('client-notes').value = client.notes || '';
+      if (innEl) innEl.value = client.inn || '';
+      if (bankNameEl) bankNameEl.value = client.bank_name || '';
+      if (bankAccEl) bankAccEl.value = client.bank_account || '';
     }
   } else {
     document.getElementById('modal-client-title').textContent = 'Новый клиент';
   }
 
   openModal('modal-client');
+  if (window.lucide) lucide.createIcons();
 }
 
 async function saveClient(e) {
@@ -2735,6 +3021,10 @@ async function saveClient(e) {
     email: document.getElementById('client-email').value.trim(),
     address: document.getElementById('client-address').value.trim(),
     notes: document.getElementById('client-notes').value.trim(),
+    // Optional requisites (Requirement #5)
+    inn: (document.getElementById('client-inn')?.value || '').trim(),
+    bank_name: (document.getElementById('client-bank-name')?.value || '').trim(),
+    bank_account: (document.getElementById('client-bank-account')?.value || '').trim(),
   };
 
   try {
@@ -2802,6 +3092,56 @@ async function deleteClient() {
   }
 }
 
+// EQUIPMENT DUPLICATE DETECTION (Requirement #6)
+function checkEquipmentDuplicate() {
+  const eqId = document.getElementById('equipment-id')?.value;
+  const warn = document.getElementById('equipment-duplicate-warning');
+  const info = document.getElementById('equipment-duplicate-info');
+  if (!warn || !info) return;
+
+  // Only check for duplicates when creating new equipment
+  if (eqId) {
+    warn.classList.add('hidden');
+    info.innerHTML = '';
+    return;
+  }
+
+  const vinInput = (document.getElementById('equipment-vin')?.value || '').trim().toUpperCase();
+  if (vinInput.length < 3) {
+    warn.classList.add('hidden');
+    info.innerHTML = '';
+    return;
+  }
+
+  const duplicates = (state.equipment || []).filter(eq => {
+    if (!eq.serial_vin) return false;
+    const eqVin = eq.serial_vin.trim().toUpperCase();
+    return eqVin === vinInput || (vinInput.length >= 6 && eqVin.includes(vinInput));
+  });
+
+  if (duplicates.length > 0) {
+    warn.classList.remove('hidden');
+    info.innerHTML = duplicates.map(d => {
+      const client = state.clients?.find(c => c.id == d.client_id);
+      const ownerName = client ? `${client.name}${client.phone ? ' (' + client.phone + ')' : ''}` : 'Без привязки';
+      return `
+        <div class="flex items-center justify-between py-1 border-b border-amber-200/60 last:border-b-0">
+          <div>
+            <span class="font-bold text-amber-950">${d.name}</span>
+            <span class="font-mono text-amber-900 font-bold"> • VIN: ${d.serial_vin}</span>
+            <span class="text-amber-800"> • Владелец: ${ownerName}</span>
+          </div>
+          <button type="button" onclick="openEquipmentModal(${d.id})" class="text-[11px] text-blue-700 hover:underline font-bold ml-2">Открыть #${d.id}</button>
+        </div>
+      `;
+    }).join('');
+    if (window.lucide) lucide.createIcons();
+  } else {
+    warn.classList.add('hidden');
+    info.innerHTML = '';
+  }
+}
+
 // EQUIPMENT MODAL
 async function openEquipmentModal(eqId = null) {
   await loadClientsListOptions();
@@ -2809,6 +3149,12 @@ async function openEquipmentModal(eqId = null) {
   form.reset();
   document.getElementById('equipment-id').value = '';
   document.getElementById('btn-delete-equipment').classList.add('hidden');
+
+  // Clear duplicate warning
+  const warn = document.getElementById('equipment-duplicate-warning');
+  const info = document.getElementById('equipment-duplicate-info');
+  if (warn) warn.classList.add('hidden');
+  if (info) info.innerHTML = '';
 
   if (eqId) {
     document.getElementById('modal-equipment-title').textContent = 'Редактировать технику';
@@ -2830,6 +3176,7 @@ async function openEquipmentModal(eqId = null) {
   }
 
   openModal('modal-equipment');
+  if (window.lucide) lucide.createIcons();
 }
 
 async function saveEquipment(e) {
@@ -3169,18 +3516,43 @@ async function handleRestoreJsonFile(event) {
   }
 }
 
+function downloadTableExport(table, format = 'xlsx') {
+  if (state.currentUser?.role === 'mechanic') {
+    showToast('Выгрузка базы недоступна для роли Механик', 'error');
+    return;
+  }
+  const role = state.currentUser?.role || 'admin';
+  const url = format === 'xlsx' 
+    ? `/api/export/${table}/xlsx?role=${encodeURIComponent(role)}` 
+    : `/api/export/${table}?format=csv&role=${encodeURIComponent(role)}`;
+  window.location.href = url;
+}
+
 async function handleResetDemo() {
+  // Requirement #3: Moderators and mechanics cannot reset demo data
+  if (state.currentUser?.role !== 'admin') {
+    showToast('Сброс к демонстрационным данным разрешён исключительно Администратору', 'error');
+    return;
+  }
+
   if (!confirm('Вы уверены? Это сбросит базу данных к демонстрационному набору техники CASE, клиентов, склада и сотрудников СТО Спецмаш.')) return;
   try {
-    const res = await fetch('/api/reset-demo', { method: 'POST' });
+    const res = await fetch('/api/reset-demo', {
+      method: 'POST',
+      headers: {
+        'x-user-role': state.currentUser?.role || 'admin',
+        'x-user-id': String(state.currentUser?.id || '')
+      }
+    });
     const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка сброса');
 
     // Clear local storage cache for CRM entities
     ['users', 'clients', 'equipment', 'deals', 'parts'].forEach(k => {
       localStorage.removeItem(crmStore.KEY_PREFIX + k);
     });
 
-    showToast(data.message, 'success');
+    showToast(data.message || 'База успешно сброшена к демонстрационным данным', 'success');
     await Promise.all([
       loadSettings(),
       loadDashboard(),
@@ -3192,7 +3564,7 @@ async function handleResetDemo() {
       loadUsers()
     ]);
   } catch (err) {
-    showToast('Ошибка при сбросе базы', 'error');
+    showToast(err.message || 'Ошибка при сбросе базы', 'error');
   }
 }
 

@@ -345,7 +345,7 @@ def update_settings(payload: Dict[str, Any]) -> Dict[str, Any]:
 def get_system_stats() -> Dict[str, Any]:
     if not SUPABASE_KEY:
         return {
-            "version": "2.0.0 (Supabase PostgreSQL)",
+            "version": "1.2.0 (Supabase PostgreSQL)",
             "db_type": "PostgreSQL (Cloud Supabase)",
             "configured": False,
             "message": "Пожалуйста, добавьте SUPABASE_KEY в Vercel Environment Variables",
@@ -358,7 +358,7 @@ def get_system_stats() -> Dict[str, Any]:
             return len(r.json()) if r.status_code == 200 else 0
 
         return {
-            "version": "2.0.0 (Supabase PostgreSQL)",
+            "version": "1.2.0 (Supabase PostgreSQL)",
             "db_type": "PostgreSQL (Cloud Supabase)",
             "db_size_kb": 128.0,
             "counts": {
@@ -373,8 +373,51 @@ def get_system_stats() -> Dict[str, Any]:
 
 # ==================== CLIENTS ====================
 
+def serialize_client_notes(notes: str, inn: str = "", bank_name: str = "", bank_account: str = "") -> str:
+    clean_notes = (notes or "").strip()
+    clean_notes = re.sub(r'\[CLIENT_REQUISITES:.*?\]', '', clean_notes, flags=re.DOTALL).strip()
+    meta = {}
+    if inn and str(inn).strip():
+        meta["inn"] = str(inn).strip()
+    if bank_name and str(bank_name).strip():
+        meta["bank_name"] = str(bank_name).strip()
+    if bank_account and str(bank_account).strip():
+        meta["bank_account"] = str(bank_account).strip()
+    if meta:
+        meta_str = f"[CLIENT_REQUISITES:{json.dumps(meta, ensure_ascii=False)}]"
+        return f"{clean_notes}\n{meta_str}".strip() if clean_notes else meta_str
+    return clean_notes
+
+def parse_client_notes(raw_notes: str) -> tuple[str, str, str, str]:
+    if not raw_notes:
+        return "", "", "", ""
+    inn, bank_name, bank_account = "", "", ""
+    match = re.search(r'\[CLIENT_REQUISITES:(.*?)\]', raw_notes, flags=re.DOTALL)
+    if match:
+        try:
+            meta = json.loads(match.group(1))
+            inn = meta.get("inn", "")
+            bank_name = meta.get("bank_name", "")
+            bank_account = meta.get("bank_account", "")
+        except Exception:
+            pass
+        clean_notes = re.sub(r'\[CLIENT_REQUISITES:.*?\]', '', raw_notes, flags=re.DOTALL).strip()
+        return clean_notes, inn, bank_name, bank_account
+
+    m_inn = re.search(r'(?:ИНН|TIN)[:\s]+([0-9A-Za-z]+)', raw_notes, re.IGNORECASE)
+    if m_inn:
+        inn = m_inn.group(1).strip()
+    m_bank = re.search(r'(?:Банк|Название банка)[:\s]+([^\n\r,]+)', raw_notes, re.IGNORECASE)
+    if m_bank:
+        bank_name = m_bank.group(1).strip()
+    m_acc = re.search(r'(?:Счет|Счёт|Р/с|Р/С|IBAN)[:\s]+([0-9A-Za-z\s]+)', raw_notes, re.IGNORECASE)
+    if m_acc:
+        bank_account = m_acc.group(1).strip()
+
+    return raw_notes.strip(), inn, bank_name, bank_account
+
 def list_clients(q: Optional[str] = None) -> List[Dict[str, Any]]:
-    if not SUPABASE_KEY:
+    if not get_supabase_key():
         return []
     with get_sb_client() as client:
         params = {
@@ -384,11 +427,11 @@ def list_clients(q: Optional[str] = None) -> List[Dict[str, Any]]:
         if q:
             term = q.strip()
             params["or"] = f"(name.ilike.*{term}*,company.ilike.*{term}*,phone.ilike.*{term}*,email.ilike.*{term}*)"
-        
+
         r = client.get("/clients", params=params)
         if r.status_code != 200:
             return []
-        
+
         clients = []
         for c in r.json():
             eq_count = len(c.get("equipment") or [])
@@ -398,6 +441,11 @@ def list_clients(q: Optional[str] = None) -> List[Dict[str, Any]]:
             item = dict(c)
             item.pop("equipment", None)
             item.pop("deals", None)
+            clean_notes, inn, bank_name, bank_account = parse_client_notes(item.get("notes") or "")
+            item["notes"] = clean_notes
+            item["inn"] = inn
+            item["bank_name"] = bank_name
+            item["bank_account"] = bank_account
             item["equipment_count"] = eq_count
             item["deals_count"] = deals_count
             item["total_revenue"] = total_rev
@@ -408,6 +456,12 @@ def create_client(client_data: Dict[str, Any]) -> Dict[str, Any]:
     with get_sb_client() as client:
         next_id = get_next_id(client, "clients")
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        serialized_notes = serialize_client_notes(
+            client_data.get("notes") or "",
+            inn=client_data.get("inn") or "",
+            bank_name=client_data.get("bank_name") or "",
+            bank_account=client_data.get("bank_account") or ""
+        )
         payload = {
             "id": next_id,
             "name": client_data["name"].strip(),
@@ -415,7 +469,7 @@ def create_client(client_data: Dict[str, Any]) -> Dict[str, Any]:
             "phone": client_data["phone"].strip(),
             "email": (client_data.get("email") or "").strip(),
             "address": (client_data.get("address") or "").strip(),
-            "notes": (client_data.get("notes") or "").strip(),
+            "notes": serialized_notes,
             "created_at": now_str
         }
         r = client.post("/clients", json=payload)
@@ -423,6 +477,10 @@ def create_client(client_data: Dict[str, Any]) -> Dict[str, Any]:
             raise Exception(r.text)
         res = r.json()
         item = res[0] if isinstance(res, list) else res
+        item["inn"] = client_data.get("inn") or ""
+        item["bank_name"] = client_data.get("bank_name") or ""
+        item["bank_account"] = client_data.get("bank_account") or ""
+        item["notes"] = (client_data.get("notes") or "").strip()
         item["message"] = "Клиент успешно добавлен"
         return item
 
@@ -433,6 +491,11 @@ def get_crm_client(client_id: int) -> Dict[str, Any]:
         if not rows:
             raise KeyError("Клиент не найден")
         c = rows[0]
+        clean_notes, inn, bank_name, bank_account = parse_client_notes(c.get("notes") or "")
+        c["notes"] = clean_notes
+        c["inn"] = inn
+        c["bank_name"] = bank_name
+        c["bank_account"] = bank_account
 
         eq_r = client.get("/equipment", params={"client_id": f"eq.{client_id}", "order": "id.desc"})
         c["equipment"] = eq_r.json() if eq_r.status_code == 200 else []
@@ -456,21 +519,41 @@ get_client_by_id = get_crm_client
 
 def update_client(client_id: int, client_data: Dict[str, Any]) -> Dict[str, Any]:
     with get_sb_client() as client:
+        existing_r = client.get("/clients", params={"id": f"eq.{client_id}", "select": "notes"})
+        existing_notes = ""
+        if existing_r.status_code == 200 and existing_r.json():
+            existing_notes = existing_r.json()[0].get("notes") or ""
+        old_clean, old_inn, old_bank, old_acc = parse_client_notes(existing_notes)
+
+        new_inn = client_data.get("inn") if "inn" in client_data and client_data["inn"] is not None else old_inn
+        new_bank = client_data.get("bank_name") if "bank_name" in client_data and client_data["bank_name"] is not None else old_bank
+        new_acc = client_data.get("bank_account") if "bank_account" in client_data and client_data["bank_account"] is not None else old_acc
+        new_notes_raw = client_data.get("notes") if "notes" in client_data and client_data["notes"] is not None else old_clean
+
+        serialized_notes = serialize_client_notes(new_notes_raw, inn=new_inn, bank_name=new_bank, bank_account=new_acc)
+
         payload = {
             "name": client_data["name"].strip(),
             "company": (client_data.get("company") or "").strip(),
             "phone": client_data["phone"].strip(),
             "email": (client_data.get("email") or "").strip(),
             "address": (client_data.get("address") or "").strip(),
-            "notes": (client_data.get("notes") or "").strip(),
+            "notes": serialized_notes,
         }
         r = client.patch(f"/clients?id=eq.{client_id}", json=payload)
         if r.status_code not in (200, 204):
-            # Upsert fallback
             payload["id"] = client_id
             payload["created_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             client.post("/clients", json=payload, headers={"Prefer": "resolution=merge-duplicates"})
-        return {"id": client_id, **payload, "message": "Данные клиента обновлены"}
+        return {
+            "id": client_id,
+            **payload,
+            "inn": new_inn,
+            "bank_name": new_bank,
+            "bank_account": new_acc,
+            "notes": new_notes_raw,
+            "message": "Данные клиента обновлены"
+        }
 
 def delete_client(client_id: int) -> Dict[str, Any]:
     with get_sb_client() as client:
@@ -845,12 +928,11 @@ def get_deal(deal_id: int) -> Dict[str, Any]:
 def update_deal_stage(deal_id: int, stage: str) -> Dict[str, Any]:
     with get_sb_client() as client:
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        completed_at = now_str if stage == "completed" else None
-        client.patch(f"/deals?id=eq.{deal_id}", json={
-            "stage": stage,
-            "completed_at": completed_at
-        })
-        return {"id": deal_id, "stage": stage, "completed_at": completed_at, "message": "Статус наряда успешно изменен"}
+        patch_payload = {"stage": stage}
+        if stage in ("ready", "completed"):
+            patch_payload["completed_at"] = now_str
+        client.patch(f"/deals?id=eq.{deal_id}", json=patch_payload)
+        return {"id": deal_id, "stage": stage, "completed_at": patch_payload.get("completed_at"), "message": "Статус наряда успешно изменен"}
 
 def update_deal(deal_id: int, deal_data: Dict[str, Any]) -> Dict[str, Any]:
     with get_sb_client() as client:
