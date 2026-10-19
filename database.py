@@ -4,6 +4,7 @@ Powered by Supabase PostgreSQL with high-performance PostgREST client and automa
 """
 
 import os
+import json
 import hashlib
 import secrets
 from datetime import datetime
