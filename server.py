@@ -8,6 +8,7 @@ import csv
 import io
 import json
 import base64
+import time
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 
@@ -37,7 +38,7 @@ import database
 # Initialize database on startup
 database.init_db()
 
-app = FastAPI(title="СТО Спецмаш CRM API", version="1.2.1")
+app = FastAPI(title="СТО Спецмаш CRM API", version="1.2.2")
 
 app.add_middleware(
     CORSMiddleware,
@@ -56,7 +57,10 @@ try:
 except Exception:
     pass
 
-# ----------------- WebSocket Connection Manager -----------------
+# ----------------- WebSocket Connection Manager & Online Presence -----------------
+
+ONLINE_TIMEOUT_SECONDS = 45
+online_users: Dict[str, float] = {}
 
 class KanbanConnectionManager:
     """Manages active WebSocket connections for live Kanban board updates across users."""
@@ -84,13 +88,26 @@ class KanbanConnectionManager:
 manager = KanbanConnectionManager()
 
 @app.websocket("/ws/kanban")
-async def websocket_kanban_endpoint(websocket: WebSocket):
+async def websocket_kanban_endpoint(websocket: WebSocket, user_id: Optional[str] = None, username: Optional[str] = None):
     await manager.connect(websocket)
+    now = time.time()
+    if user_id:
+        online_users[str(user_id)] = now
+    if username:
+        online_users[str(username).lower().strip()] = now
     try:
         while True:
             data = await websocket.receive_text()
             try:
                 msg = json.loads(data)
+                now = time.time()
+                m_uid = msg.get("user_id") or user_id
+                m_uname = (msg.get("username") or username or "").lower().strip()
+                if m_uid:
+                    online_users[str(m_uid)] = now
+                if m_uname:
+                    online_users[m_uname] = now
+
                 mtype = msg.get("type")
                 if mtype == "ping":
                     await websocket.send_json({"type": "pong", "timestamp": datetime.now().isoformat()})
@@ -109,6 +126,31 @@ async def websocket_kanban_endpoint(websocket: WebSocket):
         manager.disconnect(websocket)
     except Exception:
         manager.disconnect(websocket)
+
+class HeartbeatPayload(BaseModel):
+    user_id: Optional[int] = None
+    username: Optional[str] = None
+
+@app.post("/api/users/heartbeat")
+def user_heartbeat(
+    payload: Optional[HeartbeatPayload] = None,
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    x_username: Optional[str] = Header(None, alias="X-User-Name"),
+):
+    now = time.time()
+    uid = str(payload.user_id) if (payload and payload.user_id) else (str(x_user_id) if x_user_id else None)
+    uname = ((payload.username if (payload and payload.username) else x_username) or "").strip().lower()
+    if uid:
+        online_users[uid] = now
+    if uname:
+        online_users[uname] = now
+    return {"status": "ok", "timestamp": now}
+
+@app.get("/api/users/online")
+def get_online_users():
+    now = time.time()
+    active_ids = [k for k, v in list(online_users.items()) if (now - v) <= ONLINE_TIMEOUT_SECONDS]
+    return {"online": active_ids}
 
 @app.get("/api/health")
 def health_check():
@@ -230,6 +272,7 @@ class TaskCreate(BaseModel):
     status: str = "pending"
     remind: int = 1
     notes: Optional[str] = ""
+    responsible: Optional[str] = ""
 
 # ----------------- Auth & Users -----------------
 
@@ -257,7 +300,15 @@ def login(req: LoginRequest):
 
 @app.get("/api/users")
 def list_users():
-    return database.list_users()
+    users = database.list_users()
+    now = time.time()
+    for u in users:
+        uid = str(u.get("id"))
+        uname = (u.get("username") or "").lower().strip()
+        last_seen = max(online_users.get(uid, 0), online_users.get(uname, 0))
+        u["is_online"] = (now - last_seen) <= ONLINE_TIMEOUT_SECONDS
+        u["last_seen"] = int(last_seen)
+    return users
 
 def check_effective_role(x_user_role: Any = None, role: Any = None) -> str:
     if isinstance(x_user_role, str) and x_user_role.strip():
@@ -398,6 +449,7 @@ def delete_logo():
 # ----------------- Dashboard & Analytics -----------------
 
 @app.get("/api/dashboard")
+@app.get("/api/dashboard/metrics")
 def get_dashboard():
     return database.get_dashboard_metrics()
 
@@ -505,7 +557,24 @@ async def update_deal(deal_id: int, deal: DealCreate):
 
 @app.delete("/api/deals/{deal_id}")
 @app.post("/api/deals/{deal_id}/delete")
-async def delete_deal(deal_id: int):
+async def delete_deal(
+    deal_id: int,
+    x_user_role: Optional[str] = Header(None, alias="X-User-Role"),
+    role: Optional[str] = None
+):
+    effective_role = check_effective_role(x_user_role, role)
+    try:
+        deal = database.get_deal(deal_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+
+    # Requirement #1: Only admin can delete completed deals
+    if deal.get("stage") == "completed" and effective_role != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Удаление закрытых сделок (стадии 'Оплачено' / 'Выдано') разрешено только Администратору"
+        )
+
     res = database.delete_deal(deal_id)
     await manager.broadcast({
         "type": "deal_deleted",
@@ -692,6 +761,17 @@ def generate_table_xlsx(table: str) -> bytes:
             rows_data.append([
                 u.get('id'), u.get('full_name', ''), u.get('username', ''),
                 role_ru, u.get('phone', ''), u.get('created_at', '')
+            ])
+    elif table == 'tasks':
+        ws.title = 'Задачи и напоминания'
+        headers = ['ID', 'Название задачи', 'Ответственный', 'Срок выполнения', 'Приоритет', 'Статус', 'Клиент', 'Наряд', 'Заметки', 'Дата создания']
+        for t in database.list_tasks():
+            status_ru = 'Выполнено' if t.get('status') == 'completed' else 'В ожидании'
+            rows_data.append([
+                t.get('id'), t.get('title', ''), t.get('responsible', ''),
+                t.get('due_date', ''), t.get('priority', 'normal'),
+                status_ru, t.get('client_name', ''), t.get('deal_title', ''),
+                t.get('notes', ''), t.get('created_at', '')
             ])
     else:
         raise HTTPException(status_code=400, detail="Неверная таблица для экспорта")

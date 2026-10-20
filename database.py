@@ -979,16 +979,24 @@ def update_deal(deal_id: int, deal_data: Dict[str, Any]) -> Dict[str, Any]:
         client_id = deal_data.get("client_id") if deal_data.get("client_id") and deal_data.get("client_id") > 0 else None
         eq_id = deal_data.get("equipment_id") if deal_data.get("equipment_id") and deal_data.get("equipment_id") > 0 else None
 
-        existing_r = client.get("/deals", params={"id": f"eq.{deal_id}", "select": "description,title"})
+        existing_r = client.get("/deals", params={"id": f"eq.{deal_id}", "select": "description,title,completed_at,created_at"})
         existing_desc = ""
         existing_title = ""
+        existing_completed_at = None
         if existing_r.status_code == 200 and existing_r.json():
-            existing_desc = existing_r.json()[0].get("description") or ""
-            existing_title = existing_r.json()[0].get("title") or ""
+            row = existing_r.json()[0]
+            existing_desc = row.get("description") or ""
+            existing_title = row.get("title") or ""
+            existing_completed_at = row.get("completed_at")
         old_desc, old_dtype = parse_deal_description(existing_desc, existing_title)
         new_dtype = (deal_data.get("deal_type") or old_dtype or "service").strip().lower()
         raw_desc = deal_data.get("description") if "description" in deal_data and deal_data["description"] is not None else old_desc
         serialized_desc = serialize_deal_description(raw_desc or "", deal_type=new_dtype)
+
+        if stage in ("ready", "completed"):
+            completed_at = existing_completed_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            completed_at = None
 
         payload = {
             "title": deal_data["title"].strip(),
@@ -1097,6 +1105,22 @@ def remove_part_from_deal(deal_id: int, deal_part_id: int) -> Dict[str, Any]:
 
 # ==================== TASKS ====================
 
+def serialize_task_notes(notes: str, responsible: Optional[str] = None) -> str:
+    base = notes or ""
+    base = re.sub(r'\[RESPONSIBLE:[^\]]*\]', '', base).strip()
+    if responsible and responsible.strip():
+        tag = f"[RESPONSIBLE:{responsible.strip()}]"
+        return f"{base}\n{tag}".strip() if base else tag
+    return base
+
+def parse_task_notes(raw_notes: str) -> tuple[str, str]:
+    if not raw_notes:
+        return "", ""
+    m = re.search(r'\[RESPONSIBLE:([^\]]+)\]', raw_notes)
+    responsible = m.group(1).strip() if m else ""
+    clean_notes = re.sub(r'\[RESPONSIBLE:[^\]]*\]', '', raw_notes).strip()
+    return clean_notes, responsible
+
 def list_tasks(status: Optional[str] = None) -> List[Dict[str, Any]]:
     if not SUPABASE_KEY:
         return []
@@ -1114,6 +1138,9 @@ def list_tasks(status: Optional[str] = None) -> List[Dict[str, Any]]:
             item = dict(t)
             item.pop("clients", None)
             item.pop("deals", None)
+            clean_notes, resp = parse_task_notes(item.get("notes") or "")
+            item["notes"] = clean_notes
+            item["responsible"] = resp
             item["client_name"] = cl.get("name", "")
             item["client_company"] = cl.get("company", "")
             item["deal_title"] = dl.get("title", "")
@@ -1124,6 +1151,9 @@ def create_task(task_data: Dict[str, Any]) -> Dict[str, Any]:
     with get_sb_client() as client:
         next_id = get_next_id(client, "tasks")
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        raw_notes = (task_data.get("notes") or "").strip()
+        responsible = (task_data.get("responsible") or "").strip()
+        serialized_notes = serialize_task_notes(raw_notes, responsible)
         payload = {
             "id": next_id,
             "title": task_data["title"].strip(),
@@ -1133,7 +1163,7 @@ def create_task(task_data: Dict[str, Any]) -> Dict[str, Any]:
             "priority": task_data.get("priority", "normal"),
             "status": task_data.get("status", "pending"),
             "remind": int(task_data.get("remind", 1)),
-            "notes": (task_data.get("notes") or "").strip(),
+            "notes": serialized_notes,
             "created_at": now_str
         }
         r = client.post("/tasks", json=payload)
@@ -1141,6 +1171,8 @@ def create_task(task_data: Dict[str, Any]) -> Dict[str, Any]:
             raise Exception(r.text)
         res = r.json()
         item = res[0] if isinstance(res, list) else res
+        item["responsible"] = responsible
+        item["notes"] = raw_notes
         item["message"] = "Задача добавлена в планировщик"
         return item
 
@@ -1162,6 +1194,14 @@ def delete_task(task_id: int) -> Dict[str, Any]:
 
 # ==================== DASHBOARD METRICS ====================
 
+def _to_float(v: Any, default: float = 0.0) -> float:
+    try:
+        if v is None:
+            return default
+        return float(v)
+    except (ValueError, TypeError):
+        return default
+
 def get_dashboard_metrics() -> Dict[str, Any]:
     if not SUPABASE_KEY:
         return {
@@ -1172,9 +1212,11 @@ def get_dashboard_metrics() -> Dict[str, Any]:
             "total_clients": 0,
             "warehouse_value": 0,
             "critical_parts_count": 0,
+            "low_stock_parts": 0,
             "monthly_data": [],
             "top_clients": [],
-            "critical_parts": []
+            "critical_parts": [],
+            "mechanics_revenue": []
         }
     with get_sb_client() as client:
         deals = client.get("/deals", params={"select": "*,clients(name),equipment(name)", "order": "id.desc"}).json() or []
@@ -1188,28 +1230,52 @@ def get_dashboard_metrics() -> Dict[str, Any]:
         # Requirement #2: Separate Revenue Calculation for Parts Sales & Service
         service_completed = [d for d in completed if d.get("deal_type") != "parts_sale"]
         service_active = [d for d in active if d.get("deal_type") != "parts_sale"]
-        service_rev = sum(d.get("amount", 0) for d in service_completed)
-        service_cost = sum(d.get("cost", 0) for d in service_completed)
+        service_rev = sum(_to_float(d.get("amount")) for d in service_completed)
+        service_cost = sum(_to_float(d.get("cost")) for d in service_completed)
         service_profit = service_rev - service_cost
 
         parts_completed = [d for d in completed if d.get("deal_type") == "parts_sale"]
         parts_active = [d for d in active if d.get("deal_type") == "parts_sale"]
-        parts_rev = sum(d.get("amount", 0) for d in parts_completed)
-        parts_cost = sum(d.get("cost", 0) for d in parts_completed)
+        parts_rev = sum(_to_float(d.get("amount")) for d in parts_completed)
+        parts_cost = sum(_to_float(d.get("cost")) for d in parts_completed)
         parts_profit = parts_rev - parts_cost
 
         total_rev = service_rev + parts_rev
         total_cost = service_cost + parts_cost
         net_profit = total_rev - total_cost
 
+        # Requirement #5: Fix critical warehouse parts display
         parts = client.get("/parts", params={"select": "*"}).json() or []
-        inv_cost = sum(p.get("quantity", 0) * p.get("purchase_price", 0) for p in parts)
-        inv_retail = sum(p.get("quantity", 0) * p.get("selling_price", 0) for p in parts)
-        low_stock = sum(1 for p in parts if p.get("quantity", 0) <= p.get("min_threshold", 2))
+        inv_cost = 0.0
+        inv_retail = 0.0
+        critical_list = []
+        for p in parts:
+            qty = _to_float(p.get("quantity"), 0.0)
+            p_price = _to_float(p.get("purchase_price"), 0.0)
+            s_price = _to_float(p.get("selling_price"), 0.0)
+            min_th = _to_float(p.get("min_threshold"), 2.0)
+            inv_cost += qty * p_price
+            inv_retail += qty * s_price
+            if qty <= min_th:
+                critical_list.append({
+                    "id": p.get("id"),
+                    "name": p.get("name") or "Без названия",
+                    "sku": p.get("sku") or "—",
+                    "category": p.get("category") or "",
+                    "quantity": int(qty) if qty.is_integer() else round(qty, 2),
+                    "min_threshold": int(min_th) if min_th.is_integer() else round(min_th, 2),
+                    "location": p.get("location") or "Склад",
+                    "purchase_price": round(p_price, 2),
+                    "selling_price": round(s_price, 2)
+                })
+
+        # Sort by quantity ascending so the lowest stock (most deficit) items are at top
+        critical_list.sort(key=lambda x: x["quantity"])
+        low_stock = len(critical_list)
 
         clients = client.get("/clients", params={"select": "id,name,company"}).json() or []
         equipment = client.get("/equipment", params={"select": "id"}).json() or []
-        users = client.get("/users", params={"select": "id"}).json() or []
+        users = client.get("/users", params={"select": "id,username,full_name,role,phone"}).json() or []
 
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
         tasks = client.get("/tasks", params={"select": "id,due_date,status"}).json() or []
@@ -1219,9 +1285,9 @@ def get_dashboard_metrics() -> Dict[str, Any]:
         for d in deals:
             st = d.get("stage", "new")
             if st not in stages:
-                stages[st] = {"count": 0, "amount": 0}
+                stages[st] = {"count": 0, "amount": 0.0}
             stages[st]["count"] += 1
-            stages[st]["amount"] += d.get("amount", 0)
+            stages[st]["amount"] += _to_float(d.get("amount"))
 
         # Recent deals format
         recent = []
@@ -1236,9 +1302,78 @@ def get_dashboard_metrics() -> Dict[str, Any]:
                 "amount": d.get("amount"),
                 "stage": d.get("stage"),
                 "created_at": d.get("created_at"),
+                "completed_at": d.get("completed_at"),
                 "client_name": cl.get("name", ""),
                 "equipment_name": eq.get("name", "")
             })
+
+        # Requirement #8: Mechanics revenue calculation (Admin only)
+        mechanics_map: Dict[str, Dict[str, Any]] = {}
+        for u in users:
+            if u.get("role") == "mechanic":
+                uid = str(u.get("id"))
+                mechanics_map[uid] = {
+                    "user_id": u.get("id"),
+                    "name": u.get("full_name") or u.get("username"),
+                    "username": u.get("username") or "",
+                    "completed_deals_count": 0,
+                    "active_deals_count": 0,
+                    "total_revenue": 0.0,
+                    "total_cost": 0.0,
+                    "net_profit": 0.0,
+                    "avg_deal": 0.0
+                }
+
+        for d in deals:
+            if d.get("deal_type") == "parts_sale":
+                continue
+            resp = (d.get("responsible") or "").strip()
+            if not resp:
+                continue
+
+            matched_key = None
+            resp_lower = resp.lower()
+            for mid, mdata in mechanics_map.items():
+                m_name = mdata["name"].lower()
+                m_user = mdata["username"].lower()
+                if resp_lower == m_name or resp_lower == m_user or resp_lower in m_name or m_name in resp_lower:
+                    matched_key = mid
+                    break
+
+            if not matched_key:
+                matched_key = f"resp_{resp}"
+                if matched_key not in mechanics_map:
+                    mechanics_map[matched_key] = {
+                        "user_id": None,
+                        "name": resp,
+                        "username": resp,
+                        "completed_deals_count": 0,
+                        "active_deals_count": 0,
+                        "total_revenue": 0.0,
+                        "total_cost": 0.0,
+                        "net_profit": 0.0,
+                        "avg_deal": 0.0
+                    }
+
+            entry = mechanics_map[matched_key]
+            d_amt = _to_float(d.get("amount"), 0.0)
+            d_cost = _to_float(d.get("cost"), 0.0)
+
+            if d.get("stage") == "completed":
+                entry["completed_deals_count"] += 1
+                entry["total_revenue"] += d_amt
+                entry["total_cost"] += d_cost
+            elif d.get("stage") not in ("completed", "cancelled"):
+                entry["active_deals_count"] += 1
+
+        mechanics_revenue = list(mechanics_map.values())
+        for m in mechanics_revenue:
+            m["net_profit"] = round(m["total_revenue"] - m["total_cost"], 2)
+            m["total_revenue"] = round(m["total_revenue"], 2)
+            m["total_cost"] = round(m["total_cost"], 2)
+            m["avg_deal"] = round(m["total_revenue"] / m["completed_deals_count"], 2) if m["completed_deals_count"] > 0 else 0.0
+
+        mechanics_revenue.sort(key=lambda x: (x["total_revenue"], x["completed_deals_count"]), reverse=True)
 
         return {
             "total_revenue": round(total_rev, 2),
@@ -1254,7 +1389,7 @@ def get_dashboard_metrics() -> Dict[str, Any]:
             "parts_sales_count": len([d for d in deals if d.get("deal_type") == "parts_sale"]),
             "parts_sales_completed_count": len(parts_completed),
             "parts_sales_active_count": len(parts_active),
-            "parts_sales_active_volume": round(sum(d.get("amount", 0) for d in parts_active), 2),
+            "parts_sales_active_volume": round(sum(_to_float(d.get("amount")) for d in parts_active), 2),
 
             # Service revenue metrics
             "service_revenue": round(service_rev, 2),
@@ -1264,17 +1399,19 @@ def get_dashboard_metrics() -> Dict[str, Any]:
             "service_deals_count": len([d for d in deals if d.get("deal_type") != "parts_sale"]),
             "service_completed_count": len(service_completed),
             "service_active_count": len(service_active),
-            "service_active_volume": round(sum(d.get("amount", 0) for d in service_active), 2),
+            "service_active_volume": round(sum(_to_float(d.get("amount")) for d in service_active), 2),
 
             "completed_count": len(completed),
             "avg_deal": round(total_rev / len(completed), 2) if completed else 0,
             "active_deals_count": len(active),
             "total_deals_count": len(deals),
-            "active_deals_volume": round(sum(d.get("amount", 0) for d in active), 2),
+            "active_deals_volume": round(sum(_to_float(d.get("amount")) for d in active), 2),
             "total_clients": len(clients),
             "total_equipment": len(equipment),
             "total_users": len(users),
             "low_stock_parts": low_stock,
+            "critical_parts": critical_list[:25],
+            "mechanics_revenue": mechanics_revenue,
             "inventory_cost": round(inv_cost, 2),
             "inventory_retail": round(inv_retail, 2),
             "overdue_tasks": overdue,

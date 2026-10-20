@@ -111,7 +111,8 @@ function initFastApiWebSocket() {
     return;
   }
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsUrl = `${protocol}//${window.location.host}/ws/kanban`;
+  const uidParam = state.currentUser?.id ? `?user_id=${state.currentUser.id}&username=${encodeURIComponent(state.currentUser.username || '')}` : '';
+  const wsUrl = `${protocol}//${window.location.host}/ws/kanban${uidParam}`;
 
   try {
     fastApiWs = new WebSocket(wsUrl);
@@ -119,6 +120,15 @@ function initFastApiWebSocket() {
     fastApiWs.onopen = () => {
       isRealtimeConnected = true;
       updateRealtimeStatus('connected', 'FastAPI WS Онлайн');
+      if (state.currentUser?.id) {
+        try {
+          fastApiWs.send(JSON.stringify({
+            type: 'identify',
+            user_id: state.currentUser.id,
+            username: state.currentUser.username
+          }));
+        } catch (e) {}
+      }
     };
 
     fastApiWs.onmessage = (event) => {
@@ -433,6 +443,35 @@ function showToast(message, type = 'success') {
 
 // ================= INITIALIZATION & AUTH =================
 
+async function sendHeartbeat() {
+  if (!state.currentUser || !state.currentUser.id) return;
+  try {
+    await fetch('/api/users/heartbeat', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user-id': String(state.currentUser.id),
+        'x-user-name': state.currentUser.username || ''
+      },
+      body: JSON.stringify({
+        user_id: state.currentUser.id,
+        username: state.currentUser.username
+      })
+    });
+  } catch (e) {}
+}
+
+function startHeartbeat() {
+  sendHeartbeat();
+  if (window._heartbeatTimer) clearInterval(window._heartbeatTimer);
+  window._heartbeatTimer = setInterval(sendHeartbeat, 15000);
+}
+
+function stopHeartbeat() {
+  if (window._heartbeatTimer) clearInterval(window._heartbeatTimer);
+  window._heartbeatTimer = null;
+}
+
 function initAuth() {
   const saved = localStorage.getItem('specmash_user');
   if (saved) {
@@ -453,6 +492,7 @@ function initAuth() {
 
   showAppLayout();
   applyUserPermissions();
+  startHeartbeat();
   loadSettings();
   // Preload core entities so cache and relations are always ready
   loadClients();
@@ -539,6 +579,7 @@ async function handleAuthScreenLogin(e) {
     localStorage.setItem('specmash_user', JSON.stringify(data));
     showAppLayout();
     applyUserPermissions();
+    startHeartbeat();
     await loadSettings();
     await switchTab('dashboard');
     showToast(`Добро пожаловать, ${data.full_name}!`);
@@ -564,6 +605,7 @@ function quickFillAndLogin(u, p) {
 }
 
 function handleLogout() {
+  stopHeartbeat();
   localStorage.removeItem('specmash_user');
   state.currentUser = null;
   closeUserDropdown();
@@ -690,6 +732,7 @@ async function quickLogin(role) {
     state.currentUser = data;
     localStorage.setItem('specmash_user', JSON.stringify(data));
     applyUserPermissions();
+    startHeartbeat();
     closeModal('modal-login');
     showToast(`Вы вошли как ${data.full_name} (${ROLE_DEFINITIONS[data.role]?.label})`);
     loadDashboard();
@@ -715,6 +758,7 @@ async function handleManualLogin(e) {
     state.currentUser = data;
     localStorage.setItem('specmash_user', JSON.stringify(data));
     applyUserPermissions();
+    startHeartbeat();
     closeModal('modal-login');
     showToast(`Вы вошли как ${data.full_name}`);
     loadDashboard();
@@ -1244,6 +1288,17 @@ async function loadDashboard() {
     renderCriticalParts(data.critical_parts);
     renderRecentDeals(data.recent_deals);
 
+    // Requirement #8: Mechanics Revenue Breakdown (Strictly for Administrators)
+    const mechSection = document.getElementById('dash-mechanics-revenue-section');
+    if (mechSection) {
+      if (state.currentUser && state.currentUser.role === 'admin') {
+        mechSection.classList.remove('hidden');
+        renderMechanicsRevenue(data.mechanics_revenue || []);
+      } else {
+        mechSection.classList.add('hidden');
+      }
+    }
+
     if (window.lucide) lucide.createIcons();
   } catch (err) {
     console.error('Error loading dashboard:', err);
@@ -1352,6 +1407,53 @@ function renderCriticalParts(parts) {
       </div>
     </div>
   `).join('');
+}
+
+function renderMechanicsRevenue(mechanics) {
+  const tbody = document.getElementById('dash-mechanics-revenue-body');
+  if (!tbody) return;
+  if (!mechanics || mechanics.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" class="p-6 text-center text-xs text-slate-400">Данные по выполненным нарядам механиков отсутствуют</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = mechanics.map(m => {
+    const margin = m.total_revenue > 0 ? Math.round((m.net_profit / m.total_revenue) * 100) : 0;
+    return `
+      <tr class="hover:bg-purple-50/40 transition-colors">
+        <td class="p-3 text-xs font-sans">
+          <div class="font-bold text-slate-800 flex items-center gap-2">
+            <span class="w-2 h-2 rounded-full bg-purple-500"></span>
+            <span>${m.name}</span>
+          </div>
+          ${m.username && m.username !== m.name ? `<div class="text-[10px] text-slate-400 font-mono">@${m.username}</div>` : ''}
+        </td>
+        <td class="p-3 text-center text-xs font-sans">
+          <span class="px-2 py-0.5 rounded-full font-bold ${m.completed_deals_count > 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'}">
+            ${m.completed_deals_count}
+          </span>
+        </td>
+        <td class="p-3 text-center text-xs font-sans">
+          <span class="px-2 py-0.5 rounded-full font-bold ${m.active_deals_count > 0 ? 'bg-blue-100 text-blue-800' : 'bg-slate-100 text-slate-400'}">
+            ${m.active_deals_count}
+          </span>
+        </td>
+        <td class="p-3 text-right text-xs font-bold text-blue-700">
+          ${formatMoney(m.total_revenue)}
+        </td>
+        <td class="p-3 text-right text-xs text-slate-500">
+          ${formatMoney(m.total_cost)}
+        </td>
+        <td class="p-3 text-right text-xs font-bold text-emerald-600">
+          ${formatMoney(m.net_profit)}
+          <span class="text-[10px] text-emerald-500 font-normal">(${margin}%)</span>
+        </td>
+        <td class="p-3 text-right text-xs font-medium text-slate-700">
+          ${formatMoney(m.avg_deal)}
+        </td>
+      </tr>
+    `;
+  }).join('');
 }
 
 function renderRecentDeals(deals) {
@@ -1695,7 +1797,7 @@ function renderDealsList() {
         </td>
 
         <td class="p-3.5 text-xs text-slate-700 font-medium">
-          ${deal.responsible ? deal.responsible.split(' ')[0] : '—'}
+          ${deal.responsible || '—'}
         </td>
 
         <td class="p-3.5 text-xs font-mono text-slate-500">
@@ -1706,9 +1808,10 @@ function renderDealsList() {
           <button onclick="openDealModal(${deal.id})" class="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-slate-100 rounded" title="Редактировать наряд">
             <i data-lucide="edit-3" class="w-4 h-4"></i>
           </button>
+          ${(deal.stage === 'completed' && state.currentUser?.role !== 'admin') ? '' : `
           <button onclick="quickDeleteDeal(${deal.id})" class="p-1.5 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded" title="Удалить наряд">
             <i data-lucide="trash-2" class="w-4 h-4"></i>
-          </button>
+          </button>`}
         </td>
       </tr>
     `;
@@ -1767,15 +1870,34 @@ async function updateDealStageQuick(dealId, newStage, event) {
 }
 
 async function quickDeleteDeal(dealId) {
+  const deal = state.deals.find(d => Number(d.id) === Number(dealId));
+  if (deal && deal.stage === 'completed' && state.currentUser?.role !== 'admin') {
+    showToast('Удаление закрытых сделок (стадии «Оплачено» / «Выдано») разрешено только Администратору!', 'error');
+    return;
+  }
   if (!confirm(`Удалить заказ-наряд #${dealId}?`)) return;
   try {
-    const res = await fetch(`/api/deals/${dealId}`, { method: 'DELETE' });
-    if (!res.ok) throw new Error();
+    let res = await fetch(`/api/deals/${dealId}`, {
+      method: 'DELETE',
+      headers: {
+        'x-user-role': state.currentUser?.role || ''
+      }
+    });
+    if (!res.ok) {
+      res = await fetch(`/api/deals/${dealId}/delete`, {
+        method: 'POST',
+        headers: {
+          'x-user-role': state.currentUser?.role || ''
+        }
+      });
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка при удалении наряда');
     showToast(`Заказ-наряд #${dealId} удален`);
     loadDeals();
     loadDashboard();
   } catch (err) {
-    showToast('Ошибка при удалении наряда', 'error');
+    showToast(err.message || 'Ошибка при удалении наряда', 'error');
   }
 }
 
@@ -1847,8 +1969,23 @@ function renderKanbanCard(deal) {
         <span class="font-bold text-blue-600 font-mono">${formatMoney(deal.amount)}</span>
         <div class="flex items-center gap-1.5">
           ${deal.parts_count > 0 ? `<span class="bg-amber-50 text-amber-700 border border-amber-200 text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold" title="Списано запчастей">${deal.parts_count} з/ч</span>` : ''}
-          <span class="text-[10px] text-slate-500 font-medium">${deal.responsible ? deal.responsible.split(' ')[0] : ''}</span>
+          <span class="text-[10px] text-slate-500 font-medium">${deal.responsible || ''}</span>
         </div>
+      </div>
+
+      <!-- Requirement #4: Deal Registration and Completion Dates in Kanban -->
+      <div class="flex items-center justify-between text-[10px] text-slate-400 pt-1.5 border-t border-slate-100">
+        <span class="flex items-center gap-1" title="Дата регистрации наряда">
+          <i data-lucide="calendar" class="w-3 h-3 text-slate-400"></i>
+          <span>${formatDate(deal.created_at)}</span>
+        </span>
+        ${deal.stage === 'completed' ? `
+          <span class="flex items-center gap-1 text-emerald-600 font-semibold" title="Дата закрытия наряда">
+            <i data-lucide="check-check" class="w-3 h-3 text-emerald-500"></i>
+            <span>${formatDate(deal.completed_at || deal.created_at)}</span>
+          </span>` : `
+          ${deal.deadline ? `<span class="flex items-center gap-1 font-mono text-slate-500" title="Дедлайн"><i data-lucide="clock" class="w-3 h-3"></i> ${deal.deadline}</span>` : ''}
+        `}
       </div>
     </div>
   `;
@@ -2313,6 +2450,11 @@ function renderTasksList() {
                 <i data-lucide="clock" class="w-3.5 h-3.5"></i>
                 <span>${t.due_date}</span>
               </span>
+              ${t.responsible ? `
+                <span class="flex items-center gap-1 font-medium text-slate-700 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md text-[11px]">
+                  <i data-lucide="user-check" class="w-3 h-3 text-blue-600"></i>
+                  <span>Ответственный: <b>${t.responsible}</b></span>
+                </span>` : ''}
               ${t.client_name ? `<span class="flex items-center gap-1"><i data-lucide="user" class="w-3.5 h-3.5 text-slate-400"></i> ${t.client_name}</span>` : ''}
               ${t.deal_title ? `<span class="flex items-center gap-1"><i data-lucide="trello" class="w-3.5 h-3.5 text-blue-500"></i> ${t.deal_title}</span>` : ''}
             </div>
@@ -2385,18 +2527,23 @@ function renderUsersTable() {
   if (!tbody) return;
 
   if (state.users.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="6" class="p-8 text-center text-slate-400 text-xs">Сотрудники не найдены</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" class="p-8 text-center text-slate-400 text-xs">Сотрудники не найдены</td></tr>`;
     return;
   }
 
   tbody.innerHTML = state.users.map(u => {
     const roleInfo = ROLE_DEFINITIONS[u.role] || { label: u.role, badge: 'bg-slate-100 text-slate-700', icon: '👤' };
     const isCurrent = state.currentUser && state.currentUser.id === u.id;
+    const isOnline = isCurrent || u.is_online === true;
+    const statusBadge = isOnline
+      ? '<span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-xs"><span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span> В сети</span>'
+      : '<span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-normal text-slate-400 bg-slate-50 border border-slate-200"><span class="w-2 h-2 rounded-full bg-slate-300"></span> Не в сети</span>';
 
     return `
       <tr class="hover:bg-slate-50/80 transition-colors">
         <td class="p-3.5">
           <div class="font-bold text-slate-800 text-sm flex items-center gap-2">
+            <span class="w-2.5 h-2.5 rounded-full ${isOnline ? 'bg-emerald-500 ring-2 ring-emerald-200 animate-pulse' : 'bg-slate-300'}" title="${isOnline ? 'В сети' : 'Не в сети'}"></span>
             <span>${u.full_name}</span>
             ${isCurrent ? '<span class="text-[10px] px-1.5 py-0.2 rounded bg-blue-100 text-blue-700 font-semibold font-mono">ВЫ</span>' : ''}
           </div>
@@ -2409,6 +2556,9 @@ function renderUsersTable() {
             <span>${roleInfo.icon}</span>
             <span>${roleInfo.label}</span>
           </span>
+        </td>
+        <td class="p-3.5 text-xs">
+          ${statusBadge}
         </td>
         <td class="p-3.5 text-xs font-mono text-slate-600">
           ${u.phone || '—'}
@@ -2749,6 +2899,8 @@ async function openDealModal(dealId = null, defaultStage = 'new', defaultType = 
   document.getElementById('deal-id').value = '';
   document.getElementById('deal-parts-section').classList.add('hidden');
   document.getElementById('btn-delete-deal').classList.add('hidden');
+  const datesBanner = document.getElementById('deal-dates-banner');
+  if (datesBanner) datesBanner.classList.add('hidden');
 
   // Reset search & auto-fill
   clearDealClientSearch();
@@ -2756,7 +2908,6 @@ async function openDealModal(dealId = null, defaultStage = 'new', defaultType = 
   let targetType = defaultType || (state.dealsDepartment === 'parts_sale' ? 'parts_sale' : 'service');
 
   if (dealId) {
-    document.getElementById('btn-delete-deal').classList.remove('hidden');
     document.getElementById('deal-parts-section').classList.remove('hidden');
 
     try {
@@ -2764,6 +2915,27 @@ async function openDealModal(dealId = null, defaultStage = 'new', defaultType = 
       const deal = await res.json();
       targetType = deal.deal_type || 'service';
       setDealModalType(targetType);
+
+      // Requirement #1: Only admin can delete completed deals
+      const deleteBtn = document.getElementById('btn-delete-deal');
+      if (deleteBtn) {
+        const isCompleted = deal.stage === 'completed';
+        const isAdmin = state.currentUser && state.currentUser.role === 'admin';
+        if (isCompleted && !isAdmin) {
+          deleteBtn.classList.add('hidden');
+        } else {
+          deleteBtn.classList.remove('hidden');
+        }
+      }
+
+      // Requirement #4: Display deal registration and closing dates
+      if (datesBanner) {
+        datesBanner.classList.remove('hidden');
+        document.getElementById('deal-date-created').textContent = deal.created_at || '—';
+        const isClosed = deal.stage === 'completed';
+        const completedText = (isClosed && deal.completed_at) ? deal.completed_at : (isClosed ? 'Закрыта' : 'В работе');
+        document.getElementById('deal-date-completed').textContent = completedText;
+      }
 
       document.getElementById('deal-id').value = deal.id;
       document.getElementById('deal-title').value = deal.title;
@@ -2922,23 +3094,140 @@ function renderDealAttachedParts(parts) {
   if (window.lucide) lucide.createIcons();
 }
 
-async function loadWarehousePartsOptions() {
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+async function loadWarehousePartsOptions(filteredParts = null) {
   if (state.parts.length === 0) await loadParts();
   const select = document.getElementById('attach-part-select');
   if (!select) return;
 
-  select.innerHTML = state.parts.map(p => `
+  const partsToRender = filteredParts || state.parts;
+  if (partsToRender.length === 0) {
+    select.innerHTML = '<option value="" disabled selected>Запчасти не найдены</option>';
+    return;
+  }
+
+  select.innerHTML = partsToRender.map(p => `
     <option value="${p.id}" ${p.quantity <= 0 ? 'disabled' : ''}>
-      ${p.name} [${p.sku}] — ост: ${p.quantity} шт (${formatMoney(p.selling_price)})
+      ${escapeHtml(p.name)} [${escapeHtml(p.sku)}] — ост: ${p.quantity} шт (${formatMoney(p.selling_price)})
     </option>
   `).join('');
 }
 
+// Requirement #6: Search parts by SKU or Name in write-off modal
+function handleAttachPartSearch(query) {
+  const q = (query || '').trim().toLowerCase();
+  const clearBtn = document.getElementById('attach-part-search-clear');
+  const suggestionsBox = document.getElementById('attach-part-suggestions');
+
+  if (clearBtn) {
+    if (q) clearBtn.classList.remove('hidden');
+    else clearBtn.classList.add('hidden');
+  }
+
+  if (!q) {
+    if (suggestionsBox) suggestionsBox.classList.add('hidden');
+    loadWarehousePartsOptions();
+    return;
+  }
+
+  const matches = state.parts.filter(p => {
+    const nameMatch = p.name && p.name.toLowerCase().includes(q);
+    const skuMatch = p.sku && p.sku.toLowerCase().includes(q);
+    const catMatch = p.category && p.category.toLowerCase().includes(q);
+    return nameMatch || skuMatch || catMatch;
+  });
+
+  loadWarehousePartsOptions(matches);
+  if (matches.length > 0) {
+    const sel = document.getElementById('attach-part-select');
+    if (sel && sel.options.length > 0) sel.selectedIndex = 0;
+  }
+
+  if (!suggestionsBox) return;
+
+  if (matches.length === 0) {
+    suggestionsBox.innerHTML = `<div class="p-3 text-xs text-slate-400 text-center">Запчасти по запросу «${escapeHtml(q)}» не найдены</div>`;
+    suggestionsBox.classList.remove('hidden');
+    return;
+  }
+
+  suggestionsBox.innerHTML = matches.slice(0, 15).map(p => {
+    const isOut = p.quantity <= 0;
+    return `
+      <div onclick="selectAttachPartSuggestion(${p.id})" class="p-2.5 hover:bg-amber-50 cursor-pointer flex items-center justify-between text-xs transition-colors">
+        <div class="min-w-0 pr-2">
+          <div class="font-bold text-slate-800 flex items-center gap-1.5 truncate">
+            <span class="truncate">${escapeHtml(p.name)}</span>
+            <span class="font-mono text-[10px] bg-slate-100 text-slate-700 px-1.5 py-0.2 rounded border border-slate-200 shrink-0 font-bold">${escapeHtml(p.sku)}</span>
+          </div>
+          <div class="text-[11px] text-slate-400 mt-0.5">${p.location ? 'Локация: ' + escapeHtml(p.location) + ' • ' : ''}Категория: ${escapeHtml(p.category || 'Общая')}</div>
+        </div>
+        <div class="text-right shrink-0">
+          <div class="font-bold ${isOut ? 'text-rose-500' : 'text-emerald-700'} font-mono">${p.quantity} шт</div>
+          <div class="text-[10px] text-slate-500 font-mono">${formatMoney(p.selling_price)}</div>
+        </div>
+      </div>
+    `;
+  }).join('');
+  suggestionsBox.classList.remove('hidden');
+  if (window.lucide) lucide.createIcons();
+}
+
+function selectAttachPartSuggestion(partId) {
+  const part = state.parts.find(p => p.id === partId);
+  const searchInput = document.getElementById('attach-part-search');
+  const suggestionsBox = document.getElementById('attach-part-suggestions');
+  const select = document.getElementById('attach-part-select');
+
+  if (part) {
+    if (searchInput) searchInput.value = `[${part.sku}] ${part.name}`;
+    loadWarehousePartsOptions([part, ...state.parts.filter(p => p.id !== partId)]);
+    if (select) select.value = String(part.id);
+  }
+  if (suggestionsBox) suggestionsBox.classList.add('hidden');
+  const qtyInput = document.getElementById('attach-part-qty');
+  if (qtyInput) qtyInput.focus();
+}
+
+function clearAttachPartSearch() {
+  const searchInput = document.getElementById('attach-part-search');
+  if (searchInput) searchInput.value = '';
+  const clearBtn = document.getElementById('attach-part-search-clear');
+  if (clearBtn) clearBtn.classList.add('hidden');
+  const suggestionsBox = document.getElementById('attach-part-suggestions');
+  if (suggestionsBox) suggestionsBox.classList.add('hidden');
+  loadWarehousePartsOptions();
+}
+
+function handleAttachPartSelectChange(partId) {
+  const part = state.parts.find(p => String(p.id) === String(partId));
+  if (part) {
+    const searchInput = document.getElementById('attach-part-search');
+    if (searchInput && !searchInput.value) {
+      searchInput.placeholder = `Выбрано: [${part.sku}] ${part.name}`;
+    }
+  }
+}
+
 function showAttachPartRow() {
   document.getElementById('attach-part-row').classList.remove('hidden');
+  clearAttachPartSearch();
+  const searchInput = document.getElementById('attach-part-search');
+  if (searchInput) searchInput.focus();
 }
+
 function hideAttachPartRow() {
   document.getElementById('attach-part-row').classList.add('hidden');
+  clearAttachPartSearch();
 }
 
 async function submitAttachPart() {
@@ -3102,11 +3391,30 @@ async function saveDeal(e) {
 
 async function deleteDeal() {
   const dealId = document.getElementById('deal-id').value;
-  if (!dealId || !confirm('Удалить эту сделку?')) return;
+  if (!dealId) return;
+
+  // Requirement #1: Only admin can delete completed deals
+  const deal = state.deals.find(d => String(d.id) === String(dealId));
+  if (deal && deal.stage === 'completed' && state.currentUser?.role !== 'admin') {
+    showToast('Удаление закрытых сделок (стадии «Оплачено» / «Выдано») разрешено только Администратору!', 'error');
+    return;
+  }
+
+  if (!confirm('Удалить эту сделку?')) return;
   try {
-    let res = await fetch(`/api/deals/${dealId}`, { method: 'DELETE' });
+    let res = await fetch(`/api/deals/${dealId}`, {
+      method: 'DELETE',
+      headers: {
+        'x-user-role': state.currentUser?.role || ''
+      }
+    });
     if (!res.ok) {
-      res = await fetch(`/api/deals/${dealId}/delete`, { method: 'POST' });
+      res = await fetch(`/api/deals/${dealId}/delete`, {
+        method: 'POST',
+        headers: {
+          'x-user-role': state.currentUser?.role || ''
+        }
+      });
     }
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка удаления');
@@ -3581,7 +3889,7 @@ async function deletePart() {
 
 // TASK MODAL
 async function openTaskModal() {
-  await loadClientsListOptions();
+  await Promise.all([loadClientsListOptions(), loadUsers()]);
   const form = document.getElementById('form-task');
   form.reset();
   
@@ -3589,6 +3897,17 @@ async function openTaskModal() {
   tom.setDate(tom.getDate() + 1);
   tom.setHours(10, 0, 0, 0);
   document.getElementById('task-due').value = tom.toISOString().slice(0, 16);
+
+  // Requirement #2: Populate responsible employees in task planner
+  const respSelect = document.getElementById('task-responsible');
+  if (respSelect) {
+    respSelect.innerHTML = '<option value="">— Не назначен —</option>' + (state.users || []).map(u => `
+      <option value="${escapeHtml(u.full_name)}">${escapeHtml(u.full_name)} (${ROLE_DEFINITIONS[u.role]?.label || u.role})</option>
+    `).join('');
+    if (state.currentUser && state.currentUser.full_name) {
+      respSelect.value = state.currentUser.full_name;
+    }
+  }
 
   openModal('modal-task');
 }
@@ -3602,6 +3921,7 @@ async function saveTask(e) {
     client_id: parseInt(document.getElementById('task-client').value) || null,
     deal_id: parseInt(document.getElementById('task-deal').value) || null,
     notes: document.getElementById('task-notes').value,
+    responsible: document.getElementById('task-responsible')?.value || '',
     remind: 1,
     status: 'pending'
   };

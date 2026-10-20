@@ -190,7 +190,7 @@
         <h1 id="sidebar-company-name" class="font-bold text-white text-base leading-tight truncate">СТО Спецмаш</h1>
         <p class="text-xs text-slate-400 truncate flex items-center gap-1.5">
           <span>Сервис спецтехники</span>
-          <span class="text-[9px] bg-blue-900/60 text-blue-300 border border-blue-700/50 px-1.5 py-0.2 rounded font-mono font-semibold">v1.2.1</span>
+          <span class="text-[9px] bg-blue-900/60 text-blue-300 border border-blue-700/50 px-1.5 py-0.2 rounded font-mono font-semibold">v1.2.2</span>
         </p>
       </div>
 
@@ -547,6 +547,43 @@
             </div>
           </div>
         </div>
+
+        <!-- Requirement #8: Mechanics Revenue Section (Strictly for Administrators) -->
+        <div id="dash-mechanics-revenue-section" class="hidden bg-white rounded-2xl border border-purple-200 p-6 shadow-sm space-y-4">
+          <div class="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-purple-100">
+            <div class="flex items-center gap-3">
+              <div class="w-9 h-9 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center font-bold shadow-inner">
+                <i data-lucide="wrench" class="w-5 h-5"></i>
+              </div>
+              <div>
+                <div class="flex items-center gap-2">
+                  <h3 class="font-bold text-slate-900 text-base">Выручка и эффективность механиков СТО</h3>
+                  <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 border border-purple-300 font-mono">👑 Только Администратор</span>
+                </div>
+                <p class="text-xs text-slate-500">Показатели выполненных нарядов, общей выручки, себестоимости и чистой прибыли по каждому мастеру</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr class="bg-purple-50/60 border-b border-purple-200 text-slate-600 font-bold uppercase tracking-wider text-[11px]">
+                  <th class="p-3.5">Мастер / Механик</th>
+                  <th class="p-3.5 text-center">Закрыто нарядов</th>
+                  <th class="p-3.5 text-center">В работе</th>
+                  <th class="p-3.5 text-right">Выручка (AMD)</th>
+                  <th class="p-3.5 text-right">Себестоимость (AMD)</th>
+                  <th class="p-3.5 text-right text-emerald-800">Чистая прибыль (AMD)</th>
+                  <th class="p-3.5 text-right">Средний чек</th>
+                </tr>
+              </thead>
+              <tbody id="dash-mechanics-revenue-body" class="divide-y divide-slate-100 font-mono">
+                <!-- Populated via JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
       </section>
 
       <!-- ================= 2. TAB: DEALS (KANBAN & BITRIX24 LIST) ================= -->
@@ -900,6 +937,7 @@
                   <th class="p-3.5">Сотрудник (ФИО)</th>
                   <th class="p-3.5">Логин</th>
                   <th class="p-3.5">Роль в СТО</th>
+                  <th class="p-3.5">Статус</th>
                   <th class="p-3.5">Телефон</th>
                   <th class="p-3.5">Дата регистрации</th>
                   <th class="p-3.5 text-right">Действия</th>
@@ -932,7 +970,7 @@
             </div>
           </div>
 
-          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5 pt-2">
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3.5 pt-2">
             <!-- 1. Клиенты -->
             <div class="p-4 border border-slate-200 hover:border-blue-500 rounded-xl transition-all bg-white flex flex-col justify-between shadow-xs">
               <div class="flex items-center gap-2 mb-3">
@@ -1038,6 +1076,28 @@
                   <span>Скачать .XLSX</span>
                 </a>
                 <a href="/api/export/users?format=csv" onclick="downloadTableExport('users', 'csv'); return false;" download class="w-full text-slate-500 hover:text-slate-800 hover:bg-slate-50 text-[11px] font-medium py-1 px-2 rounded-md flex items-center justify-center gap-1 transition-colors">
+                  <span>Выгрузить в .CSV</span>
+                </a>
+              </div>
+            </div>
+
+            <!-- 6. Задачи и напоминания -->
+            <div class="p-4 border border-slate-200 hover:border-amber-500 rounded-xl transition-all bg-white flex flex-col justify-between shadow-xs">
+              <div class="flex items-center gap-2 mb-3">
+                <div class="p-2 bg-amber-50 text-amber-600 rounded-lg">
+                  <i data-lucide="check-square" class="w-4 h-4"></i>
+                </div>
+                <div>
+                  <h4 class="text-xs font-bold text-slate-800">Задачи</h4>
+                  <p class="text-[10px] text-slate-400">Сроки, ответственные</p>
+                </div>
+              </div>
+              <div class="space-y-1.5 pt-2 border-t border-slate-100">
+                <a href="/api/export/tasks/xlsx" onclick="downloadTableExport('tasks', 'xlsx'); return false;" download class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 shadow-xs transition-colors">
+                  <i data-lucide="file-spreadsheet" class="w-3.5 h-3.5"></i>
+                  <span>Скачать .XLSX</span>
+                </a>
+                <a href="/api/export/tasks?format=csv" onclick="downloadTableExport('tasks', 'csv'); return false;" download class="w-full text-slate-500 hover:text-slate-800 hover:bg-slate-50 text-[11px] font-medium py-1 px-2 rounded-md flex items-center justify-center gap-1 transition-colors">
                   <span>Выгрузить в .CSV</span>
                 </a>
               </div>
@@ -1591,6 +1651,28 @@
           </button>
         </div>
 
+        <!-- Requirement #4: Deal Registration and Completion Dates -->
+        <div id="deal-dates-banner" class="hidden p-3 bg-slate-50 border border-slate-200 rounded-xl flex flex-wrap items-center justify-between text-xs text-slate-600 gap-2">
+          <div class="flex items-center gap-2">
+            <div class="w-6 h-6 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center">
+              <i data-lucide="calendar" class="w-3.5 h-3.5"></i>
+            </div>
+            <div>
+              <span class="text-[10px] text-slate-400 block font-medium uppercase leading-tight">Дата регистрации</span>
+              <span id="deal-date-created" class="font-bold text-slate-800 font-mono text-xs">—</span>
+            </div>
+          </div>
+          <div class="flex items-center gap-2">
+            <div class="w-6 h-6 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center">
+              <i data-lucide="calendar-check" class="w-3.5 h-3.5"></i>
+            </div>
+            <div>
+              <span class="text-[10px] text-slate-400 block font-medium uppercase leading-tight">Дата закрытия</span>
+              <span id="deal-date-completed" class="font-bold text-emerald-700 font-mono text-xs">В работе</span>
+            </div>
+          </div>
+        </div>
+
         <div>
           <label id="deal-title-label" class="block text-xs font-bold text-slate-700 uppercase mb-1">Тема / Название наряда *</label>
           <input type="text" id="deal-title" required placeholder="Например: Капитальный ремонт гидравлики CASE" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
@@ -1700,13 +1782,39 @@
             <button type="button" onclick="showAttachPartRow()" class="text-xs text-blue-600 hover:underline font-semibold">+ Списать запчасть со склада</button>
           </div>
 
-          <div id="attach-part-row" class="hidden p-3 bg-amber-50/50 rounded-lg border border-amber-200 mb-3 flex items-center gap-2">
-            <select id="attach-part-select" class="flex-1 text-xs border border-slate-300 rounded px-2 py-1.5 bg-white">
-              <!-- populated -->
-            </select>
-            <input type="number" id="attach-part-qty" value="1" min="1" class="w-16 text-xs border border-slate-300 rounded px-2 py-1.5 font-mono text-center">
-            <button type="button" onclick="submitAttachPart()" class="bg-amber-600 text-white text-xs px-3 py-1.5 rounded font-medium hover:bg-amber-700">Списать</button>
-            <button type="button" onclick="hideAttachPartRow()" class="text-slate-400 hover:text-slate-600 text-xs px-1"><i data-lucide="x" class="w-4 h-4"></i></button>
+          <!-- Requirement #6: Searchable parts write-off with SKU & Name autocomplete -->
+          <div id="attach-part-row" class="hidden p-3 bg-amber-50/80 rounded-xl border border-amber-300 mb-3 space-y-2.5 shadow-xs">
+            <div class="flex items-center justify-between text-xs font-bold text-amber-900 uppercase">
+              <span class="flex items-center gap-1.5"><i data-lucide="search" class="w-3.5 h-3.5 text-amber-600"></i> Поиск и списание запчасти</span>
+              <button type="button" onclick="hideAttachPartRow()" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-4 h-4"></i></button>
+            </div>
+
+            <div class="relative">
+              <input type="text" id="attach-part-search" autocomplete="off"
+                     placeholder="Введите код (артикул) или наименование запчасти..."
+                     oninput="handleAttachPartSearch(this.value)"
+                     class="w-full border border-amber-300 rounded-lg pl-8 pr-8 py-2 text-xs outline-none focus:border-amber-600 focus:bg-white bg-white/95 shadow-xs">
+              <i data-lucide="search" class="w-4 h-4 text-amber-500 absolute left-2.5 top-2.5 pointer-events-none"></i>
+              <button type="button" id="attach-part-search-clear" onclick="clearAttachPartSearch()" class="hidden absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600">
+                <i data-lucide="x" class="w-4 h-4"></i>
+              </button>
+              <!-- Search suggestions -->
+              <div id="attach-part-suggestions" class="hidden absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-2xl z-50 max-h-56 overflow-y-auto divide-y divide-slate-100"></div>
+            </div>
+
+            <div class="flex items-center gap-2">
+              <select id="attach-part-select" onchange="handleAttachPartSelectChange(this.value)" class="flex-1 text-xs border border-amber-300 rounded-lg px-2.5 py-2 bg-white outline-none">
+                <!-- populated -->
+              </select>
+              <div class="flex items-center gap-1.5 shrink-0">
+                <span class="text-xs text-slate-600 font-medium">Шт:</span>
+                <input type="number" id="attach-part-qty" value="1" min="1" class="w-16 text-xs border border-amber-300 rounded-lg px-2 py-2 font-mono text-center outline-none bg-white font-bold">
+              </div>
+              <button type="button" onclick="submitAttachPart()" class="bg-amber-600 hover:bg-amber-700 text-white text-xs px-4 py-2 rounded-lg font-bold shadow-sm flex items-center gap-1.5 shrink-0">
+                <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+                <span>Списать</span>
+              </button>
+            </div>
           </div>
 
           <div id="deal-attached-parts-list" class="space-y-1.5 max-h-36 overflow-y-auto">
@@ -2032,6 +2140,14 @@
               <option value="">Не привязан</option>
             </select>
           </div>
+        </div>
+
+        <!-- Requirement #2: Task Responsible Assignment -->
+        <div>
+          <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Ответственный сотрудник</label>
+          <select id="task-responsible" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500 bg-white font-medium">
+            <option value="">— Не назначен —</option>
+          </select>
         </div>
 
         <div>
