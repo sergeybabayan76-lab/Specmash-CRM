@@ -166,7 +166,7 @@ DEFAULT_SETTINGS = {
     "company_address": "г. Ереван, ул. Себастия, 12",
     "company_tin": "02589412",
     "currency": "AMD",
-    "default_responsible": "Иванов Алексей Викторович (Директор)",
+    "default_responsible": "Сергей Бабаян (Директор)",
     "warranty_months": "6",
     "logo_url": "",
     "auth_icon": "wrench",
@@ -307,7 +307,7 @@ def ensure_default_users():
     mech_pass = os.getenv("DEFAULT_MECHANIC_PASSWORD", "mech123")
 
     defaults = [
-        (admin_user, admin_pass, "Иванов Алексей (Администратор)", "admin", "+37499112233"),
+        (admin_user, admin_pass, "Сергей Бабаян (Администратор)", "admin", "+37499112233"),
         (mod_user, mod_pass, "Смирнова Елена (Модератор)", "moderator", "+37499223344"),
         (mgr_user, mgr_pass, "Мкртчян Армен (Менеджер)", "manager", "+37499445566"),
         (mech_user, mech_pass, "Петров Сергей (Механик)", "mechanic", "+37499334455"),

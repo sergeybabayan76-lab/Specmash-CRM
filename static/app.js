@@ -2825,6 +2825,17 @@ async function loadUsers() {
       });
     }
     state.users = crmStore.mergeWithServer('users', serverUsers);
+
+    // Keep state.currentUser in sync with fresh database profile
+    if (state.currentUser && state.currentUser.id && Array.isArray(state.users)) {
+      const freshSelf = state.users.find(u => u.id === state.currentUser.id || (u.username && u.username.toLowerCase() === state.currentUser.username?.toLowerCase()));
+      if (freshSelf && (freshSelf.full_name !== state.currentUser.full_name || freshSelf.role !== state.currentUser.role)) {
+        state.currentUser = { ...state.currentUser, ...freshSelf };
+        localStorage.setItem('specmash_user', JSON.stringify(state.currentUser));
+        applyUserPermissions();
+      }
+    }
+
     renderUsersTable();
     updateSidebarCounters();
   } catch (err) {
