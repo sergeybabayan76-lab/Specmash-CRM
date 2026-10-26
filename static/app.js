@@ -763,69 +763,102 @@ function applyUserPermissions() {
   if (!u) return;
 
   const perms = u.permissions || {};
-  const isAdmin = u.role === 'admin';
-  const isSalesManager = u.role === 'sales_manager';
-  const isRestricted = (u.role === 'mechanic' || u.role === 'manager' || u.role === 'sales_manager') && !perms.can_view_revenue;
+  const role = u.role || 'mechanic';
+  const isAdmin = role === 'admin';
+  const isSalesManager = role === 'sales_manager';
 
+  // Helper to check perm or fallback to role
+  function hasPerm(key, fallbackRoleAllowed) {
+    if (perms[key] !== undefined) return Boolean(perms[key]);
+    if (isAdmin) return true;
+    return Boolean(fallbackRoleAllowed);
+  }
+
+  // 1. TOP-RIGHT USER DISPLAY (Header & Dropdown)
   const nameEl = document.getElementById('user-display-name');
   const roleEl = document.getElementById('user-display-role');
   const avatarEl = document.getElementById('user-avatar');
   const ddNameEl = document.getElementById('dropdown-user-name');
   const ddRoleEl = document.getElementById('dropdown-user-role');
 
-  const roleInfo = ROLE_DEFINITIONS[u.role] || { label: u.role, icon: '' };
+  const roleInfo = ROLE_DEFINITIONS[role] || { label: role, icon: '👤' };
 
-  if (nameEl) nameEl.textContent = u.full_name ? u.full_name.split(' (')[0] : (u.username || 'Пользователь');
+  // Clean full name
+  const rawName = u.full_name || u.username || 'Пользователь';
+  const displayName = rawName.split(' (')[0].trim();
+
+  if (nameEl) nameEl.textContent = displayName;
   if (roleEl) roleEl.textContent = `${roleInfo.icon} ${roleInfo.label}`;
-  if (ddNameEl) ddNameEl.textContent = u.full_name || u.username;
+  if (ddNameEl) ddNameEl.textContent = rawName;
   if (ddRoleEl) ddRoleEl.textContent = `${roleInfo.icon} ${roleInfo.label}`;
 
   if (avatarEl) {
-    const initials = (u.full_name || u.username || 'СП').split(' ').map(n => n[0]).slice(0, 2).join('');
-    avatarEl.textContent = initials || 'СП';
-    if (u.role === 'admin') avatarEl.className = 'w-8 h-8 rounded-full bg-purple-600 text-white font-bold text-xs flex items-center justify-center uppercase shadow-sm';
-    else if (u.role === 'sales_manager') avatarEl.className = 'w-8 h-8 rounded-full bg-indigo-600 text-white font-bold text-xs flex items-center justify-center uppercase shadow-sm';
-    else if (u.role === 'moderator') avatarEl.className = 'w-8 h-8 rounded-full bg-blue-600 text-white font-bold text-xs flex items-center justify-center uppercase shadow-sm';
-    else if (u.role === 'manager') avatarEl.className = 'w-8 h-8 rounded-full bg-emerald-600 text-white font-bold text-xs flex items-center justify-center uppercase shadow-sm';
-    else avatarEl.className = 'w-8 h-8 rounded-full bg-amber-600 text-white font-bold text-xs flex items-center justify-center uppercase shadow-sm';
+    // Generate clean 2-letter initials
+    const words = displayName.replace(/[^a-zA-Zа-яА-ЯёЁ\s]/g, '').trim().split(/\s+/).filter(Boolean);
+    let initials = 'СП';
+    if (words.length >= 2) {
+      initials = (words[0][0] + words[1][0]).toUpperCase();
+    } else if (words.length === 1 && words[0].length >= 2) {
+      initials = words[0].substring(0, 2).toUpperCase();
+    } else if (u.username) {
+      initials = u.username.substring(0, 2).toUpperCase();
+    }
+    avatarEl.textContent = initials;
+
+    if (isAdmin) {
+      avatarEl.className = 'w-8 h-8 rounded-full bg-purple-600 text-white font-bold text-xs flex items-center justify-center uppercase shadow-sm ring-2 ring-purple-300/40';
+    } else if (isSalesManager) {
+      avatarEl.className = 'w-8 h-8 rounded-full bg-indigo-600 text-white font-bold text-xs flex items-center justify-center uppercase shadow-sm ring-2 ring-indigo-300/40';
+    } else if (role === 'moderator') {
+      avatarEl.className = 'w-8 h-8 rounded-full bg-blue-600 text-white font-bold text-xs flex items-center justify-center uppercase shadow-sm ring-2 ring-blue-300/40';
+    } else if (role === 'manager') {
+      avatarEl.className = 'w-8 h-8 rounded-full bg-emerald-600 text-white font-bold text-xs flex items-center justify-center uppercase shadow-sm ring-2 ring-emerald-300/40';
+    } else {
+      avatarEl.className = 'w-8 h-8 rounded-full bg-amber-600 text-white font-bold text-xs flex items-center justify-center uppercase shadow-sm ring-2 ring-amber-300/40';
+    }
   }
 
-  // Finance visibility (hidden for mechanics/sales unless specifically permitted)
+  // 2. NAV ITEMS VISIBILITY
+  const setNavVis = (id, visible) => {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('hidden', !visible);
+  };
+
+  setNavVis('nav-dashboard', hasPerm('dashboard', true));
+  setNavVis('nav-kanban', hasPerm('deals_sto', true));
+  setNavVis('nav-parts-sales', hasPerm('deals_parts', true));
+  setNavVis('nav-sales', hasPerm('deals_sales', isAdmin || isSalesManager));
+  setNavVis('nav-warehouse', hasPerm('warehouse', true));
+  setNavVis('nav-equipment', hasPerm('equipment', true));
+  setNavVis('nav-clients', hasPerm('clients', true));
+  setNavVis('nav-tasks', hasPerm('tasks', true));
+  setNavVis('nav-marketing', hasPerm('marketing', isAdmin || isSalesManager));
+  setNavVis('nav-users', hasPerm('users', isAdmin));
+  setNavVis('nav-settings', hasPerm('settings', isAdmin));
+
+  // Department pill in deals
+  const deptSalesBtn = document.getElementById('dept-btn-sales');
+  if (deptSalesBtn) deptSalesBtn.classList.toggle('hidden', !hasPerm('deals_sales', isAdmin || isSalesManager));
+
+  // 3. FINANCE & REVENUE VISIBILITY
+  const canViewRev = hasPerm('can_view_revenue', isAdmin || role === 'moderator');
   const financeBlock = document.getElementById('header-finance-block');
   const revCard = document.getElementById('dash-card-revenue');
   const partsRevCard = document.getElementById('dash-card-parts-revenue');
   const servRevCard = document.getElementById('dash-card-service-revenue');
   const chartsRow = document.getElementById('dash-charts-row');
+  const revSection = document.getElementById('dash-mechanics-revenue-section');
 
-  if (financeBlock) financeBlock.classList.toggle('hidden', isRestricted);
-  if (revCard) revCard.classList.toggle('hidden', isRestricted);
-  if (partsRevCard) partsRevCard.classList.toggle('hidden', isRestricted);
-  if (servRevCard) servRevCard.classList.toggle('hidden', isRestricted);
-  if (chartsRow) chartsRow.classList.toggle('hidden', isRestricted);
+  if (financeBlock) financeBlock.classList.toggle('hidden', !canViewRev);
+  if (revCard) revCard.classList.toggle('hidden', !canViewRev);
+  if (partsRevCard) partsRevCard.classList.toggle('hidden', !canViewRev);
+  if (servRevCard) servRevCard.classList.toggle('hidden', !canViewRev);
+  if (chartsRow) chartsRow.classList.toggle('hidden', !canViewRev);
+  if (revSection) revSection.classList.toggle('hidden', !isAdmin);
 
-  // Settings: strictly visible to Admin or users with settings permission
-  const navSettings = document.getElementById('nav-settings');
-  if (navSettings) navSettings.classList.toggle('hidden', !(isAdmin || perms.settings));
-
-  // Employees tab: strictly visible to Admin or users with users permission
-  const navUsers = document.getElementById('nav-users');
-  if (navUsers) navUsers.classList.toggle('hidden', !(isAdmin || perms.users));
-
-  // Requirement #9: Sales Department navigation & button (Admin & Sales Manager)
-  const canAccessSales = isAdmin || isSalesManager || perms.deals_sales;
-  const navSales = document.getElementById('nav-sales');
-  if (navSales) navSales.classList.toggle('hidden', !canAccessSales);
-  const deptBtnSales = document.getElementById('dept-btn-sales');
-  if (deptBtnSales) deptBtnSales.classList.toggle('hidden', !canAccessSales);
-
-  // Requirement #8: Marketing (WhatsApp) navigation
-  const canAccessMarketing = isAdmin || perms.marketing;
-  const navMarketing = document.getElementById('nav-marketing');
-  if (navMarketing) navMarketing.classList.toggle('hidden', !canAccessMarketing);
-
-  // Import & Export tab
+  // Import / Export
   const navExport = document.getElementById('nav-export');
-  if (navExport) navExport.classList.toggle('hidden', isRestricted && !isAdmin);
+  if (navExport) navExport.classList.toggle('hidden', !isAdmin && (role === 'mechanic' || role === 'manager' || role === 'sales_manager'));
 
   // Reset demo
   const blockResetDemo = document.getElementById('block-reset-demo');
@@ -834,9 +867,9 @@ function applyUserPermissions() {
   if (btnSettingsResetDemo) btnSettingsResetDemo.classList.toggle('hidden', !isAdmin);
 
   // Body classes for global CSS role hiding
-  document.body.classList.toggle('role-mechanic', u.role === 'mechanic' || u.role === 'sales_manager');
-  document.body.classList.toggle('role-manager', u.role === 'manager');
-  document.body.classList.toggle('role-moderator', u.role === 'moderator');
+  document.body.classList.toggle('role-mechanic', role === 'mechanic' || role === 'sales_manager');
+  document.body.classList.toggle('role-manager', role === 'manager');
+  document.body.classList.toggle('role-moderator', role === 'moderator');
   document.body.classList.toggle('role-admin', isAdmin);
 }
 
@@ -4741,51 +4774,6 @@ async function saveUserPermissions(event) {
     showToast(err.message, 'error');
   }
 }
-
-// Enhance applyUserPermissions to control all tabs
-const origApplyUserPermissions = window.applyUserPermissions;
-window.applyUserPermissions = function() {
-  const user = state.currentUser;
-  if (!user) return;
-  const role = user.role || 'mechanic';
-  const perms = user.permissions || {};
-
-  // Helper to check perm or fallback to role
-  function hasPerm(key, fallbackRoleAllowed) {
-    if (perms[key] !== undefined) return Boolean(perms[key]);
-    if (role === 'admin') return true;
-    return Boolean(fallbackRoleAllowed);
-  }
-
-  // Nav Items
-  const setNavVis = (id, visible) => {
-    const el = document.getElementById(id);
-    if (el) el.classList.toggle('hidden', !visible);
-  };
-
-  setNavVis('nav-dashboard', hasPerm('dashboard', role === 'admin' || role === 'moderator' || role === 'manager'));
-  setNavVis('nav-kanban', hasPerm('deals_sto', true));
-  setNavVis('nav-parts-sales', hasPerm('deals_parts', role === 'admin' || role === 'moderator' || role === 'manager'));
-  setNavVis('nav-sales', hasPerm('deals_sales', role === 'admin' || role === 'sales_manager'));
-  setNavVis('nav-warehouse', hasPerm('warehouse', true));
-  setNavVis('nav-equipment', hasPerm('equipment', true));
-  setNavVis('nav-clients', hasPerm('clients', role !== 'mechanic'));
-  setNavVis('nav-tasks', hasPerm('tasks', true));
-  setNavVis('nav-marketing', hasPerm('marketing', role === 'admin' || role === 'moderator' || role === 'sales_manager'));
-  setNavVis('nav-users', hasPerm('users', role === 'admin'));
-  setNavVis('nav-settings', hasPerm('settings', role === 'admin'));
-
-  // Department pill in deals
-  const deptSalesBtn = document.getElementById('dept-btn-sales');
-  if (deptSalesBtn) deptSalesBtn.classList.toggle('hidden', !hasPerm('deals_sales', role === 'admin' || role === 'sales_manager'));
-
-  // Revenue indicators visibility
-  const canViewRev = hasPerm('can_view_revenue', role === 'admin' || role === 'moderator');
-  const revCard = document.getElementById('dash-card-revenue');
-  if (revCard) revCard.classList.toggle('hidden', !canViewRev);
-  const revSection = document.getElementById('dash-mechanics-revenue-section');
-  if (revSection) revSection.classList.toggle('hidden', role !== 'admin');
-};
 
 // --- 4. Marketing & WhatsApp Cloud API (Requirement #8) ---
 async function loadWhatsAppConfig() {
