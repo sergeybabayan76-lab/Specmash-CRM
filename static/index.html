@@ -239,25 +239,27 @@
       <a href="#clients" onclick="switchTab('clients')" id="nav-clients" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
         <i data-lucide="users" class="w-4 h-4"></i>
         <span>База клиентов</span>
-        <span id="badge-clients-count" class="ml-auto text-xs text-slate-500">0</span>
+        <span id="badge-clients-count" class="ml-auto bg-slate-800 text-slate-300 text-xs px-2 py-0.5 rounded-full font-mono">0</span>
       </a>
 
       <a href="#equipment" onclick="switchTab('equipment')" id="nav-equipment" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
         <i data-lucide="truck" class="w-4 h-4"></i>
         <span>База техники</span>
-        <span id="badge-equipment-count" class="ml-auto text-xs text-slate-500">0</span>
+        <span id="badge-equipment-count" class="ml-auto bg-slate-800 text-slate-300 text-xs px-2 py-0.5 rounded-full font-mono">0</span>
       </a>
 
       <a href="#warehouse" onclick="switchTab('warehouse')" id="nav-warehouse" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
         <i data-lucide="package" class="w-4 h-4"></i>
         <span>Склад запчастей</span>
-        <span id="badge-lowstock-alert" class="ml-auto hidden bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs px-2 py-0.5 rounded-full font-mono">0</span>
+        <span id="badge-warehouse-count" class="ml-auto bg-slate-800 text-slate-300 text-xs px-2 py-0.5 rounded-full font-mono">0</span>
+        <span id="badge-lowstock-alert" class="hidden bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs px-2 py-0.5 rounded-full font-mono ml-1">0</span>
       </a>
 
       <a href="#tasks" onclick="switchTab('tasks')" id="nav-tasks" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
         <i data-lucide="calendar-check-2" class="w-4 h-4"></i>
         <span>Задачи & Планировщик</span>
-        <span id="badge-tasks-overdue" class="ml-auto hidden bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs px-2 py-0.5 rounded-full font-mono">0</span>
+        <span id="badge-tasks-count" class="ml-auto bg-slate-800 text-slate-300 text-xs px-2 py-0.5 rounded-full font-mono">0</span>
+        <span id="badge-tasks-overdue" class="hidden bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs px-2 py-0.5 rounded-full font-mono ml-1">0</span>
       </a>
 
       <!-- Маркетинг (WhatsApp Cloud API) (Requirement #8) -->

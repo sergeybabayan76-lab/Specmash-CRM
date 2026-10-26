@@ -1,3 +1,96 @@
+
+function updateSidebarCounters(data = null) {
+  // 1. Deals counts (Заказ-наряды СТО, Продажа запчастей, Отдел продаж)
+  const badgeKanban = document.getElementById('badge-kanban-count');
+  const badgeParts = document.getElementById('badge-parts-sales-count');
+  const badgeSales = document.getElementById('badge-sales-count');
+
+  if (state.deals && Array.isArray(state.deals) && state.deals.length > 0) {
+    const srv = state.deals.filter(d => d.deal_type !== 'parts_sale' && d.deal_type !== 'sales');
+    const prt = state.deals.filter(d => d.deal_type === 'parts_sale');
+    const sls = state.deals.filter(d => d.deal_type === 'sales');
+    if (badgeKanban) badgeKanban.textContent = srv.length;
+    if (badgeParts) badgeParts.textContent = prt.length;
+    if (badgeSales) badgeSales.textContent = sls.length;
+  } else if (data) {
+    if (badgeKanban) badgeKanban.textContent = (typeof data.service_deals_count === 'number') ? data.service_deals_count : (data.total_deals_count || 0);
+    if (badgeParts) badgeParts.textContent = (typeof data.parts_sales_count === 'number') ? data.parts_sales_count : 0;
+    if (badgeSales) badgeSales.textContent = (typeof data.sales_deals_count === 'number') ? data.sales_deals_count : 0;
+  }
+
+  // 2. Clients count
+  const badgeClients = document.getElementById('badge-clients-count');
+  if (badgeClients) {
+    if (state.clients && Array.isArray(state.clients) && state.clients.length > 0) {
+      badgeClients.textContent = state.clients.length;
+    } else if (data && typeof data.total_clients === 'number') {
+      badgeClients.textContent = data.total_clients;
+    }
+  }
+
+  // 3. Equipment count
+  const badgeEquipment = document.getElementById('badge-equipment-count');
+  if (badgeEquipment) {
+    if (state.equipment && Array.isArray(state.equipment) && state.equipment.length > 0) {
+      badgeEquipment.textContent = state.equipment.length;
+    } else if (data && typeof data.total_equipment === 'number') {
+      badgeEquipment.textContent = data.total_equipment;
+    }
+  }
+
+  // 4. Warehouse parts count & low-stock alert
+  const badgeWarehouse = document.getElementById('badge-warehouse-count');
+  if (badgeWarehouse) {
+    if (state.parts && Array.isArray(state.parts) && state.parts.length > 0) {
+      badgeWarehouse.textContent = state.parts.length;
+    } else if (data && typeof data.total_parts === 'number') {
+      badgeWarehouse.textContent = data.total_parts;
+    }
+  }
+  const lowStockAlert = document.getElementById('badge-lowstock-alert');
+  if (lowStockAlert) {
+    const lowCount = (data && typeof data.low_stock_parts === 'number') 
+      ? data.low_stock_parts 
+      : (state.parts ? state.parts.filter(p => Number(p.quantity || 0) <= Number(p.min_threshold || 2)).length : 0);
+    if (lowCount > 0) {
+      lowStockAlert.textContent = `${lowCount} в деф.`;
+      lowStockAlert.classList.remove('hidden');
+    } else {
+      lowStockAlert.classList.add('hidden');
+    }
+  }
+
+  // 5. Tasks count & overdue alert
+  const badgeTasks = document.getElementById('badge-tasks-count');
+  if (badgeTasks) {
+    if (state.tasks && Array.isArray(state.tasks) && state.tasks.length > 0) {
+      badgeTasks.textContent = state.tasks.length;
+    } else if (data && typeof data.total_tasks === 'number') {
+      badgeTasks.textContent = data.total_tasks;
+    }
+  }
+  const tasksOverdueAlert = document.getElementById('badge-tasks-overdue');
+  if (tasksOverdueAlert) {
+    const overdueCount = (data && typeof data.overdue_tasks === 'number') ? data.overdue_tasks : 0;
+    if (overdueCount > 0) {
+      tasksOverdueAlert.textContent = `⚠ ${overdueCount}`;
+      tasksOverdueAlert.classList.remove('hidden');
+    } else {
+      tasksOverdueAlert.classList.add('hidden');
+    }
+  }
+
+  // 6. Users count
+  const userBadge = document.getElementById('badge-users-count');
+  if (userBadge) {
+    if (state.users && Array.isArray(state.users) && state.users.length > 0) {
+      userBadge.textContent = state.users.length;
+    } else if (data && typeof data.total_users === 'number') {
+      userBadge.textContent = data.total_users;
+    }
+  }
+}
+
 /**
  * СТО Спецмаш CRM Frontend Application Logic
  * Single Page Application controller with Kanban Drag & Drop, Employees & Roles, Logo customization, Warehouse deductions, and Analytics.
@@ -522,6 +615,9 @@ function initAuth() {
   loadClients();
   loadEquipment();
   loadParts();
+  loadDeals();
+  loadTasks();
+  loadUsers();
   switchTab(state.currentTab || 'dashboard');
 }
 
@@ -1322,32 +1418,7 @@ async function loadDashboard() {
     document.getElementById('stat-equipment-count').textContent = data.total_equipment;
     document.getElementById('stat-overdue-tasks').textContent = data.overdue_tasks;
 
-    const kanbanCount = typeof data.service_deals_count === 'number' ? data.service_deals_count : (data.total_deals_count || 0);
-    const partsCount = typeof data.parts_sales_count === 'number' ? data.parts_sales_count : 0;
-    const badgeKanban = document.getElementById('badge-kanban-count');
-    if (badgeKanban) badgeKanban.textContent = kanbanCount;
-    const badgeParts = document.getElementById('badge-parts-sales-count');
-    if (badgeParts) badgeParts.textContent = partsCount;
-    document.getElementById('badge-clients-count').textContent = data.total_clients;
-    document.getElementById('badge-equipment-count').textContent = data.total_equipment;
-    const userBadge = document.getElementById('badge-users-count');
-    if (userBadge) userBadge.textContent = data.total_users || 3;
-
-    const lowStockAlert = document.getElementById('badge-lowstock-alert');
-    if (data.low_stock_parts > 0) {
-      lowStockAlert.textContent = data.low_stock_parts;
-      lowStockAlert.classList.remove('hidden');
-    } else {
-      lowStockAlert.classList.add('hidden');
-    }
-
-    const tasksOverdueAlert = document.getElementById('badge-tasks-overdue');
-    if (data.overdue_tasks > 0) {
-      tasksOverdueAlert.textContent = data.overdue_tasks;
-      tasksOverdueAlert.classList.remove('hidden');
-    } else {
-      tasksOverdueAlert.classList.add('hidden');
-    }
+    updateSidebarCounters(data);
 
     renderRevenueChart(data.monthly_data, data.total_revenue, data.total_cost, data.net_profit);
     renderTopClients(data.top_clients);
@@ -1689,14 +1760,7 @@ function renderDeals() {
   const partsDeals = (state.deals || []).filter(d => d.deal_type === 'parts_sale');
   const salesDeals = (state.deals || []).filter(d => d.deal_type === 'sales');
 
-  const badgeKanban = document.getElementById('badge-kanban-count');
-  if (badgeKanban) badgeKanban.textContent = serviceDeals.length;
-
-  const badgeParts = document.getElementById('badge-parts-sales-count');
-  if (badgeParts) badgeParts.textContent = partsDeals.length;
-
-  const badgeSales = document.getElementById('badge-sales-count');
-  if (badgeSales) badgeSales.textContent = salesDeals.length;
+  updateSidebarCounters();
 
   if (state.dealsViewMode === 'list') {
     renderDealsList();
@@ -2280,6 +2344,7 @@ async function loadClients(searchQuery = '') {
     const serverClients = await res.json();
     state.clients = crmStore.mergeWithServer('clients', serverClients);
     renderClientsTable();
+    updateSidebarCounters();
   } catch (err) {
     console.error('Error loading clients:', err);
     state.clients = crmStore.getList('clients');
@@ -2406,6 +2471,7 @@ async function loadEquipment(searchQuery = '') {
     const serverEq = await res.json();
     state.equipment = crmStore.mergeWithServer('equipment', serverEq);
     renderEquipmentTable();
+    updateSidebarCounters();
   } catch (err) {
     console.error('Error loading equipment:', err);
     state.equipment = crmStore.getList('equipment');
@@ -2475,6 +2541,7 @@ async function loadParts(searchQuery = '') {
     const serverParts = await res.json();
     state.parts = crmStore.mergeWithServer('parts', serverParts);
     renderPartsTable();
+    updateSidebarCounters();
   } catch (err) {
     console.error('Error loading warehouse:', err);
     state.parts = crmStore.getList('parts');
@@ -2618,6 +2685,7 @@ async function loadTasks() {
     const res = await fetch(`/api/tasks?status=${status}`);
     state.tasks = await res.json();
     renderTasksList();
+    updateSidebarCounters();
   } catch (err) {
     console.error('Error loading tasks:', err);
   }
@@ -2725,6 +2793,7 @@ async function loadUsers() {
     }
     state.users = crmStore.mergeWithServer('users', serverUsers);
     renderUsersTable();
+    updateSidebarCounters();
   } catch (err) {
     console.error('Error loading users:', err);
     state.users = crmStore.getList('users').filter(u => {

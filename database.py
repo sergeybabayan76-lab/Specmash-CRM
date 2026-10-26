@@ -1292,6 +1292,10 @@ def get_dashboard_metrics() -> Dict[str, Any]:
             "margin_percent": 0,
             "active_deals_count": 0,
             "total_clients": 0,
+            "total_equipment": 0,
+            "total_parts": 0,
+            "total_tasks": 0,
+            "total_users": 0,
             "warehouse_value": 0,
             "critical_parts_count": 0,
             "low_stock_parts": 0,
@@ -1301,32 +1305,46 @@ def get_dashboard_metrics() -> Dict[str, Any]:
             "mechanics_revenue": []
         }
     with get_sb_client() as client:
-        deals = client.get("/deals", params={"select": "*,clients(name),equipment(name)", "order": "id.desc"}).json() or []
+        deals = client.get("/deals", params={"select": "*,clients(name,company),equipment(name)", "order": "id.desc"}).json() or []
         for d in deals:
-            _, dtype = parse_deal_description(d.get("description") or "", d.get("title") or "")
+            clean_desc, dtype, stype, outcome = parse_deal_description(d.get("description") or "", d.get("title") or "")
             d["deal_type"] = dtype
+            d["service_type"] = stype
+            d["closing_outcome"] = outcome
 
-        completed = [d for d in deals if d.get("stage") == "completed"]
-        active = [d for d in deals if d.get("stage") not in ("completed", "cancelled")]
+        closed_stages = ("completed", "ready", "paid", "issued", "parts_paid", "parts_shipped", "sales_delivered")
+        completed = [d for d in deals if d.get("stage") in closed_stages]
+        active = [d for d in deals if d.get("stage") not in closed_stages and d.get("stage") != "cancelled"]
 
-        # Requirement #2: Separate Revenue Calculation for Parts Sales & Service
-        service_completed = [d for d in completed if d.get("deal_type") != "parts_sale"]
-        service_active = [d for d in active if d.get("deal_type") != "parts_sale"]
+        # 1. Service metrics
+        service_deals = [d for d in deals if d.get("deal_type") not in ("parts_sale", "sales")]
+        service_completed = [d for d in completed if d.get("deal_type") not in ("parts_sale", "sales")]
+        service_active = [d for d in active if d.get("deal_type") not in ("parts_sale", "sales")]
         service_rev = sum(_to_float(d.get("amount")) for d in service_completed)
         service_cost = sum(_to_float(d.get("cost")) for d in service_completed)
         service_profit = service_rev - service_cost
 
+        # 2. Parts sale metrics
+        parts_deals = [d for d in deals if d.get("deal_type") == "parts_sale"]
         parts_completed = [d for d in completed if d.get("deal_type") == "parts_sale"]
         parts_active = [d for d in active if d.get("deal_type") == "parts_sale"]
         parts_rev = sum(_to_float(d.get("amount")) for d in parts_completed)
         parts_cost = sum(_to_float(d.get("cost")) for d in parts_completed)
         parts_profit = parts_rev - parts_cost
 
-        total_rev = service_rev + parts_rev
-        total_cost = service_cost + parts_cost
+        # 3. Sales department metrics
+        sales_deals = [d for d in deals if d.get("deal_type") == "sales"]
+        sales_completed = [d for d in completed if d.get("deal_type") == "sales"]
+        sales_active = [d for d in active if d.get("deal_type") == "sales"]
+        sales_rev = sum(_to_float(d.get("amount")) for d in sales_completed)
+        sales_cost = sum(_to_float(d.get("cost")) for d in sales_completed)
+        sales_profit = sales_rev - sales_cost
+
+        total_rev = service_rev + parts_rev + sales_rev
+        total_cost = service_cost + parts_cost + sales_cost
         net_profit = total_rev - total_cost
 
-        # Requirement #5: Fix critical warehouse parts display
+        # Warehouse parts
         parts = client.get("/parts", params={"select": "*"}).json() or []
         inv_cost = 0.0
         inv_retail = 0.0
@@ -1351,7 +1369,6 @@ def get_dashboard_metrics() -> Dict[str, Any]:
                     "selling_price": round(s_price, 2)
                 })
 
-        # Sort by quantity ascending so the lowest stock (most deficit) items are at top
         critical_list.sort(key=lambda x: x["quantity"])
         low_stock = len(critical_list)
 
@@ -1373,23 +1390,95 @@ def get_dashboard_metrics() -> Dict[str, Any]:
 
         # Recent deals format
         recent = []
-        for d in deals[:6]:
+        for d in deals[:8]:
             cl = d.get("clients") or {}
             eq = d.get("equipment") or {}
-            clean_desc, dtype = parse_deal_description(d.get("description") or "", d.get("title") or "")
+            clean_desc, dtype, stype, outcome = parse_deal_description(d.get("description") or "", d.get("title") or "")
             recent.append({
                 "id": d.get("id"),
                 "title": d.get("title"),
                 "deal_type": dtype,
+                "service_type": stype,
+                "closing_outcome": outcome,
                 "amount": d.get("amount"),
                 "stage": d.get("stage"),
                 "created_at": d.get("created_at"),
                 "completed_at": d.get("completed_at"),
-                "client_name": cl.get("name", ""),
-                "equipment_name": eq.get("name", "")
+                "client_name": cl.get("name") or "—",
+                "client_company": cl.get("company") or "",
+                "equipment_name": eq.get("name") or "—"
             })
 
-        # Requirement #8: Mechanics revenue calculation (Admin only)
+        # Top clients by revenue
+        client_spent: Dict[int, Dict[str, Any]] = {}
+        for d in deals:
+            cid = d.get("client_id")
+            if not cid:
+                continue
+            amt = _to_float(d.get("amount"), 0.0)
+            cl = d.get("clients") or {}
+            c_name = cl.get("name") or f"Клиент #{cid}"
+            c_comp = cl.get("company") or ""
+            if cid not in client_spent:
+                client_spent[cid] = {
+                    "id": cid,
+                    "name": c_name,
+                    "company": c_comp,
+                    "total_spent": 0.0,
+                    "completed_deals": 0,
+                    "deals_count": 0
+                }
+            client_spent[cid]["deals_count"] += 1
+            if d.get("stage") in closed_stages or amt > 0:
+                client_spent[cid]["completed_deals"] += 1
+                client_spent[cid]["total_spent"] += amt
+
+        top_clients = list(client_spent.values())
+        top_clients.sort(key=lambda x: (x["total_spent"], x["completed_deals"]), reverse=True)
+        top_clients = top_clients[:5]
+
+        # Monthly chart data (last 6 months)
+        month_names = {
+            1: "Янв", 2: "Фев", 3: "Мар", 4: "Апр", 5: "Май", 6: "Июн",
+            7: "Июл", 8: "Авг", 9: "Сен", 10: "Окт", 11: "Ноя", 12: "Дек"
+        }
+        monthly_map = {}
+        now = datetime.now()
+        for i in range(5, -1, -1):
+            m_idx = (now.month - i - 1) % 12 + 1
+            y_offset = (now.month - i - 1) // 12
+            yr = now.year + y_offset
+            k = f"{yr}-{m_idx:02d}"
+            monthly_map[k] = {
+                "month": f"{month_names.get(m_idx, str(m_idx))} {str(yr)[2:]}",
+                "revenue": 0.0,
+                "cost": 0.0
+            }
+
+        for d in deals:
+            if d.get("stage") in closed_stages:
+                dt_str = d.get("completed_at") or d.get("created_at") or ""
+                amt = _to_float(d.get("amount"), 0.0)
+                c_cost = _to_float(d.get("cost"), 0.0)
+                if len(dt_str) >= 7:
+                    k = dt_str[:7]
+                    if k in monthly_map:
+                        monthly_map[k]["revenue"] += amt
+                        monthly_map[k]["cost"] += c_cost
+                    else:
+                        cur_k = f"{now.year}-{now.month:02d}"
+                        if cur_k in monthly_map:
+                            monthly_map[cur_k]["revenue"] += amt
+                            monthly_map[cur_k]["cost"] += c_cost
+
+        cur_k = f"{now.year}-{now.month:02d}"
+        if sum(m["revenue"] for m in monthly_map.values()) == 0 and total_rev > 0 and cur_k in monthly_map:
+            monthly_map[cur_k]["revenue"] = total_rev
+            monthly_map[cur_k]["cost"] = total_cost
+
+        monthly_data = list(monthly_map.values())
+
+        # Mechanics Revenue Breakdown (strictly for Administrators)
         mechanics_map: Dict[str, Dict[str, Any]] = {}
         for u in users:
             if u.get("role") == "mechanic":
@@ -1441,11 +1530,11 @@ def get_dashboard_metrics() -> Dict[str, Any]:
             d_amt = _to_float(d.get("amount"), 0.0)
             d_cost = _to_float(d.get("cost"), 0.0)
 
-            if d.get("stage") == "completed":
+            if d.get("stage") in closed_stages:
                 entry["completed_deals_count"] += 1
                 entry["total_revenue"] += d_amt
                 entry["total_cost"] += d_cost
-            elif d.get("stage") not in ("completed", "cancelled"):
+            elif d.get("stage") not in closed_stages and d.get("stage") != "cancelled":
                 entry["active_deals_count"] += 1
 
         mechanics_revenue = list(mechanics_map.values())
@@ -1462,13 +1551,13 @@ def get_dashboard_metrics() -> Dict[str, Any]:
             "total_cost": round(total_cost, 2),
             "net_profit": round(net_profit, 2),
             "margin_percent": round((net_profit / total_rev * 100), 1) if total_rev > 0 else 0,
-            
-            # Parts Sales revenue metrics (Requirement #2)
+
+            # Parts Sales revenue metrics
             "parts_sales_revenue": round(parts_rev, 2),
             "parts_sales_cost": round(parts_cost, 2),
             "parts_sales_profit": round(parts_profit, 2),
             "parts_sales_margin": round((parts_profit / parts_rev * 100), 1) if parts_rev > 0 else 0,
-            "parts_sales_count": len([d for d in deals if d.get("deal_type") == "parts_sale"]),
+            "parts_sales_count": len(parts_deals),
             "parts_sales_completed_count": len(parts_completed),
             "parts_sales_active_count": len(parts_active),
             "parts_sales_active_volume": round(sum(_to_float(d.get("amount")) for d in parts_active), 2),
@@ -1478,10 +1567,20 @@ def get_dashboard_metrics() -> Dict[str, Any]:
             "service_cost": round(service_cost, 2),
             "service_profit": round(service_profit, 2),
             "service_margin": round((service_profit / service_rev * 100), 1) if service_rev > 0 else 0,
-            "service_deals_count": len([d for d in deals if d.get("deal_type") != "parts_sale"]),
+            "service_deals_count": len(service_deals),
             "service_completed_count": len(service_completed),
             "service_active_count": len(service_active),
             "service_active_volume": round(sum(_to_float(d.get("amount")) for d in service_active), 2),
+
+            # Machinery Sales metrics
+            "sales_revenue": round(sales_rev, 2),
+            "sales_cost": round(sales_cost, 2),
+            "sales_profit": round(sales_profit, 2),
+            "sales_margin": round((sales_profit / sales_rev * 100), 1) if sales_rev > 0 else 0,
+            "sales_deals_count": len(sales_deals),
+            "sales_completed_count": len(sales_completed),
+            "sales_active_count": len(sales_active),
+            "sales_active_volume": round(sum(_to_float(d.get("amount")) for d in sales_active), 2),
 
             "completed_count": len(completed),
             "avg_deal": round(total_rev / len(completed), 2) if completed else 0,
@@ -1490,6 +1589,8 @@ def get_dashboard_metrics() -> Dict[str, Any]:
             "active_deals_volume": round(sum(_to_float(d.get("amount")) for d in active), 2),
             "total_clients": len(clients),
             "total_equipment": len(equipment),
+            "total_parts": len(parts),
+            "total_tasks": len(tasks),
             "total_users": len(users),
             "low_stock_parts": low_stock,
             "critical_parts": critical_list[:25],
@@ -1498,7 +1599,9 @@ def get_dashboard_metrics() -> Dict[str, Any]:
             "inventory_retail": round(inv_retail, 2),
             "overdue_tasks": overdue,
             "deals_by_stage": stages,
-            "recent_deals": recent
+            "recent_deals": recent,
+            "top_clients": top_clients,
+            "monthly_data": monthly_data
         }
 
 # ==================== DUMP & RESTORE ====================
