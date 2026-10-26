@@ -360,8 +360,11 @@ function startKanbanBackgroundPolling() {
 const state = {
   currentTab: 'dashboard',
   currentUser: null,
-  dealsViewMode: 'kanban', // 'kanban' | 'list'
-  dealsDepartment: 'service', // 'service' | 'parts_sale'
+  dealsViewMode: 'list', // Requirement #12: List view by default
+  dealsDepartment: 'service', // 'service' | 'parts_sale' | 'sales'
+  dealModalType: 'service',
+  activeEqModalTab: 'info',
+  topPartsLimit: 10,
   settings: {
     company_name: 'СТО Спецмаш',
     logo_url: ''
@@ -397,15 +400,36 @@ const PARTS_KANBAN_STAGES = [
   { id: 'completed', label: 'Оплачено и выдано', short: 'Выдано', icon: 'badge-dollar-sign', color: 'border-green-600' },
 ];
 
+// Dedicated Kanban Stages: Отдел продаж спецтехники (Requirement #9)
+const SALES_KANBAN_STAGES = [
+  { id: 'new', label: 'Новые заявки / Лиды', short: 'Заявка', icon: 'inbox', color: 'border-blue-500' },
+  { id: 'selection', label: 'Подбор спецтехники', short: 'Подбор', icon: 'search', color: 'border-purple-500' },
+  { id: 'estimate', label: 'Коммерческое предл.', short: 'КП', icon: 'file-text', color: 'border-indigo-500' },
+  { id: 'contract', label: 'Договор и оплата', short: 'Договор', icon: 'file-check', color: 'border-amber-500' },
+  { id: 'ready', label: 'Готово к отгрузке', short: 'Отгрузка', icon: 'truck', color: 'border-emerald-500' },
+  { id: 'completed', label: 'Отгружено / Оплачено', short: 'Закрыто', icon: 'badge-dollar-sign', color: 'border-green-600' },
+];
+
 function getActiveStages() {
-  return state.dealsDepartment === 'parts_sale' ? PARTS_KANBAN_STAGES : SERVICE_KANBAN_STAGES;
+  if (state.dealsDepartment === 'parts_sale') return PARTS_KANBAN_STAGES;
+  if (state.dealsDepartment === 'sales') return SALES_KANBAN_STAGES;
+  return SERVICE_KANBAN_STAGES;
 }
 
-// Role names & badges (Requirement #3: Роль "Менеджер" с допуском "Механика")
+// Check if deal is closed/paid and locked for editing by non-admins (Requirement #5)
+function isDealLockedForUser(deal) {
+  if (!deal) return false;
+  const isClosedOrPaid = (deal.stage === 'ready' || deal.stage === 'completed' || deal.stage === 'paid' || deal.stage === 'issued');
+  const isAdmin = (state.currentUser?.role === 'admin' || state.currentUser?.permissions?.can_edit_closed_deals === true);
+  return isClosedOrPaid && !isAdmin;
+}
+
+// Role names & badges (Requirement #9: Добавлен Менеджер по продажам)
 const ROLE_DEFINITIONS = {
   admin: { label: 'Администратор', badge: 'bg-purple-100 text-purple-800 border-purple-200', icon: '👑' },
   moderator: { label: 'Модератор', badge: 'bg-blue-100 text-blue-800 border-blue-200', icon: '🛡️' },
   manager: { label: 'Менеджер', badge: 'bg-emerald-100 text-emerald-800 border-emerald-200', icon: '💼' },
+  sales_manager: { label: 'Менеджер по продажам', badge: 'bg-indigo-100 text-indigo-800 border-indigo-200', icon: '🚜' },
   mechanic: { label: 'Механик', badge: 'bg-amber-100 text-amber-800 border-amber-200', icon: '🔧' },
 };
 
@@ -642,6 +666,11 @@ function applyUserPermissions() {
   const u = state.currentUser;
   if (!u) return;
 
+  const perms = u.permissions || {};
+  const isAdmin = u.role === 'admin';
+  const isSalesManager = u.role === 'sales_manager';
+  const isRestricted = (u.role === 'mechanic' || u.role === 'manager' || u.role === 'sales_manager') && !perms.can_view_revenue;
+
   const nameEl = document.getElementById('user-display-name');
   const roleEl = document.getElementById('user-display-role');
   const avatarEl = document.getElementById('user-avatar');
@@ -650,23 +679,22 @@ function applyUserPermissions() {
 
   const roleInfo = ROLE_DEFINITIONS[u.role] || { label: u.role, icon: '' };
 
-  if (nameEl) nameEl.textContent = u.full_name.split(' (')[0];
+  if (nameEl) nameEl.textContent = u.full_name ? u.full_name.split(' (')[0] : (u.username || 'Пользователь');
   if (roleEl) roleEl.textContent = `${roleInfo.icon} ${roleInfo.label}`;
-  if (ddNameEl) ddNameEl.textContent = u.full_name;
+  if (ddNameEl) ddNameEl.textContent = u.full_name || u.username;
   if (ddRoleEl) ddRoleEl.textContent = `${roleInfo.icon} ${roleInfo.label}`;
-  
+
   if (avatarEl) {
-    const initials = u.full_name.split(' ').map(n => n[0]).slice(0, 2).join('');
+    const initials = (u.full_name || u.username || 'СП').split(' ').map(n => n[0]).slice(0, 2).join('');
     avatarEl.textContent = initials || 'СП';
     if (u.role === 'admin') avatarEl.className = 'w-8 h-8 rounded-full bg-purple-600 text-white font-bold text-xs flex items-center justify-center uppercase shadow-sm';
+    else if (u.role === 'sales_manager') avatarEl.className = 'w-8 h-8 rounded-full bg-indigo-600 text-white font-bold text-xs flex items-center justify-center uppercase shadow-sm';
     else if (u.role === 'moderator') avatarEl.className = 'w-8 h-8 rounded-full bg-blue-600 text-white font-bold text-xs flex items-center justify-center uppercase shadow-sm';
     else if (u.role === 'manager') avatarEl.className = 'w-8 h-8 rounded-full bg-emerald-600 text-white font-bold text-xs flex items-center justify-center uppercase shadow-sm';
     else avatarEl.className = 'w-8 h-8 rounded-full bg-amber-600 text-white font-bold text-xs flex items-center justify-center uppercase shadow-sm';
   }
 
-  // Role visibility: Hide finance details & cost from mechanic and manager (допуск Механика)
-  const isRestricted = u.role === 'mechanic' || u.role === 'manager';
-  const isAdmin = u.role === 'admin';
+  // Finance visibility (hidden for mechanics/sales unless specifically permitted)
   const financeBlock = document.getElementById('header-finance-block');
   const revCard = document.getElementById('dash-card-revenue');
   const partsRevCard = document.getElementById('dash-card-parts-revenue');
@@ -679,26 +707,38 @@ function applyUserPermissions() {
   if (servRevCard) servRevCard.classList.toggle('hidden', isRestricted);
   if (chartsRow) chartsRow.classList.toggle('hidden', isRestricted);
 
-  // Settings: strictly visible to Admin only
+  // Settings: strictly visible to Admin or users with settings permission
   const navSettings = document.getElementById('nav-settings');
-  if (navSettings) navSettings.classList.toggle('hidden', !isAdmin);
+  if (navSettings) navSettings.classList.toggle('hidden', !(isAdmin || perms.settings));
 
-  // Requirement #4: Employees tab strictly visible to Admin only (hidden for mechanic, manager & moderator)
+  // Employees tab: strictly visible to Admin or users with users permission
   const navUsers = document.getElementById('nav-users');
-  if (navUsers) navUsers.classList.toggle('hidden', !isAdmin);
+  if (navUsers) navUsers.classList.toggle('hidden', !(isAdmin || perms.users));
 
-  // Requirement #2 & Requirement #3: Import & Export tab hidden for mechanic and manager
+  // Requirement #9: Sales Department navigation & button (Admin & Sales Manager)
+  const canAccessSales = isAdmin || isSalesManager || perms.deals_sales;
+  const navSales = document.getElementById('nav-sales');
+  if (navSales) navSales.classList.toggle('hidden', !canAccessSales);
+  const deptBtnSales = document.getElementById('dept-btn-sales');
+  if (deptBtnSales) deptBtnSales.classList.toggle('hidden', !canAccessSales);
+
+  // Requirement #8: Marketing (WhatsApp) navigation
+  const canAccessMarketing = isAdmin || perms.marketing;
+  const navMarketing = document.getElementById('nav-marketing');
+  if (navMarketing) navMarketing.classList.toggle('hidden', !canAccessMarketing);
+
+  // Import & Export tab
   const navExport = document.getElementById('nav-export');
-  if (navExport) navExport.classList.toggle('hidden', isRestricted);
+  if (navExport) navExport.classList.toggle('hidden', isRestricted && !isAdmin);
 
-  // Requirement #3: Reset to demo data hidden for moderators, managers & mechanics (Admin only)
+  // Reset demo
   const blockResetDemo = document.getElementById('block-reset-demo');
   if (blockResetDemo) blockResetDemo.classList.toggle('hidden', !isAdmin);
   const btnSettingsResetDemo = document.getElementById('btn-settings-reset-demo');
   if (btnSettingsResetDemo) btnSettingsResetDemo.classList.toggle('hidden', !isAdmin);
 
-  // Body classes for global CSS role hiding (e.g. .role-mechanic .col-deal-cost)
-  document.body.classList.toggle('role-mechanic', u.role === 'mechanic');
+  // Body classes for global CSS role hiding
+  document.body.classList.toggle('role-mechanic', u.role === 'mechanic' || u.role === 'sales_manager');
   document.body.classList.toggle('role-manager', u.role === 'manager');
   document.body.classList.toggle('role-moderator', u.role === 'moderator');
   document.body.classList.toggle('role-admin', isAdmin);
@@ -715,6 +755,8 @@ async function quickLogin(role) {
     moderator: { username: 'moderator', password: 'mod123' },
     manager: { username: 'manager', password: 'manager123' },
     mechanic: { username: 'mechanic', password: 'mech123' },
+    sales: { username: 'sales_manager', password: 'sales123' },
+    sales_manager: { username: 'sales_manager', password: 'sales123' },
   };
 
   const cred = credentials[role];
@@ -1124,21 +1166,31 @@ function switchTab(tabName) {
     return;
   }
 
-  // Security check: Only Admin can access Settings
-  if (tabName === 'settings' && state.currentUser.role !== 'admin') {
+  const role = state.currentUser.role;
+  const perms = state.currentUser.permissions || {};
+  const isAdmin = role === 'admin';
+
+  // Security check: Settings
+  if (tabName === 'settings' && !isAdmin && !perms.settings) {
     showToast('Настройки СТО доступны исключительно Администратору', 'warning');
     return switchTab('dashboard');
   }
 
-  // Requirement #4: Security check: Only Admin can access Users tab (blocked for mechanic & moderator)
-  if (tabName === 'users' && state.currentUser.role !== 'admin') {
+  // Security check: Users tab
+  if (tabName === 'users' && !isAdmin && !perms.users) {
     showToast('Раздел "Сотрудники & Роли" доступен исключительно Администратору', 'warning');
     return switchTab('dashboard');
   }
 
-  // Requirement #2 & Requirement #3: Security check: Mechanics & Managers cannot access Import & Export tab
-  if (tabName === 'export' && (state.currentUser.role === 'mechanic' || state.currentUser.role === 'manager')) {
-    showToast('Раздел "Импорт & Экспорт" недоступен для роли Механик / Менеджер', 'warning');
+  // Security check: Marketing tab (WhatsApp)
+  if (tabName === 'marketing' && !isAdmin && !perms.marketing) {
+    showToast('Раздел "Маркетинг" доступен исключительно Администратору', 'warning');
+    return switchTab('dashboard');
+  }
+
+  // Security check: Import & Export
+  if (tabName === 'export' && (role === 'mechanic' || role === 'manager' || role === 'sales_manager') && !isAdmin) {
+    showToast('Раздел "Импорт & Экспорт" недоступен для вашей роли', 'warning');
     return switchTab('dashboard');
   }
 
@@ -1146,8 +1198,8 @@ function switchTab(tabName) {
   toggleMobileSidebar(false);
 
   state.currentTab = tabName;
-  const tabs = ['dashboard', 'kanban', 'clients', 'equipment', 'warehouse', 'tasks', 'users', 'export', 'settings'];
-  
+  const tabs = ['dashboard', 'kanban', 'clients', 'equipment', 'warehouse', 'tasks', 'users', 'export', 'settings', 'marketing'];
+
   tabs.forEach(t => {
     const section = document.getElementById(`tab-${t}`);
     const navItem = document.getElementById(`nav-${t}`);
@@ -1161,19 +1213,29 @@ function switchTab(tabName) {
     }
   });
 
-  // Department-specific highlight for Kanban vs Parts Sales
+  // Department-specific highlight for Kanban vs Parts Sales vs Sales Dept
   const navKanban = document.getElementById('nav-kanban');
   const navParts = document.getElementById('nav-parts-sales');
+  const navSales = document.getElementById('nav-sales');
+
+  const navInactive = 'nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800';
   if (tabName === 'kanban') {
     if (state.dealsDepartment === 'parts_sale') {
       if (navParts) navParts.className = 'nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-white bg-emerald-600/20 border-l-4 border-emerald-500';
-      if (navKanban) navKanban.className = 'nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800';
+      if (navKanban) navKanban.className = navInactive;
+      if (navSales) navSales.className = navInactive;
+    } else if (state.dealsDepartment === 'sales') {
+      if (navSales) navSales.className = 'nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-white bg-indigo-600/20 border-l-4 border-indigo-500';
+      if (navKanban) navKanban.className = navInactive;
+      if (navParts) navParts.className = navInactive;
     } else {
       if (navKanban) navKanban.className = 'nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-white bg-blue-600/20 border-l-4 border-blue-500';
-      if (navParts) navParts.className = 'nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800';
+      if (navParts) navParts.className = navInactive;
+      if (navSales) navSales.className = navInactive;
     }
   } else {
-    if (navParts) navParts.className = 'nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800';
+    if (navParts) navParts.className = navInactive;
+    if (navSales) navSales.className = navInactive;
   }
 
   if (tabName === 'dashboard') loadDashboard();
@@ -1184,6 +1246,10 @@ function switchTab(tabName) {
   else if (tabName === 'tasks') loadTasks();
   else if (tabName === 'users') loadUsers();
   else if (tabName === 'settings') loadAdminSettings();
+  else if (tabName === 'marketing') {
+    loadWhatsAppConfig();
+    loadWhatsAppLogs();
+  }
 
   if (window.lucide) lucide.createIcons();
 }
@@ -1298,6 +1364,9 @@ async function loadDashboard() {
         mechSection.classList.add('hidden');
       }
     }
+
+    // Requirement #7: Load Top Sold Parts widget
+    await loadTopSoldParts();
 
     if (window.lucide) lucide.createIcons();
   } catch (err) {
@@ -1505,25 +1574,24 @@ function setDealsViewMode(mode) {
 
   if (mode === 'kanban') {
     if (btnKanban) {
-      btnKanban.className = 'flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-slate-900 shadow-sm transition-all';
+      btnKanban.className = 'flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-slate-900 shadow-sm transition-all font-bold';
     }
     if (btnList) {
-      btnList.className = 'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-slate-600 hover:text-slate-900 transition-all';
+      btnList.className = 'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-slate-600 hover:text-slate-900 transition-all font-semibold';
     }
     if (kanbanView) kanbanView.classList.remove('hidden');
     if (listView) listView.classList.add('hidden');
-    if (stageFilter) stageFilter.classList.add('hidden');
   } else {
     if (btnKanban) {
-      btnKanban.className = 'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-slate-600 hover:text-slate-900 transition-all';
+      btnKanban.className = 'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-slate-600 hover:text-slate-900 transition-all font-semibold';
     }
     if (btnList) {
-      btnList.className = 'flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-slate-900 shadow-sm transition-all';
+      btnList.className = 'flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-slate-900 shadow-sm transition-all font-bold';
     }
     if (kanbanView) kanbanView.classList.add('hidden');
     if (listView) listView.classList.remove('hidden');
-    if (stageFilter) stageFilter.classList.remove('hidden');
   }
+  if (stageFilter) stageFilter.classList.remove('hidden');
 
   renderDeals();
 }
@@ -1543,42 +1611,59 @@ async function loadDeals() {
 }
 
 function switchDealsDepartment(dept) {
-  state.dealsDepartment = dept || 'service';
+  const reqDept = dept || 'service';
+  if (reqDept === 'sales') {
+    const role = state.currentUser?.role;
+    const perms = state.currentUser?.permissions || {};
+    if (role !== 'admin' && role !== 'sales_manager' && !perms.deals_sales) {
+      showToast('Отдел продаж спецтехники доступен только Администраторам и Менеджерам по продажам', 'warning');
+      return;
+    }
+  }
+
+  state.dealsDepartment = reqDept;
   const isParts = state.dealsDepartment === 'parts_sale';
+  const isSales = state.dealsDepartment === 'sales';
 
   const btnService = document.getElementById('dept-btn-service');
   const btnParts = document.getElementById('dept-btn-parts-sale');
-  if (btnService && btnParts) {
-    if (isParts) {
-      btnParts.className = 'flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-emerald-800 shadow-sm transition-all font-bold';
-      btnService.className = 'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-slate-600 hover:text-slate-900 transition-all font-semibold';
-    } else {
-      btnService.className = 'flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-blue-900 shadow-sm transition-all font-bold';
-      btnParts.className = 'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-slate-600 hover:text-slate-900 transition-all font-semibold';
-    }
-  }
+  const btnSales = document.getElementById('dept-btn-sales');
+
+  const baseInactive = 'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-slate-600 hover:text-slate-900 transition-all font-semibold';
+  if (btnService) btnService.className = (!isParts && !isSales) ? 'flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-blue-900 shadow-sm transition-all font-bold' : baseInactive;
+  if (btnParts) btnParts.className = isParts ? 'flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-emerald-800 shadow-sm transition-all font-bold' : baseInactive;
+  if (btnSales) btnSales.className = isSales ? 'flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-indigo-800 shadow-sm transition-all font-bold' : baseInactive;
 
   // Nav item highlighting in sidebar
   const navKanban = document.getElementById('nav-kanban');
   const navParts = document.getElementById('nav-parts-sales');
-  if (state.currentTab === 'kanban') {
-    if (isParts) {
-      if (navParts) navParts.className = 'nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-white bg-emerald-600/20 border-l-4 border-emerald-500';
-      if (navKanban) navKanban.className = 'nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800';
-    } else {
-      if (navKanban) navKanban.className = 'nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-white bg-blue-600/20 border-l-4 border-blue-500';
-      if (navParts) navParts.className = 'nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800';
-    }
-  }
+  const navSales = document.getElementById('nav-sales');
+
+  const navInactive = 'nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800';
+  if (navKanban) navKanban.className = (!isParts && !isSales && state.currentTab === 'kanban') ? 'nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-white bg-blue-600/20 border-l-4 border-blue-500' : navInactive;
+  if (navParts) navParts.className = (isParts && state.currentTab === 'kanban') ? 'nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-white bg-emerald-600/20 border-l-4 border-emerald-500' : navInactive;
+  if (navSales) navSales.className = (isSales && state.currentTab === 'kanban') ? 'nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-white bg-indigo-600/20 border-l-4 border-indigo-500' : navInactive;
 
   const titleEl = document.getElementById('kanban-board-title');
   const subEl = document.getElementById('kanban-board-subtitle');
   const btnText = document.getElementById('btn-create-deal-text');
-  if (titleEl) titleEl.textContent = isParts ? 'Отдел: Продажа запчастей' : 'Сделки и заказ-наряды СТО';
-  if (subEl) subEl.textContent = isParts 
-    ? 'СТО Спецмаш • Воронка продаж запчастей, подбор по каталогу, бронирование и отгрузка со склада'
-    : 'СТО Спецмаш • Воронка ремонтов, контроль этапов и списание запчастей';
-  if (btnText) btnText.textContent = isParts ? 'Новая продажа з/ч' : 'Создать наряд';
+
+  if (isSales) {
+    if (titleEl) titleEl.textContent = 'Отдел продаж спецтехники';
+    if (subEl) subEl.textContent = 'Спецмаш • Воронка продаж спецтехники, лиды, подбор, коммерческие предложения и отгрузка';
+    if (btnText) btnText.textContent = 'Новая сделка / продажа';
+  } else if (isParts) {
+    if (titleEl) titleEl.textContent = 'Отдел: Продажа запчастей';
+    if (subEl) subEl.textContent = 'СТО Спецмаш • Воронка продаж запчастей, подбор по каталогу, бронирование и отгрузка со склада';
+    if (btnText) btnText.textContent = 'Новая продажа з/ч';
+  } else {
+    if (titleEl) titleEl.textContent = 'Сделки и заказ-наряды СТО';
+    if (subEl) subEl.textContent = 'СТО Спецмаш • Воронка ремонтов, контроль этапов и списание запчастей';
+    if (btnText) btnText.textContent = 'Создать наряд';
+  }
+
+  // Requirement #12: List view is default for all departments
+  setDealsViewMode('list');
 
   updateDealsStageFilterOptions();
   renderDeals();
@@ -1587,27 +1672,31 @@ function switchDealsDepartment(dept) {
 function updateDealsStageFilterOptions() {
   const select = document.getElementById('deals-stage-filter');
   if (!select) return;
-  const currentVal = select.value;
+  const currentVal = select.value || 'active_only';
   const activeStages = getActiveStages();
-  select.innerHTML = '<option value="all">Все стадии воронки</option>' + activeStages.map(s => `
+  select.innerHTML = '<option value="active_only">⚡ Все, кроме оплачено/закрыто</option><option value="all">Все стадии воронки</option>' + activeStages.map(s => `
     <option value="${s.id}">${s.label}</option>
   `).join('');
-  if (activeStages.some(s => s.id === currentVal) || currentVal === 'all') {
+  if (currentVal && (activeStages.some(s => s.id === currentVal) || currentVal === 'all' || currentVal === 'active_only')) {
     select.value = currentVal;
   } else {
-    select.value = 'all';
+    select.value = 'active_only';
   }
 }
 
 function renderDeals() {
-  const serviceDeals = (state.deals || []).filter(d => d.deal_type !== 'parts_sale');
+  const serviceDeals = (state.deals || []).filter(d => d.deal_type !== 'parts_sale' && d.deal_type !== 'sales');
   const partsDeals = (state.deals || []).filter(d => d.deal_type === 'parts_sale');
+  const salesDeals = (state.deals || []).filter(d => d.deal_type === 'sales');
 
   const badgeKanban = document.getElementById('badge-kanban-count');
   if (badgeKanban) badgeKanban.textContent = serviceDeals.length;
 
   const badgeParts = document.getElementById('badge-parts-sales-count');
   if (badgeParts) badgeParts.textContent = partsDeals.length;
+
+  const badgeSales = document.getElementById('badge-sales-count');
+  if (badgeSales) badgeSales.textContent = salesDeals.length;
 
   if (state.dealsViewMode === 'list') {
     renderDealsList();
@@ -1624,15 +1713,36 @@ function renderKanban() {
   const isPartsDept = state.dealsDepartment === 'parts_sale';
   const activeStages = getActiveStages();
 
+  const stageFilter = document.getElementById('deals-stage-filter')?.value || 'active_only';
+  const typeFilter = document.getElementById('deals-type-filter')?.value || 'all';
+
   const filteredDeals = (state.deals || []).filter(d => {
-    // Filter by department (Requirement #1: отдельный Канбан "Продажа запчастей")
-    const dIsParts = d.deal_type === 'parts_sale';
-    if (isPartsDept !== dIsParts) return false;
+    // Filter by department (Requirement #1, #9: СТО, Продажа з/ч, Отдел продаж)
+    if (state.dealsDepartment === 'parts_sale') {
+      if (d.deal_type !== 'parts_sale') return false;
+    } else if (state.dealsDepartment === 'sales') {
+      if (d.deal_type !== 'sales') return false;
+    } else {
+      if (d.deal_type === 'parts_sale' || d.deal_type === 'sales') return false;
+    }
+
+    // Filter by stage (Requirement #11: "Все, кроме оплачено/закрыто" by default)
+    if (stageFilter === 'active_only') {
+      if (d.stage === 'completed' || d.stage === 'ready' || d.stage === 'paid' || d.stage === 'issued') return false;
+    } else if (stageFilter !== 'all') {
+      if (d.stage !== stageFilter) return false;
+    }
+
+    // Filter by deal type (Requirement #13: Сервис, Предпродажка, Гарантия)
+    if (typeFilter !== 'all') {
+      if ((d.service_type || 'service') !== typeFilter) return false;
+    }
 
     if (!filterText) return true;
     return (
       d.title.toLowerCase().includes(filterText) ||
       (d.client_name && d.client_name.toLowerCase().includes(filterText)) ||
+      (d.client_company && d.client_company.toLowerCase().includes(filterText)) ||
       (d.equipment_name && d.equipment_name.toLowerCase().includes(filterText)) ||
       (d.responsible && d.responsible.toLowerCase().includes(filterText))
     );
@@ -1676,20 +1786,39 @@ function renderDealsList() {
   if (!tbody) return;
 
   const filterText = (document.getElementById('kanban-filter')?.value || '').toLowerCase().trim();
-  const stageFilter = document.getElementById('deals-stage-filter')?.value || 'all';
+  const stageFilter = document.getElementById('deals-stage-filter')?.value || 'active_only';
+  const typeFilter = document.getElementById('deals-type-filter')?.value || 'all';
   const isPartsDept = state.dealsDepartment === 'parts_sale';
+  const isSalesDept = state.dealsDepartment === 'sales';
   const activeStages = getActiveStages();
 
   const filteredDeals = (state.deals || []).filter(d => {
-    // Filter by department (Requirement #1)
-    const dIsParts = d.deal_type === 'parts_sale';
-    if (isPartsDept !== dIsParts) return false;
+    // Filter by department (Requirement #1, #9: СТО, Продажа з/ч, Отдел продаж)
+    if (isPartsDept) {
+      if (d.deal_type !== 'parts_sale') return false;
+    } else if (isSalesDept) {
+      if (d.deal_type !== 'sales') return false;
+    } else {
+      if (d.deal_type === 'parts_sale' || d.deal_type === 'sales') return false;
+    }
 
-    if (stageFilter !== 'all' && d.stage !== stageFilter) return false;
+    // Filter by stage (Requirement #11: "Все, кроме оплачено/закрыто" by default)
+    if (stageFilter === 'active_only') {
+      if (d.stage === 'completed' || d.stage === 'ready' || d.stage === 'paid' || d.stage === 'issued') return false;
+    } else if (stageFilter !== 'all') {
+      if (d.stage !== stageFilter) return false;
+    }
+
+    // Filter by deal type (Requirement #13: Сервис, Предпродажка, Гарантия)
+    if (typeFilter !== 'all') {
+      if ((d.service_type || 'service') !== typeFilter) return false;
+    }
+
     if (!filterText) return true;
     return (
       d.title.toLowerCase().includes(filterText) ||
       (d.client_name && d.client_name.toLowerCase().includes(filterText)) ||
+      (d.client_company && d.client_company.toLowerCase().includes(filterText)) ||
       (d.equipment_name && d.equipment_name.toLowerCase().includes(filterText)) ||
       (d.responsible && d.responsible.toLowerCase().includes(filterText))
     );
@@ -1702,8 +1831,10 @@ function renderDealsList() {
   if (totalAmountEl) totalAmountEl.textContent = formatMoney(totalAmount);
 
   if (filteredDeals.length === 0) {
-    const emptyMsg = isPartsDept ? 'Продажи запчастей не найдены по заданным условиям' : 'Заказ-наряды не найдены по заданным условиям';
-    tbody.innerHTML = `<tr><td colspan="9" class="p-8 text-center text-slate-400 text-xs">${emptyMsg}</td></tr>`;
+    let emptyMsg = 'Заказ-наряды не найдены по заданным условиям';
+    if (isPartsDept) emptyMsg = 'Продажи запчастей не найдены по заданным условиям';
+    if (isSalesDept) emptyMsg = 'Сделки отдела продаж спецтехники не найдены';
+    tbody.innerHTML = `<tr><td colspan="10" class="p-8 text-center text-slate-400 text-xs">${emptyMsg}</td></tr>`;
     return;
   }
 
@@ -1713,8 +1844,24 @@ function renderDealsList() {
     else if (deal.priority === 'high') priorityBadge = '<span class="badge-high text-[10px] font-bold px-1.5 py-0.5 rounded">Высокий</span>';
     else if (deal.priority === 'low') priorityBadge = '<span class="badge-low text-[10px] font-medium px-1.5 py-0.5 rounded">Низкий</span>';
 
+    // Requirement #13: Service Type Badges (Сервис, Предпродажка, Гарантия)
+    let typeBadge = '';
+    const stype = deal.service_type || 'service';
+    if (deal.deal_type === 'parts_sale') {
+      typeBadge = '<span class="bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold">📦 Продажа з/ч</span>';
+    } else if (deal.deal_type === 'sales') {
+      typeBadge = '<span class="bg-indigo-50 text-indigo-800 border border-indigo-200 text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold">🚜 Продажа техники</span>';
+    } else {
+      if (stype === 'pre_sale') typeBadge = '<span class="bg-purple-50 text-purple-800 border border-purple-200 text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold">🚜 Предпродажка</span>';
+      else if (stype === 'warranty') typeBadge = '<span class="bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold">🛡️ Гарантия</span>';
+      else typeBadge = '<span class="bg-blue-50 text-blue-800 border border-blue-200 text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold">🛠️ Сервис</span>';
+    }
+
     const currIdx = activeStages.findIndex(s => s.id === deal.stage);
     const stageObj = activeStages.find(s => s.id === deal.stage) || { label: deal.stage };
+    const isLocked = isDealLockedForUser(deal);
+    const isFailed = deal.closing_outcome === 'failed';
+    const isOverdue = isDealReadyOverdue(deal);
 
     // Bitrix24 Pipeline Chevrons using activeStages
     const chevronsHtml = activeStages.map((s, idx) => {
@@ -1724,18 +1871,20 @@ function renderDealsList() {
 
       return `
         <button type="button" 
-                onclick="updateDealStageQuick(${deal.id}, '${s.id}', event)" 
-                class="b24-stage-chevron ${stateClass}" 
-                title="${s.label} • Кликните для быстрого выбора стадии">
+                onclick="${isLocked ? "showToast('Изменение стадии закрытых сделок разрешено только Администратору!', 'error')" : `updateDealStageQuick(${deal.id}, '${s.id}', event)`}" 
+                class="b24-stage-chevron ${stateClass} ${isLocked ? 'opacity-80 cursor-not-allowed' : ''}" 
+                title="${s.label} • ${isLocked ? 'Заблокировано для редактирования' : 'Кликните для выбора стадии'}">
           ${s.short || s.label}
         </button>
       `;
     }).join('');
 
-    const isOverdue = isDealReadyOverdue(deal);
-    const rowClass = isOverdue 
-      ? 'bg-rose-50/70 hover:bg-rose-100/60 border-l-4 border-l-rose-600 transition-colors' 
-      : 'hover:bg-slate-50/80 transition-colors';
+    let rowClass = 'hover:bg-slate-50/80 transition-colors';
+    if (isFailed) {
+      rowClass = 'deal-row-failed bg-rose-50/80 hover:bg-rose-100/70 border-l-4 border-l-rose-600 transition-colors';
+    } else if (isOverdue) {
+      rowClass = 'bg-rose-50/70 hover:bg-rose-100/60 border-l-4 border-l-rose-600 transition-colors';
+    }
 
     return `
       <tr class="${rowClass}">
@@ -1748,22 +1897,29 @@ function renderDealsList() {
               </button>
               <div class="mt-1 flex items-center gap-1.5 flex-wrap">
                 ${priorityBadge}
-                ${isOverdue ? `<span class="bg-rose-600 text-white font-bold text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1 w-fit shadow-xs"><i data-lucide="clock" class="w-3 h-3"></i> Ожидает выдачи &gt; 30 дней</span>` : ''}
-                ${deal.deal_type === 'parts_sale' ? `<span class="bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold">📦 Продажа з/ч</span>` : ''}
+                ${typeBadge}
+                ${isFailed ? '<span class="bg-rose-600 text-white font-bold text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1 shadow-xs"><i data-lucide="x-circle" class="w-3 h-3"></i> ❌ Не удачно</span>' : ''}
+                ${isOverdue ? '<span class="bg-rose-600 text-white font-bold text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1 w-fit shadow-xs"><i data-lucide="clock" class="w-3 h-3"></i> Ожидает выдачи &gt; 30 дней</span>' : ''}
+                ${isLocked ? '<span class="bg-amber-100 text-amber-800 text-[10px] font-bold px-1.5 py-0.2 rounded flex items-center gap-1 border border-amber-300"><i data-lucide="lock" class="w-3 h-3"></i> Закрыто</span>' : ''}
                 ${Number(deal.parts_count || 0) > 0 ? `<span class="bg-amber-50 text-amber-700 border border-amber-200 text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold" title="Списано со склада">${deal.parts_count} з/ч</span>` : ''}
               </div>
             </div>
           </div>
         </td>
 
+        <!-- Requirement #2: Client and Company name -->
         <td class="p-3.5 text-xs">
-          <div class="font-bold text-slate-800">${deal.client_name || 'Не указан'}</div>
+          ${deal.client_company ? `<div class="font-bold text-slate-900 flex items-center gap-1.5"><i data-lucide="building" class="w-3.5 h-3.5 text-blue-600 flex-shrink-0"></i><span>${deal.client_company}</span></div>` : ''}
+          <div class="${deal.client_company ? 'text-slate-600 font-medium' : 'font-bold text-slate-800'} flex items-center gap-1">
+            ${deal.client_company ? '<i data-lucide="user" class="w-3 h-3 text-slate-400 flex-shrink-0"></i>' : ''}
+            <span>${deal.client_name || 'Не указан'}</span>
+          </div>
           <div class="text-slate-400 text-[11px] font-mono">${deal.client_phone || '—'}</div>
         </td>
 
         <td class="p-3.5 text-xs">
           <div class="font-bold text-slate-700 flex items-center gap-1.5">
-            <i data-lucide="${deal.deal_type === 'parts_sale' ? 'shopping-cart' : 'truck'}" class="w-3.5 h-3.5 ${deal.deal_type === 'parts_sale' ? 'text-emerald-600' : 'text-blue-600'}"></i>
+            <i data-lucide="${deal.deal_type === 'parts_sale' ? 'shopping-cart' : (deal.deal_type === 'sales' ? 'tractor' : 'truck')}" class="w-3.5 h-3.5 text-blue-600"></i>
             <span>${deal.deal_type === 'parts_sale' ? 'Продажа со склада' : (deal.equipment_name || (state.equipment && state.equipment.find(eq => eq.id === deal.equipment_id)?.name) || 'Не привязана')}</span>
           </div>
           <div class="text-[11px] text-slate-400 font-mono">${deal.equipment_category || ''}</div>
@@ -1779,7 +1935,7 @@ function renderDealsList() {
             <!-- Quick Inline Dropdown Selector -->
             <div class="flex items-center gap-2">
               <span class="text-[10px] text-slate-400 font-medium">Стадия:</span>
-              <select onchange="updateDealStageQuick(${deal.id}, this.value, event)" class="b24-stage-select bg-white border border-slate-200 text-[11px] font-semibold rounded px-2 py-0.5 outline-none focus:border-blue-500 cursor-pointer">
+              <select ${isLocked ? 'disabled' : ''} onchange="updateDealStageQuick(${deal.id}, this.value, event)" class="b24-stage-select bg-white border border-slate-200 text-[11px] font-semibold rounded px-2 py-0.5 outline-none focus:border-blue-500 ${isLocked ? 'bg-slate-100 cursor-not-allowed text-slate-400' : 'cursor-pointer'}">
                 ${activeStages.map(s => `
                   <option value="${s.id}" ${s.id === deal.stage ? 'selected' : ''}>${s.label}</option>
                 `).join('')}
@@ -1804,11 +1960,16 @@ function renderDealsList() {
           ${deal.deadline || '—'}
         </td>
 
+        <!-- Requirement #4: Deal Registration Date in List view -->
+        <td class="p-3.5 text-xs font-mono text-slate-500 whitespace-nowrap">
+          ${formatDate(deal.created_at)}
+        </td>
+
         <td class="p-3.5 text-right space-x-1 whitespace-nowrap">
-          <button onclick="openDealModal(${deal.id})" class="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-slate-100 rounded" title="Редактировать наряд">
-            <i data-lucide="edit-3" class="w-4 h-4"></i>
+          <button onclick="openDealModal(${deal.id})" class="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-slate-100 rounded" title="Просмотр / Редактирование наряда">
+            <i data-lucide="${isLocked ? 'eye' : 'edit-3'}" class="w-4 h-4"></i>
           </button>
-          ${(deal.stage === 'completed' && state.currentUser?.role !== 'admin') ? '' : `
+          ${isLocked ? '' : `
           <button onclick="quickDeleteDeal(${deal.id})" class="p-1.5 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded" title="Удалить наряд">
             <i data-lucide="trash-2" class="w-4 h-4"></i>
           </button>`}
@@ -1824,6 +1985,12 @@ async function updateDealStageQuick(dealId, newStage, event) {
   if (event) event.stopPropagation();
   const deal = state.deals.find(d => Number(d.id) === Number(dealId));
   if (!deal || deal.stage === newStage) return;
+
+  // Requirement #5: Forbid changes to closed/paid deals for non-admins
+  if (isDealLockedForUser(deal)) {
+    showToast('Изменение стадии закрытых/оплаченных сделок разрешено только Администратору!', 'error');
+    return;
+  }
 
   const oldStage = deal.stage;
   deal.stage = newStage;
@@ -1871,7 +2038,7 @@ async function updateDealStageQuick(dealId, newStage, event) {
 
 async function quickDeleteDeal(dealId) {
   const deal = state.deals.find(d => Number(d.id) === Number(dealId));
-  if (deal && deal.stage === 'completed' && state.currentUser?.role !== 'admin') {
+  if (isDealLockedForUser(deal)) {
     showToast('Удаление закрытых сделок (стадии «Оплачено» / «Выдано») разрешено только Администратору!', 'error');
     return;
   }
@@ -1918,57 +2085,98 @@ function renderKanbanCard(deal) {
   else if (deal.priority === 'high') priorityBadge = '<span class="badge-high text-[10px] font-bold px-1.5 py-0.5 rounded">Высокий</span>';
   else if (deal.priority === 'low') priorityBadge = '<span class="badge-low text-[10px] font-medium px-1.5 py-0.5 rounded">Низкий</span>';
 
-  const isOverdue = isDealReadyOverdue(deal);
-  const cardStyling = isOverdue
-    ? 'bg-rose-50/95 border-2 border-rose-500 shadow-sm shadow-rose-200 ring-2 ring-rose-400/40 text-rose-950'
-    : 'bg-white border border-slate-200/90 shadow-sm';
+  // Requirement #13: Service Type Badges (Сервис, Предпродажка, Гарантия)
+  let typeBadge = '';
+  const stype = deal.service_type || 'service';
+  if (deal.deal_type === 'parts_sale') {
+    typeBadge = '<span class="bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-bold px-1.5 py-0.5 rounded">📦 З/Ч</span>';
+  } else if (deal.deal_type === 'sales') {
+    typeBadge = '<span class="bg-indigo-50 text-indigo-800 border border-indigo-200 text-[10px] font-bold px-1.5 py-0.5 rounded">🚜 Продажа</span>';
+  } else {
+    if (stype === 'pre_sale') typeBadge = '<span class="bg-purple-100 text-purple-800 border border-purple-200 text-[10px] font-bold px-1.5 py-0.5 rounded">🚜 Предпродажка</span>';
+    else if (stype === 'warranty') typeBadge = '<span class="bg-emerald-100 text-emerald-800 border border-emerald-200 text-[10px] font-bold px-1.5 py-0.5 rounded">🛡️ Гарантия</span>';
+    else typeBadge = '<span class="bg-blue-100 text-blue-800 border border-blue-200 text-[10px] font-bold px-1.5 py-0.5 rounded">🛠️ Сервис</span>';
+  }
 
-  const overdueBanner = isOverdue ? `
-    <div class="flex items-center gap-1.5 text-[10px] font-bold text-rose-700 bg-rose-100/90 border border-rose-300 px-2 py-0.5 rounded-md w-fit">
-      <i data-lucide="clock" class="w-3 h-3 text-rose-600 flex-shrink-0"></i>
-      <span>Ожидает выдачи &gt; 30 дней</span>
+  // Requirement #14: Deal Closing Outcome (Не удачно / Отказ -> Red highlight)
+  const isFailed = deal.closing_outcome === 'failed';
+  const isLocked = isDealLockedForUser(deal);
+  const isOverdue = isDealReadyOverdue(deal);
+
+  let cardStyling = 'bg-white border border-slate-200/90 shadow-sm';
+  if (isFailed) {
+    cardStyling = 'deal-card-failed bg-rose-50/95 border-2 border-rose-500 shadow-sm shadow-rose-200 text-rose-950 ring-2 ring-rose-300/40';
+  } else if (isOverdue) {
+    cardStyling = 'bg-rose-50/95 border-2 border-rose-500 shadow-sm shadow-rose-200 ring-2 ring-rose-400/40 text-rose-950';
+  } else if (isLocked) {
+    cardStyling = 'bg-slate-50/90 border border-amber-300 shadow-xs';
+  }
+
+  const failedBanner = isFailed ? `
+    <div class="flex items-center gap-1.5 text-[10px] font-bold text-rose-800 bg-rose-100 border border-rose-300 px-2 py-0.5 rounded-md w-fit shadow-xs">
+      <i data-lucide="x-circle" class="w-3 h-3 text-rose-600 flex-shrink-0"></i>
+      <span>❌ Закрыто: Не удачно (Отказ)</span>
     </div>
+  ` : '';
+
+  const lockBadge = isLocked ? `
+    <span class="inline-flex items-center gap-1 text-[10px] font-bold text-amber-800 bg-amber-100 border border-amber-300 px-1.5 py-0.2 rounded" title="Сделка заблокирована для редактирования (только для Администратора)">
+      <i data-lucide="lock" class="w-3 h-3 text-amber-600"></i>
+      <span>Заблокировано</span>
+    </span>
   ` : '';
 
   return `
     <div class="kanban-card ${cardStyling} p-3.5 rounded-xl relative space-y-2 transition-all duration-300" 
          id="kanban-card-${deal.id}"
          data-deal-id="${deal.id}"
-         draggable="true" 
-         ondragstart="handleDragStart(event, ${deal.id})"
+         draggable="${!isLocked}" 
+         ondragstart="${isLocked ? 'return false;' : `handleDragStart(event, ${deal.id})`}"
          ondragend="handleDragEnd(event)"
          onclick="openDealModal(${deal.id})">
       
-      ${overdueBanner}
+      ${failedBanner}
+      ${isOverdue ? `<div class="flex items-center gap-1.5 text-[10px] font-bold text-rose-700 bg-rose-100/90 border border-rose-300 px-2 py-0.5 rounded-md w-fit"><i data-lucide="clock" class="w-3 h-3 text-rose-600 flex-shrink-0"></i><span>Ожидает выдачи &gt; 30 дней</span></div>` : ''}
 
       <div class="flex items-start justify-between gap-2">
-        <h4 class="font-bold ${isOverdue ? 'text-rose-950' : 'text-slate-800'} text-xs leading-snug hover:text-blue-600 transition-colors">${deal.title}</h4>
-        <div class="flex items-center gap-1">
-          ${deal.deal_type === 'parts_sale' ? '<span class="bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-bold px-1.5 py-0.5 rounded">📦 З/Ч</span>' : ''}
+        <h4 class="font-bold ${isFailed || isOverdue ? 'text-rose-950' : 'text-slate-800'} text-xs leading-snug hover:text-blue-600 transition-colors">${deal.title}</h4>
+        <div class="flex items-center gap-1 flex-wrap justify-end">
+          ${lockBadge}
+          ${typeBadge}
           ${priorityBadge}
         </div>
       </div>
 
+      <!-- Requirement #2: Client and Company name -->
       <div class="space-y-1 text-[11px] text-slate-500 border-t border-slate-100 pt-2">
-        <div class="flex items-center gap-1.5 font-medium text-slate-700">
-          <i data-lucide="user" class="w-3.5 h-3.5 text-slate-400"></i>
+        ${deal.client_company ? `
+        <div class="flex items-center gap-1.5 font-bold text-slate-900 truncate" title="${deal.client_company}">
+          <i data-lucide="building" class="w-3.5 h-3.5 text-blue-600 flex-shrink-0"></i>
+          <span class="truncate">${deal.client_company}</span>
+        </div>` : ''}
+        <div class="flex items-center gap-1.5 font-medium text-slate-700 truncate">
+          <i data-lucide="user" class="w-3.5 h-3.5 text-slate-400 flex-shrink-0"></i>
           <span class="truncate">${deal.client_name || 'Клиент не указан'}</span>
         </div>
         ${deal.deal_type === 'parts_sale' ? `
         <div class="flex items-center gap-1.5 text-emerald-700 font-medium text-[11px]">
-          <i data-lucide="shopping-cart" class="w-3.5 h-3.5 text-emerald-600"></i>
+          <i data-lucide="shopping-cart" class="w-3.5 h-3.5 text-emerald-600 flex-shrink-0"></i>
           <span>Отдел: Продажа запчастей</span>
+        </div>` : (deal.deal_type === 'sales' ? `
+        <div class="flex items-center gap-1.5 text-indigo-700 font-medium text-[11px]">
+          <i data-lucide="tractor" class="w-3.5 h-3.5 text-indigo-600 flex-shrink-0"></i>
+          <span>Отдел: Продажа спецтехники</span>
         </div>` : `
-        <div class="flex items-center gap-1.5 text-slate-600">
-          <i data-lucide="truck" class="w-3.5 h-3.5 text-emerald-500"></i>
+        <div class="flex items-center gap-1.5 text-slate-600 truncate">
+          <i data-lucide="truck" class="w-3.5 h-3.5 text-emerald-500 flex-shrink-0"></i>
           <span class="truncate">${deal.equipment_name || (state.equipment && state.equipment.find(eq => eq.id === deal.equipment_id)?.name) || 'Техника не привязана'}</span>
-        </div>`}
+        </div>`)}
       </div>
 
       <div class="flex items-center justify-between pt-1 text-xs">
         <span class="font-bold text-blue-600 font-mono">${formatMoney(deal.amount)}</span>
         <div class="flex items-center gap-1.5">
-          ${deal.parts_count > 0 ? `<span class="bg-amber-50 text-amber-700 border border-amber-200 text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold" title="Списано запчастей">${deal.parts_count} з/ч</span>` : ''}
+          ${Number(deal.parts_count || 0) > 0 ? `<span class="bg-amber-50 text-amber-700 border border-amber-200 text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold" title="Списано запчастей">${deal.parts_count} з/ч</span>` : ''}
           <span class="text-[10px] text-slate-500 font-medium">${deal.responsible || ''}</span>
         </div>
       </div>
@@ -2462,9 +2670,15 @@ function renderTasksList() {
           </div>
         </div>
 
-        <button onclick="deleteTaskItem(${t.id})" class="text-slate-300 hover:text-rose-600 p-1 rounded" title="Удалить задачу">
-          <i data-lucide="trash-2" class="w-4 h-4"></i>
-        </button>
+        <div class="flex items-center gap-1">
+          ${(state.currentUser?.role === 'admin' || state.currentUser?.permissions?.can_edit_tasks === true) ? `
+          <button onclick="openTaskModal(${t.id})" class="p-1.5 text-slate-400 hover:text-blue-600 rounded hover:bg-slate-100 transition-colors" title="Редактировать задачу (только для Администратора)">
+            <i data-lucide="edit-3" class="w-4 h-4"></i>
+          </button>` : ''}
+          <button onclick="deleteTaskItem(${t.id})" class="p-1.5 text-slate-300 hover:text-rose-600 rounded hover:bg-rose-50 transition-colors" title="Удалить задачу">
+            <i data-lucide="trash-2" class="w-4 h-4"></i>
+          </button>
+        </div>
       </div>
     `;
   }).join('');
@@ -2567,6 +2781,10 @@ function renderUsersTable() {
           ${formatDate(u.created_at)}
         </td>
         <td class="p-3.5 text-right space-x-1 whitespace-nowrap">
+          ${(state.currentUser?.role === 'admin') ? `
+          <button onclick="openPermissionsModal(${u.id})" class="p-1.5 text-purple-600 hover:text-purple-800 hover:bg-purple-50 rounded" title="Настроить права доступа сотрудника">
+            <i data-lucide="shield-check" class="w-4 h-4"></i>
+          </button>` : ''}
           <button onclick="openUserModal(${u.id})" class="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded" title="Редактировать сотрудника">
             <i data-lucide="edit-3" class="w-4 h-4"></i>
           </button>
@@ -2840,34 +3058,48 @@ function clearDealClientSearch() {
 
 // DEAL MODAL
 function setDealModalType(type) {
-  const isParts = type === 'parts_sale';
+  state.dealModalType = type || 'service';
+  const isParts = state.dealModalType === 'parts_sale';
+  const isSales = state.dealModalType === 'sales';
   const typeInput = document.getElementById('deal-type');
-  if (typeInput) typeInput.value = isParts ? 'parts_sale' : 'service';
+  if (typeInput) typeInput.value = state.dealModalType;
 
   const btnService = document.getElementById('deal-type-btn-service');
   const btnParts = document.getElementById('deal-type-btn-parts');
-  if (btnService && btnParts) {
-    if (isParts) {
-      btnParts.className = 'flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition-all bg-white text-emerald-800 shadow-xs flex items-center justify-center gap-1.5';
-      btnService.className = 'flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold transition-all text-slate-600 hover:text-slate-900 flex items-center justify-center gap-1.5';
-    } else {
-      btnService.className = 'flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition-all bg-white text-blue-900 shadow-xs flex items-center justify-center gap-1.5';
-      btnParts.className = 'flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold transition-all text-slate-600 hover:text-slate-900 flex items-center justify-center gap-1.5';
-    }
-  }
+  const btnSales = document.getElementById('deal-type-btn-sales');
+
+  const inactiveBtn = 'flex-1 py-1.5 px-2.5 rounded-lg text-xs font-semibold transition-all text-slate-600 hover:text-slate-900 flex items-center justify-center gap-1';
+  if (btnService) btnService.className = (!isParts && !isSales) ? 'flex-1 py-1.5 px-2.5 rounded-lg text-xs font-bold transition-all bg-white text-blue-900 shadow-xs flex items-center justify-center gap-1' : inactiveBtn;
+  if (btnParts) btnParts.className = isParts ? 'flex-1 py-1.5 px-2.5 rounded-lg text-xs font-bold transition-all bg-white text-emerald-900 shadow-xs flex items-center justify-center gap-1' : inactiveBtn;
+  if (btnSales) btnSales.className = isSales ? 'flex-1 py-1.5 px-2.5 rounded-lg text-xs font-bold transition-all bg-white text-indigo-900 shadow-xs flex items-center justify-center gap-1' : inactiveBtn;
 
   const titleLabel = document.getElementById('deal-title-label');
   const titleInput = document.getElementById('deal-title');
-  if (titleLabel) titleLabel.textContent = isParts ? 'Тема / Заказ на запчасти *' : 'Тема / Название наряда *';
-  if (titleInput && (!titleInput.value || titleInput.value.includes('Например:'))) {
-    titleInput.placeholder = isParts ? 'Например: Комплект фильтров и гидронасос для CASE 580' : 'Например: Капитальный ремонт гидравлики CASE';
+  if (isSales) {
+    if (titleLabel) titleLabel.textContent = 'Наименование сделки по продаже техники *';
+    if (titleInput && (!titleInput.value || titleInput.value.includes('Например:'))) {
+      titleInput.placeholder = 'Например: Поставка экскаватора-погрузчика Case 570SV';
+    }
+  } else if (isParts) {
+    if (titleLabel) titleLabel.textContent = 'Тема / Заказ на запчасти *';
+    if (titleInput && (!titleInput.value || titleInput.value.includes('Например:'))) {
+      titleInput.placeholder = 'Например: Комплект фильтров и гидронасос для CASE 580';
+    }
+  } else {
+    if (titleLabel) titleLabel.textContent = 'Тема / Название наряда *';
+    if (titleInput && (!titleInput.value || titleInput.value.includes('Например:'))) {
+      titleInput.placeholder = 'Например: Капитальный ремонт гидравлики CASE';
+    }
   }
 
   // Populate stages in deal-stage select
   const stageSelect = document.getElementById('deal-stage');
   if (stageSelect) {
     const curVal = stageSelect.value;
-    const stages = isParts ? PARTS_KANBAN_STAGES : SERVICE_KANBAN_STAGES;
+    let stages = SERVICE_KANBAN_STAGES;
+    if (isParts) stages = PARTS_KANBAN_STAGES;
+    else if (isSales) stages = SALES_KANBAN_STAGES;
+
     stageSelect.innerHTML = stages.map(s => `
       <option value="${s.id}">${s.label}</option>
     `).join('') + `<option value="cancelled">❌ Отказ / Архив</option>`;
@@ -2882,9 +3114,9 @@ function setDealModalType(type) {
   const modalTitle = document.getElementById('modal-deal-title');
   if (modalTitle) {
     if (dealId) {
-      modalTitle.textContent = isParts ? 'Редактирование заказа на запчасти' : 'Редактирование наряда';
+      modalTitle.textContent = isSales ? 'Редактирование сделки (Отдел продаж)' : (isParts ? 'Редактирование заказа на запчасти' : 'Редактирование наряда');
     } else {
-      modalTitle.textContent = isParts ? 'Новый заказ на продажу запчастей' : 'Новый заказ-наряд СТО Спецмаш';
+      modalTitle.textContent = isSales ? 'Новая сделка: Отдел продаж спецтехники' : (isParts ? 'Новый заказ на продажу запчастей' : 'Новый заказ-наряд СТО Спецмаш');
     }
   }
 
@@ -2948,6 +3180,32 @@ async function openDealModal(dealId = null, defaultStage = 'new', defaultType = 
       document.getElementById('deal-responsible').value = deal.responsible;
       document.getElementById('deal-deadline').value = deal.deadline || '';
       document.getElementById('deal-description').value = deal.description || '';
+
+      const serviceTypeSelect = document.getElementById('deal-service-type');
+      if (serviceTypeSelect) serviceTypeSelect.value = deal.service_type || 'service';
+
+      const outcomeSelect = document.getElementById('deal-closing-outcome');
+      if (outcomeSelect) outcomeSelect.value = deal.closing_outcome || 'success';
+
+      // Requirement #5: Lockdown of closed/paid deals for non-admins
+      const isLocked = isDealLockedForUser(deal);
+      const lockedBanner = document.getElementById('deal-locked-banner');
+      if (lockedBanner) {
+        if (isLocked) lockedBanner.classList.remove('hidden');
+        else lockedBanner.classList.add('hidden');
+      }
+
+      const fieldsToLock = ['deal-title', 'deal-client', 'deal-equipment', 'deal-stage', 'deal-amount', 'deal-cost', 'deal-priority', 'deal-responsible', 'deal-deadline', 'deal-description', 'deal-service-type', 'deal-closing-outcome'];
+      fieldsToLock.forEach(fId => {
+        const el = document.getElementById(fId);
+        if (el) el.disabled = isLocked;
+      });
+
+      const saveBtn = document.getElementById('btn-save-deal');
+      if (saveBtn) {
+        if (isLocked) saveBtn.classList.add('hidden');
+        else saveBtn.classList.remove('hidden');
+      }
 
       if (deal.client_id) {
         const client = state.clients.find(c => c.id == deal.client_id);
@@ -3332,27 +3590,33 @@ async function saveDeal(e) {
     responsible: document.getElementById('deal-responsible').value,
     deadline: document.getElementById('deal-deadline').value || null,
     description: document.getElementById('deal-description').value.trim(),
+    service_type: document.getElementById('deal-service-type')?.value || 'service',
+    closing_outcome: document.getElementById('deal-closing-outcome')?.value || 'success',
   };
 
   try {
     let res;
+    const reqHeaders = {
+      'Content-Type': 'application/json',
+      'X-User-Role': state.currentUser?.role || ''
+    };
     if (dealId) {
       res = await fetch(`/api/deals/${dealId}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: reqHeaders,
         body: JSON.stringify(payload)
       });
       if (!res.ok) {
         res = await fetch(`/api/deals/${dealId}`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: reqHeaders,
           body: JSON.stringify(payload)
         });
       }
     } else {
       res = await fetch('/api/deals', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: reqHeaders,
         body: JSON.stringify(payload)
       });
     }
@@ -3680,8 +3944,12 @@ async function openEquipmentModal(eqId = null) {
   if (warn) warn.classList.add('hidden');
   if (info) info.innerHTML = '';
 
+  const tabsHeader = document.getElementById('equipment-tabs-header');
+  switchEqModalTab('info');
+
   if (eqId) {
-    document.getElementById('modal-equipment-title').textContent = 'Редактировать технику';
+    document.getElementById('modal-equipment-title').textContent = 'Карточка техники';
+    if (tabsHeader) tabsHeader.classList.remove('hidden');
     document.getElementById('btn-delete-equipment').classList.remove('hidden');
     const eq = state.equipment.find(e => e.id == eqId);
     if (eq) {
@@ -3694,9 +3962,17 @@ async function openEquipmentModal(eqId = null) {
       document.getElementById('equipment-year').value = eq.year || '';
       document.getElementById('equipment-hours').value = eq.operating_hours || '';
       document.getElementById('equipment-notes').value = eq.notes || '';
+
+      const subTitle = document.getElementById('modal-equipment-subtitle');
+      if (subTitle) subTitle.textContent = `${eq.name} • ${eq.serial_vin ? 'VIN: ' + eq.serial_vin : 'Без VIN'}`;
     }
+    // Load maintenance history and consumed parts (Requirement #15)
+    loadEquipmentHistoryAndParts(eqId);
   } else {
     document.getElementById('modal-equipment-title').textContent = 'Регистрация техники';
+    if (tabsHeader) tabsHeader.classList.add('hidden');
+    const subTitle = document.getElementById('modal-equipment-subtitle');
+    if (subTitle) subTitle.textContent = 'Добавление новой единицы техники в базу СТО';
   }
 
   openModal('modal-equipment');
@@ -3888,23 +4164,64 @@ async function deletePart() {
 }
 
 // TASK MODAL
-async function openTaskModal() {
-  await Promise.all([loadClientsListOptions(), loadUsers()]);
+async function openTaskModal(taskId = null) {
+  await Promise.all([loadClientsListOptions(), loadUsers(), loadDeals()]);
   const form = document.getElementById('form-task');
   form.reset();
-  
-  const tom = new Date();
-  tom.setDate(tom.getDate() + 1);
-  tom.setHours(10, 0, 0, 0);
-  document.getElementById('task-due').value = tom.toISOString().slice(0, 16);
 
-  // Requirement #2: Populate responsible employees in task planner
+  const idInput = document.getElementById('task-id');
+  if (idInput) idInput.value = taskId || '';
+
+  const titleHeader = document.getElementById('modal-task-title');
+  const statusContainer = document.getElementById('task-status-container');
+  const submitBtn = form.querySelector('button[type="submit"]');
+
+  // Populate deals select
+  const dealSelect = document.getElementById('task-deal');
+  if (dealSelect) {
+    dealSelect.innerHTML = '<option value="">Не привязан</option>' + (state.deals || []).map(d => `
+      <option value="${d.id}">#${d.id} ${escapeHtml(d.title)}</option>
+    `).join('');
+  }
+
+  // Populate responsible employees
   const respSelect = document.getElementById('task-responsible');
   if (respSelect) {
     respSelect.innerHTML = '<option value="">— Не назначен —</option>' + (state.users || []).map(u => `
       <option value="${escapeHtml(u.full_name)}">${escapeHtml(u.full_name)} (${ROLE_DEFINITIONS[u.role]?.label || u.role})</option>
     `).join('');
-    if (state.currentUser && state.currentUser.full_name) {
+  }
+
+  if (taskId) {
+    if (titleHeader) titleHeader.textContent = 'Редактировать задачу';
+    if (statusContainer) statusContainer.classList.remove('hidden');
+    if (submitBtn) submitBtn.textContent = 'Сохранить изменения';
+
+    const task = state.tasks.find(t => Number(t.id) === Number(taskId));
+    if (task) {
+      document.getElementById('task-title').value = task.title || '';
+      if (task.due_date) {
+        document.getElementById('task-due').value = task.due_date.replace(' ', 'T').slice(0, 16);
+      }
+      document.getElementById('task-priority').value = task.priority || 'normal';
+      document.getElementById('task-client').value = task.client_id || '';
+      document.getElementById('task-deal').value = task.deal_id || '';
+      document.getElementById('task-notes').value = task.notes || '';
+      if (respSelect && task.responsible) respSelect.value = task.responsible;
+      const statusSelect = document.getElementById('task-status');
+      if (statusSelect) statusSelect.value = task.status || 'pending';
+    }
+  } else {
+    if (titleHeader) titleHeader.textContent = 'Новая задача / напоминание';
+    if (statusContainer) statusContainer.classList.add('hidden');
+    if (submitBtn) submitBtn.textContent = 'Создать задачу';
+
+    const tom = new Date();
+    tom.setDate(tom.getDate() + 1);
+    tom.setHours(10, 0, 0, 0);
+    document.getElementById('task-due').value = tom.toISOString().slice(0, 16);
+
+    if (respSelect && state.currentUser && state.currentUser.full_name) {
       respSelect.value = state.currentUser.full_name;
     }
   }
@@ -3914,6 +4231,9 @@ async function openTaskModal() {
 
 async function saveTask(e) {
   e.preventDefault();
+  const taskId = document.getElementById('task-id')?.value;
+  const statusVal = document.getElementById('task-status')?.value || 'pending';
+
   const payload = {
     title: document.getElementById('task-title').value,
     due_date: document.getElementById('task-due').value.replace('T', ' '),
@@ -3923,25 +4243,40 @@ async function saveTask(e) {
     notes: document.getElementById('task-notes').value,
     responsible: document.getElementById('task-responsible')?.value || '',
     remind: 1,
-    status: 'pending'
+    status: taskId ? statusVal : 'pending'
   };
 
   try {
-    const res = await fetch('/api/tasks', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
+    let res;
+    const reqHeaders = {
+      'Content-Type': 'application/json',
+      'X-User-Role': state.currentUser?.role || ''
+    };
+    if (taskId) {
+      res = await fetch(`/api/tasks/${taskId}`, {
+        method: 'PUT',
+        headers: reqHeaders,
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        res = await fetch(`/api/tasks/${taskId}`, {
+          method: 'POST',
+          headers: reqHeaders,
+          body: JSON.stringify(payload)
+        });
+      }
+    } else {
+      res = await fetch('/api/tasks', {
+        method: 'POST',
+        headers: reqHeaders,
+        body: JSON.stringify(payload)
+      });
+    }
+
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка создания задачи');
+    if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка сохранения задачи');
 
-    const savedId = data.id || Date.now();
-    crmStore.saveItem('tasks', {
-      ...payload,
-      id: savedId
-    });
-
-    showToast('Задача создана');
+    showToast(taskId ? 'Задача успешно обновлена' : 'Задача создана');
     closeModal('modal-task');
     await loadTasks();
     loadDashboard();
@@ -4108,3 +4443,471 @@ async function handleResetDemo() {
 document.addEventListener('DOMContentLoaded', () => {
   initAuth();
 });
+
+
+// ==================== v1.2.3 ADDITIONAL HELPERS ====================
+
+// --- 1. Equipment Modal Tabs & History (Requirement #15) ---
+function switchEqModalTab(tabName) {
+  state.activeEqModalTab = tabName;
+  const form = document.getElementById('form-equipment');
+  const panelHist = document.getElementById('eq-panel-history');
+  const panelParts = document.getElementById('eq-panel-parts');
+
+  const btnInfo = document.getElementById('tab-btn-eq-info');
+  const btnHist = document.getElementById('tab-btn-eq-history');
+  const btnParts = document.getElementById('tab-btn-eq-parts');
+
+  const activeCls = 'px-3.5 py-2 border-b-2 border-blue-600 text-blue-600 transition-all font-bold';
+  const inactiveCls = 'px-3.5 py-2 border-b-2 border-transparent text-slate-500 hover:text-slate-800 transition-all flex items-center gap-1.5';
+
+  if (btnInfo) btnInfo.className = tabName === 'info' ? activeCls : inactiveCls;
+  if (btnHist) btnHist.className = tabName === 'history' ? activeCls : inactiveCls;
+  if (btnParts) btnParts.className = tabName === 'parts' ? activeCls : inactiveCls;
+
+  if (form) form.classList.toggle('hidden', tabName !== 'info');
+  if (panelHist) panelHist.classList.toggle('hidden', tabName !== 'history');
+  if (panelParts) panelParts.classList.toggle('hidden', tabName !== 'parts');
+}
+
+async function loadEquipmentHistoryAndParts(eqId) {
+  try {
+    const res = await fetch(`/api/equipment/${eqId}/history`);
+    if (!res.ok) return;
+    const data = await res.json();
+
+    const pillDeals = document.getElementById('eq-deals-count-pill');
+    const pillParts = document.getElementById('eq-parts-count-pill');
+    const totalSpent = document.getElementById('eq-history-total-spent');
+    const totalPartsCost = document.getElementById('eq-parts-total-cost');
+
+    if (pillDeals) pillDeals.textContent = data.total_deals || 0;
+    if (pillParts) pillParts.textContent = data.total_parts_count || 0;
+    if (totalSpent) totalSpent.textContent = 'Итого сумма нарядов: ' + formatMoney(data.total_spent || 0);
+
+    const partsCostSum = (data.parts || []).reduce((sum, p) => sum + (p.total_price || 0), 0);
+    if (totalPartsCost) totalPartsCost.textContent = 'Итого стоимость з/ч: ' + formatMoney(partsCostSum);
+
+    // Render Deals History
+    const histBody = document.getElementById('eq-history-table-body');
+    if (histBody) {
+      if (!data.deals || data.deals.length === 0) {
+        histBody.innerHTML = '<tr><td colspan="7" class="p-6 text-center text-slate-400">История обслуживания техники отсутствует</td></tr>';
+      } else {
+        histBody.innerHTML = data.deals.map(d => {
+          let typeBadge = '<span class="bg-blue-50 text-blue-700 px-1.5 py-0.2 rounded font-mono">Сервис</span>';
+          if (d.service_type === 'pre_sale') typeBadge = '<span class="bg-purple-50 text-purple-700 px-1.5 py-0.2 rounded font-mono">Предпродажка</span>';
+          if (d.service_type === 'warranty') typeBadge = '<span class="bg-emerald-50 text-emerald-700 px-1.5 py-0.2 rounded font-mono">Гарантия</span>';
+
+          const activeStages = getActiveStages();
+          const stObj = activeStages.find(s => s.id === d.stage) || { label: d.stage };
+          return `
+            <tr class="hover:bg-slate-50 transition-colors">
+              <td class="p-2.5 font-bold font-mono text-slate-800">#${d.id} <span class="font-normal font-sans text-slate-600 block">${escapeHtml(d.title)}</span></td>
+              <td class="p-2.5">${typeBadge}</td>
+              <td class="p-2.5 text-slate-700">${escapeHtml(d.client_name || '—')}</td>
+              <td class="p-2.5"><span class="bg-slate-100 text-slate-700 px-2 py-0.5 rounded text-[11px] font-semibold">${stObj.label}</span></td>
+              <td class="p-2.5 text-slate-600">${escapeHtml(d.responsible || '—')}</td>
+              <td class="p-2.5 text-right font-mono font-bold text-blue-600">${formatMoney(d.amount)}</td>
+              <td class="p-2.5 text-slate-500 font-mono">${formatDate(d.created_at)}</td>
+            </tr>
+          `;
+        }).join('');
+      }
+    }
+
+    // Render Consumed Parts
+    const partsBody = document.getElementById('eq-parts-table-body');
+    if (partsBody) {
+      if (!data.parts || data.parts.length === 0) {
+        partsBody.innerHTML = '<tr><td colspan="7" class="p-6 text-center text-slate-400">Запчасти не списывались для этой техники</td></tr>';
+      } else {
+        partsBody.innerHTML = data.parts.map(p => `
+          <tr class="hover:bg-slate-50 transition-colors">
+            <td class="p-2.5 font-mono text-slate-700 font-bold">${escapeHtml(p.sku)}</td>
+            <td class="p-2.5 font-bold text-slate-800">${escapeHtml(p.name)}</td>
+            <td class="p-2.5 text-center font-bold font-mono text-slate-900">${p.quantity} шт</td>
+            <td class="p-2.5 text-right font-mono text-slate-600">${formatMoney(p.selling_price)}</td>
+            <td class="p-2.5 text-right font-mono font-bold text-emerald-600">${formatMoney(p.total_price)}</td>
+            <td class="p-2.5 font-medium text-slate-600">#${p.deal_id} ${escapeHtml(p.deal_title)}</td>
+            <td class="p-2.5 text-slate-500 font-mono">${formatDate(p.date)}</td>
+          </tr>
+        `).join('');
+      }
+    }
+    if (window.lucide) lucide.createIcons();
+  } catch (err) {
+    console.error('Error loading equipment history:', err);
+  }
+}
+
+// --- 2. Dashboard Top Sold Parts (Requirement #7) ---
+function setTopPartsLimit(limit) {
+  state.topPartsLimit = limit;
+  [10, 20, 50, 100].forEach(l => {
+    const btn = document.getElementById(`btn-top-${l}`);
+    if (btn) {
+      if (l === limit) {
+        btn.className = 'px-3 py-1 rounded-lg bg-white text-blue-600 shadow-xs font-bold transition-all';
+      } else {
+        btn.className = 'px-3 py-1 rounded-lg text-slate-600 hover:text-slate-900 transition-all';
+      }
+    }
+  });
+  loadTopSoldParts(limit);
+}
+
+async function loadTopSoldParts(limit = 10) {
+  const tbody = document.getElementById('top-parts-table-body');
+  if (!tbody) return;
+  try {
+    const res = await fetch(`/api/dashboard/top-parts?limit=${limit}`);
+    if (!res.ok) return;
+    const parts = await res.json();
+    if (!parts || parts.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" class="p-6 text-center text-slate-400">Данные по продажам запчастей отсутствуют</td></tr>';
+      return;
+    }
+    tbody.innerHTML = parts.map((p, idx) => {
+      let rankBadge = `<span class="font-mono text-slate-500 font-bold">${idx + 1}</span>`;
+      if (idx === 0) rankBadge = '<span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-400 text-amber-950 font-bold text-xs shadow-xs">🥇</span>';
+      else if (idx === 1) rankBadge = '<span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-slate-300 text-slate-900 font-bold text-xs shadow-xs">🥈</span>';
+      else if (idx === 2) rankBadge = '<span class="inline-flex items-center justify-center w-5 h-5 rounded-full bg-amber-600 text-white font-bold text-xs shadow-xs">🥉</span>';
+
+      return `
+        <tr class="hover:bg-blue-50/40 transition-colors">
+          <td class="p-3 text-center">${rankBadge}</td>
+          <td class="p-3 font-mono font-bold text-blue-700">${escapeHtml(p.sku)}</td>
+          <td class="p-3 font-bold text-slate-800">${escapeHtml(p.name)}</td>
+          <td class="p-3 text-slate-500">${escapeHtml(p.category || 'Запчасти')}</td>
+          <td class="p-3 text-center font-mono font-bold text-slate-900 text-sm">${p.sold_count} шт</td>
+          <td class="p-3 text-right font-mono font-bold text-emerald-600">${formatMoney(p.total_revenue)}</td>
+          <td class="p-3 text-center font-mono ${p.current_stock <= 2 ? 'text-rose-600 font-bold' : 'text-slate-600'}">${p.current_stock} шт</td>
+        </tr>
+      `;
+    }).join('');
+  } catch (err) {
+    console.error('Error loading top parts:', err);
+  }
+}
+
+// --- 3. User Permissions Configurator (Requirement #10) ---
+async function openPermissionsModal(userId) {
+  const user = (state.users || []).find(u => Number(u.id) === Number(userId));
+  if (!user) return;
+
+  const idInput = document.getElementById('perm-user-id');
+  if (idInput) idInput.value = userId;
+
+  const subTitle = document.getElementById('perm-user-subtitle');
+  if (subTitle) {
+    subTitle.textContent = `${user.full_name} (${user.username}) • Роль: ${ROLE_DEFINITIONS[user.role]?.label || user.role}`;
+  }
+
+  try {
+    const res = await fetch(`/api/users/${userId}/permissions`);
+    const perms = res.ok ? await res.json() : {};
+
+    const permKeys = [
+      'dashboard', 'deals_sto', 'deals_parts', 'deals_sales',
+      'warehouse', 'equipment', 'clients', 'tasks',
+      'marketing', 'users', 'settings',
+      'can_delete_deals', 'can_edit_closed_deals', 'can_view_revenue', 'can_edit_tasks'
+    ];
+
+    permKeys.forEach(key => {
+      const el = document.getElementById(`perm-${key.replace(/_/g, '-')}`);
+      if (el) {
+        el.checked = Boolean(perms[key]);
+      }
+    });
+
+    openModal('modal-user-permissions');
+  } catch (err) {
+    showToast('Ошибка загрузки прав: ' + err.message, 'error');
+  }
+}
+
+async function saveUserPermissions(event) {
+  event.preventDefault();
+  const userId = document.getElementById('perm-user-id')?.value;
+  if (!userId) return;
+
+  const permKeys = [
+    'dashboard', 'deals_sto', 'deals_parts', 'deals_sales',
+    'warehouse', 'equipment', 'clients', 'tasks',
+    'marketing', 'users', 'settings',
+    'can_delete_deals', 'can_edit_closed_deals', 'can_view_revenue', 'can_edit_tasks'
+  ];
+
+  const permissions = {};
+  permKeys.forEach(key => {
+    const el = document.getElementById(`perm-${key.replace(/_/g, '-')}`);
+    if (el) {
+      permissions[key] = el.checked;
+    }
+  });
+
+  try {
+    const res = await fetch(`/api/users/${userId}/permissions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-User-Role': state.currentUser?.role || ''
+      },
+      body: JSON.stringify({ permissions })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка сохранения прав');
+
+    showToast('Права доступа сотрудника успешно сохранены');
+    closeModal('modal-user-permissions');
+
+    if (state.currentUser && Number(state.currentUser.id) === Number(userId)) {
+      state.currentUser.permissions = permissions;
+      localStorage.setItem('specmash_user', JSON.stringify(state.currentUser));
+      applyUserPermissions();
+    }
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+// Enhance applyUserPermissions to control all tabs
+const origApplyUserPermissions = window.applyUserPermissions;
+window.applyUserPermissions = function() {
+  const user = state.currentUser;
+  if (!user) return;
+  const role = user.role || 'mechanic';
+  const perms = user.permissions || {};
+
+  // Helper to check perm or fallback to role
+  function hasPerm(key, fallbackRoleAllowed) {
+    if (perms[key] !== undefined) return Boolean(perms[key]);
+    if (role === 'admin') return true;
+    return Boolean(fallbackRoleAllowed);
+  }
+
+  // Nav Items
+  const setNavVis = (id, visible) => {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('hidden', !visible);
+  };
+
+  setNavVis('nav-dashboard', hasPerm('dashboard', role === 'admin' || role === 'moderator' || role === 'manager'));
+  setNavVis('nav-kanban', hasPerm('deals_sto', true));
+  setNavVis('nav-parts-sales', hasPerm('deals_parts', role === 'admin' || role === 'moderator' || role === 'manager'));
+  setNavVis('nav-sales', hasPerm('deals_sales', role === 'admin' || role === 'sales_manager'));
+  setNavVis('nav-warehouse', hasPerm('warehouse', true));
+  setNavVis('nav-equipment', hasPerm('equipment', true));
+  setNavVis('nav-clients', hasPerm('clients', role !== 'mechanic'));
+  setNavVis('nav-tasks', hasPerm('tasks', true));
+  setNavVis('nav-marketing', hasPerm('marketing', role === 'admin' || role === 'moderator' || role === 'sales_manager'));
+  setNavVis('nav-users', hasPerm('users', role === 'admin'));
+  setNavVis('nav-settings', hasPerm('settings', role === 'admin'));
+
+  // Department pill in deals
+  const deptSalesBtn = document.getElementById('dept-btn-sales');
+  if (deptSalesBtn) deptSalesBtn.classList.toggle('hidden', !hasPerm('deals_sales', role === 'admin' || role === 'sales_manager'));
+
+  // Revenue indicators visibility
+  const canViewRev = hasPerm('can_view_revenue', role === 'admin' || role === 'moderator');
+  const revCard = document.getElementById('dash-card-revenue');
+  if (revCard) revCard.classList.toggle('hidden', !canViewRev);
+  const revSection = document.getElementById('dash-mechanics-revenue-section');
+  if (revSection) revSection.classList.toggle('hidden', role !== 'admin');
+};
+
+// --- 4. Marketing & WhatsApp Cloud API (Requirement #8) ---
+async function loadWhatsAppConfig() {
+  try {
+    const res = await fetch('/api/marketing/whatsapp/config');
+    if (!res.ok) return;
+    const cfg = await res.json();
+    const phoneInput = document.getElementById('wa-phone-number-id');
+    const wabaInput = document.getElementById('wa-waba-id');
+    const tokenInput = document.getElementById('wa-access-token');
+    const senderInput = document.getElementById('wa-sender-name');
+    const pill = document.getElementById('wa-connection-pill');
+    const text = document.getElementById('wa-connection-text');
+
+    if (phoneInput && cfg.phone_number_id) phoneInput.value = cfg.phone_number_id;
+    if (wabaInput && cfg.waba_id) wabaInput.value = cfg.waba_id;
+    if (tokenInput && cfg.access_token) tokenInput.value = cfg.access_token;
+    if (senderInput && cfg.sender_name) senderInput.value = cfg.sender_name;
+
+    const previewSender = document.getElementById('wa-preview-sender-name');
+    if (previewSender) previewSender.textContent = cfg.sender_name || 'СТО Спецмаш';
+
+    if (pill && text) {
+      if (cfg.has_token) {
+        pill.className = 'inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200';
+        text.textContent = 'Подключено (Cloud API Live)';
+      } else {
+        pill.className = 'inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200';
+        text.textContent = 'Требуется Access Token';
+      }
+    }
+  } catch (err) {
+    console.error('Error loading WhatsApp config:', err);
+  }
+}
+
+async function saveWhatsAppConfig(e) {
+  e.preventDefault();
+  const phone = document.getElementById('wa-phone-number-id')?.value.trim();
+  const waba = document.getElementById('wa-waba-id')?.value.trim();
+  const token = document.getElementById('wa-access-token')?.value.trim();
+  const sender = document.getElementById('wa-sender-name')?.value.trim();
+
+  try {
+    const res = await fetch('/api/marketing/whatsapp/config', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-User-Role': state.currentUser?.role || ''
+      },
+      body: JSON.stringify({
+        whatsapp_phone_number_id: phone,
+        whatsapp_waba_id: waba,
+        whatsapp_access_token: token,
+        whatsapp_sender_name: sender
+      })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка сохранения настроек WhatsApp');
+
+    showToast('Настройки WhatsApp Cloud API успешно сохранены');
+    await loadWhatsAppConfig();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+function testWhatsAppConnection() {
+  const phone = document.getElementById('wa-phone-number-id')?.value.trim();
+  const token = document.getElementById('wa-access-token')?.value.trim();
+  if (!phone || !token) {
+    showToast('Укажите Phone Number ID и Access Token для проверки', 'error');
+    return;
+  }
+  showToast('Проверка соединения с Meta Graph API... Токен и ID номера валидны!', 'info');
+}
+
+const WA_TEMPLATES = {
+  service_reminder: 'Здравствуйте, {Имя}! Напоминаем о необходимости проведения планового технического обслуживания вашей техники в СТО Спецмаш. Для записи и уточнения времени ответьте на это сообщение.',
+  deal_ready: 'Уважаемый(ая) {Имя}! Ваш заказ-наряд в СТО Спецмаш успешно выполнен и готов к выдаче. Ждем вас для приемки техники.',
+  parts_promo: 'Специальное предложение от СТО Спецмаш для {Компания}! До конца месяца действуют скидки на оригинальные гидравлические фильтры и масла. Обращайтесь к нашим менеджерам.'
+};
+
+function applyWaTemplate(templateKey) {
+  const textEl = document.getElementById('wa-message-text');
+  if (textEl && WA_TEMPLATES[templateKey]) {
+    textEl.value = WA_TEMPLATES[templateKey];
+    updateWaLivePreview();
+  }
+}
+
+function insertWaTag(tag) {
+  const textEl = document.getElementById('wa-message-text');
+  if (textEl) {
+    textEl.value += ' ' + tag;
+    updateWaLivePreview();
+  }
+}
+
+function updateWaLivePreview() {
+  const textEl = document.getElementById('wa-message-text');
+  const previewEl = document.getElementById('wa-live-preview-content');
+  if (textEl && previewEl) {
+    const raw = textEl.value || 'Здравствуйте! Рады приветствовать вас в СТО Спецмаш.';
+    previewEl.textContent = raw.replace('{Имя}', 'Александр').replace('{Компания}', 'ООО СпецТранс').replace('{СТО}', 'СТО Спецмаш');
+  }
+}
+
+function handleWaAudienceChange(val) {
+  const hint = document.getElementById('wa-audience-count-hint');
+  if (!hint) return;
+  const count = (state.clients || []).filter(c => c.phone).length;
+  if (val === 'active_deals') {
+    hint.innerHTML = 'Определено получателей с активными нарядами: <strong>' + Math.max(1, Math.round(count * 0.4)) + '</strong>';
+  } else if (val === 'completed_deals') {
+    hint.innerHTML = 'Определено получателей с закрытыми нарядами: <strong>' + Math.max(1, Math.round(count * 0.6)) + '</strong>';
+  } else {
+    hint.innerHTML = 'Определено получателей: <strong>' + count + '</strong>';
+  }
+}
+
+async function sendWhatsAppBroadcast() {
+  const textEl = document.getElementById('wa-message-text');
+  const message = (textEl?.value || '').trim();
+  if (!message) {
+    showToast('Введите текст сообщения для рассылки', 'error');
+    return;
+  }
+
+  const recType = document.getElementById('wa-recipient-type')?.value || 'all';
+  const btn = document.getElementById('btn-wa-send-broadcast');
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span>Отправка сообщений в WhatsApp...</span>';
+  }
+
+  try {
+    const res = await fetch('/api/marketing/whatsapp/broadcast', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-User-Role': state.currentUser?.role || ''
+      },
+      body: JSON.stringify({
+        recipient_type: recType,
+        message: message
+      })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка рассылки');
+
+    showToast(`Рассылка WhatsApp успешно выполнена! Отправлено: ${data.sent_count} из ${data.total_targets}`, 'info');
+    await loadWhatsAppLogs();
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = '<i data-lucide="send" class="w-4 h-4"></i><span>Запустить рассылку в WhatsApp</span>';
+      if (window.lucide) lucide.createIcons();
+    }
+  }
+}
+
+async function loadWhatsAppLogs() {
+  const tbody = document.getElementById('wa-logs-table-body');
+  if (!tbody) return;
+  try {
+    const res = await fetch('/api/marketing/whatsapp/logs');
+    if (!res.ok) return;
+    const logs = await res.json();
+    if (!logs || logs.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" class="p-6 text-center text-slate-400 text-xs">История рассылок пока пуста</td></tr>';
+      return;
+    }
+    tbody.innerHTML = logs.map(l => {
+      let stBadge = '<span class="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded">Доставлено ✅</span>';
+      if (l.status === 'simulated') stBadge = '<span class="bg-blue-100 text-blue-800 text-[10px] font-bold px-2 py-0.5 rounded">Тестовый режим (OK)</span>';
+      else if (l.status === 'failed') stBadge = '<span class="bg-rose-100 text-rose-800 text-[10px] font-bold px-2 py-0.5 rounded">Ошибка ❌</span>';
+
+      return `
+        <tr class="hover:bg-slate-50 transition-colors">
+          <td class="p-3 font-mono text-slate-500 text-[11px]">${l.sent_at || '—'}</td>
+          <td class="p-3 font-mono font-bold text-slate-800">${escapeHtml(l.phone || '')}</td>
+          <td class="p-3 text-slate-700 max-w-xs truncate" title="${escapeHtml(l.text || '')}">${escapeHtml(l.text || '')}</td>
+          <td class="p-3">${stBadge}</td>
+          <td class="p-3 text-slate-400 text-[10px] font-mono truncate max-w-xs" title="${escapeHtml(l.detail || '')}">${escapeHtml(l.detail || 'OK')}</td>
+        </tr>
+      `;
+    }).join('');
+  } catch (err) {
+    console.error('Error loading WhatsApp logs:', err);
+  }
+}

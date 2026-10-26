@@ -14,5 +14,5 @@ if parent_dir not in sys.path:
 # Import the main FastAPI app from server.py
 from server import app
 
-# Production release: v1.2.2 stable restored
+# Production release: v1.2.3 stable release
 # Vercel automatically routes requests to this `app` callable

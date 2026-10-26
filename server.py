@@ -248,6 +248,8 @@ class DealCreate(BaseModel):
     client_id: Optional[int] = None
     equipment_id: Optional[int] = None
     deal_type: Optional[str] = "service"
+    service_type: Optional[str] = "service"
+    closing_outcome: Optional[str] = "success"
     stage: str = "new"
     amount: float = 0.0
     cost: float = 0.0
@@ -258,6 +260,42 @@ class DealCreate(BaseModel):
 
 class DealStageUpdate(BaseModel):
     stage: str
+    closing_outcome: Optional[str] = None
+
+class TaskUpdate(BaseModel):
+    title: Optional[str] = None
+    due_date: Optional[str] = None
+    priority: Optional[str] = None
+    status: Optional[str] = None
+    deal_id: Optional[int] = None
+    client_id: Optional[int] = None
+    responsible: Optional[str] = None
+    notes: Optional[str] = None
+    remind: Optional[int] = None
+
+class WhatsAppConfigUpdate(BaseModel):
+    whatsapp_phone_number_id: Optional[str] = ""
+    phone_number_id: Optional[str] = None
+    whatsapp_waba_id: Optional[str] = ""
+    waba_id: Optional[str] = None
+    whatsapp_access_token: Optional[str] = ""
+    access_token: Optional[str] = None
+    whatsapp_sender_name: Optional[str] = ""
+    sender_name: Optional[str] = None
+
+class WhatsAppSendRequest(BaseModel):
+    phone: str
+    message: str
+    template_name: Optional[str] = None
+
+class WhatsAppBroadcastRequest(BaseModel):
+    recipient_type: str = "all"
+    client_ids: Optional[List[int]] = None
+    message: str
+    template_name: Optional[str] = None
+
+class UserPermissionsUpdate(BaseModel):
+    permissions: Dict[str, Any]
 
 class DealAttachPart(BaseModel):
     part_id: int
@@ -290,12 +328,14 @@ def login(req: LoginRequest):
     if not database.verify_password(req.password, user["password_hash"], user["salt"]):
         raise HTTPException(status_code=401, detail="Неверный логин или пароль")
 
+    user_perms = database.get_user_permissions(user["id"], user["role"])
     return {
         "id": user["id"],
         "username": user["username"],
         "full_name": user["full_name"],
         "role": user["role"],
         "phone": user.get("phone") or "",
+        "permissions": user_perms
     }
 
 @app.get("/api/users")
@@ -533,9 +573,28 @@ def get_deal(deal_id: int):
 @app.patch("/api/deals/{deal_id}/stage")
 @app.post("/api/deals/{deal_id}/stage")
 @app.put("/api/deals/{deal_id}/stage")
-async def update_deal_stage(deal_id: int, update: DealStageUpdate):
+async def update_deal_stage(
+    deal_id: int,
+    update: DealStageUpdate,
+    x_user_role: Optional[str] = Header(None, alias="X-User-Role"),
+    role: Optional[str] = None
+):
+    effective_role = check_effective_role(x_user_role, role)
+    try:
+        existing = database.get_deal(deal_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+
+    # Requirement #5: Forbid changes to closed/paid deals for non-admins
+    if existing.get("stage") in ("ready", "completed", "paid", "issued") and effective_role != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Изменение стадии закрытых/оплаченных сделок разрешено только Администратору"
+        )
+
     res = database.update_deal_stage(deal_id, update.stage)
-    # Broadcast stage change to all clients instantly!
+    if update.closing_outcome:
+        database.update_deal(deal_id, {"closing_outcome": update.closing_outcome})
     await manager.broadcast({
         "type": "deal_stage_updated",
         "deal_id": deal_id,
@@ -546,7 +605,25 @@ async def update_deal_stage(deal_id: int, update: DealStageUpdate):
 
 @app.put("/api/deals/{deal_id}")
 @app.post("/api/deals/{deal_id}")
-async def update_deal(deal_id: int, deal: DealCreate):
+async def update_deal(
+    deal_id: int,
+    deal: DealCreate,
+    x_user_role: Optional[str] = Header(None, alias="X-User-Role"),
+    role: Optional[str] = None
+):
+    effective_role = check_effective_role(x_user_role, role)
+    try:
+        existing = database.get_deal(deal_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+
+    # Requirement #5: Forbid changes to closed/paid deals for non-admins
+    if existing.get("stage") in ("ready", "completed", "paid", "issued") and effective_role != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Редактирование закрытых/оплаченных сделок разрешено только Администратору"
+        )
+
     res = database.update_deal(deal_id, deal.model_dump())
     await manager.broadcast({
         "type": "deal_updated",
@@ -583,7 +660,19 @@ async def delete_deal(
     return res
 
 @app.post("/api/deals/{deal_id}/parts")
-async def attach_part_to_deal(deal_id: int, item: DealAttachPart):
+async def attach_part_to_deal(
+    deal_id: int,
+    item: DealAttachPart,
+    x_user_role: Optional[str] = Header(None, alias="X-User-Role"),
+    role: Optional[str] = None
+):
+    effective_role = check_effective_role(x_user_role, role)
+    try:
+        existing = database.get_deal(deal_id)
+        if existing.get("stage") in ("ready", "completed", "paid", "issued") and effective_role != "admin":
+            raise HTTPException(status_code=403, detail="Добавление запчастей в закрытые/оплаченные сделки разрешено только Администратору")
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
     try:
         res = database.attach_part_to_deal(deal_id, item.part_id, item.quantity)
         await manager.broadcast({
@@ -600,7 +689,19 @@ async def attach_part_to_deal(deal_id: int, item: DealAttachPart):
 @app.delete("/api/deals/{deal_id}/parts/{deal_part_id}")
 @app.post("/api/deals/{deal_id}/parts/{deal_part_id}/delete")
 @app.post("/api/deals/{deal_id}/parts/{deal_part_id}")
-async def remove_part_from_deal(deal_id: int, deal_part_id: int):
+async def remove_part_from_deal(
+    deal_id: int,
+    deal_part_id: int,
+    x_user_role: Optional[str] = Header(None, alias="X-User-Role"),
+    role: Optional[str] = None
+):
+    effective_role = check_effective_role(x_user_role, role)
+    try:
+        existing = database.get_deal(deal_id)
+        if existing.get("stage") in ("ready", "completed", "paid", "issued") and effective_role != "admin":
+            raise HTTPException(status_code=403, detail="Удаление запчастей из закрытых/оплаченных сделок разрешено только Администратору")
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
     try:
         res = database.remove_part_from_deal(deal_id, deal_part_id)
         await manager.broadcast({
@@ -661,6 +762,22 @@ def list_tasks(status: Optional[str] = None):
 @app.post("/api/tasks")
 def create_task(task: TaskCreate):
     return database.create_task(task.model_dump())
+
+@app.put("/api/tasks/{task_id}")
+@app.post("/api/tasks/{task_id}")
+def update_task_endpoint(
+    task_id: int,
+    task: TaskUpdate,
+    x_user_role: Optional[str] = Header(None, alias="X-User-Role"),
+    role: Optional[str] = None
+):
+    effective_role = check_effective_role(x_user_role, role)
+    if effective_role != "admin":
+        raise HTTPException(status_code=403, detail="Редактирование задач разрешено только Администратору")
+    try:
+        return database.update_task(task_id, task.model_dump(exclude_unset=True))
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Задача не найдена")
 
 @app.patch("/api/tasks/{task_id}/toggle")
 @app.post("/api/tasks/{task_id}/toggle")
@@ -946,3 +1063,124 @@ if __name__ == "__main__":
     host = os.getenv("HOST", "127.0.0.1")
     port = int(os.getenv("PORT", "8000"))
     uvicorn.run("server:app", host=host, port=port, reload=True)
+
+
+# ----------------- v1.2.3 Endpoints: Top Parts, Equipment History, Permissions, WhatsApp -----------------
+
+@app.get("/api/dashboard/top-parts")
+def get_top_parts(limit: int = 10):
+    return database.get_top_sold_parts(limit=limit)
+
+@app.get("/api/equipment/{eq_id}/history")
+def get_equipment_history_endpoint(eq_id: int):
+    return database.get_equipment_history(eq_id)
+
+@app.get("/api/users/{user_id}/permissions")
+def get_user_permissions_endpoint(user_id: int):
+    user = next((u for u in database.list_users() if u.get("id") == user_id), None)
+    role = user.get("role", "mechanic") if user else "mechanic"
+    return database.get_user_permissions(user_id, role)
+
+@app.post("/api/users/{user_id}/permissions")
+def save_user_permissions_endpoint(
+    user_id: int,
+    req: UserPermissionsUpdate,
+    x_user_role: Optional[str] = Header(None, alias="X-User-Role"),
+    role: Optional[str] = None
+):
+    effective_role = check_effective_role(x_user_role, role)
+    if effective_role != "admin":
+        raise HTTPException(status_code=403, detail="Настройка прав доступа разрешена только Администратору")
+    return database.save_user_permissions(user_id, req.permissions)
+
+@app.get("/api/marketing/whatsapp/config")
+def get_whatsapp_config_endpoint():
+    s = database.get_settings()
+    token = s.get("whatsapp_access_token") or ""
+    masked_token = (token[:6] + "..." + token[-4:]) if len(token) > 12 else token
+    return {
+        "phone_number_id": s.get("whatsapp_phone_number_id") or "",
+        "waba_id": s.get("whatsapp_waba_id") or "",
+        "access_token": masked_token,
+        "has_token": bool(token and token != "EAAGdummyTokenTest"),
+        "sender_name": s.get("whatsapp_sender_name") or "СТО Спецмаш"
+    }
+
+@app.post("/api/marketing/whatsapp/config")
+def update_whatsapp_config_endpoint(
+    cfg: WhatsAppConfigUpdate,
+    x_user_role: Optional[str] = Header(None, alias="X-User-Role"),
+    role: Optional[str] = None
+):
+    effective_role = check_effective_role(x_user_role, role)
+    if effective_role != "admin":
+        raise HTTPException(status_code=403, detail="Настройка WhatsApp API разрешена только Администратору")
+    phone_id = cfg.whatsapp_phone_number_id or cfg.phone_number_id or ""
+    waba = cfg.whatsapp_waba_id or cfg.waba_id or ""
+    tok = cfg.whatsapp_access_token or cfg.access_token or ""
+    sender = cfg.whatsapp_sender_name or cfg.sender_name or ""
+
+    database.save_setting("whatsapp_phone_number_id", phone_id)
+    database.save_setting("whatsapp_waba_id", waba)
+    if tok and "..." not in tok:
+        database.save_setting("whatsapp_access_token", tok.strip())
+    if sender:
+        database.save_setting("whatsapp_sender_name", sender.strip())
+    return {"success": True, "message": "Настройки WhatsApp успешно сохранены"}
+
+@app.post("/api/marketing/whatsapp/send")
+def send_whatsapp_single(
+    req: WhatsAppSendRequest,
+    x_user_role: Optional[str] = Header(None, alias="X-User-Role"),
+    role: Optional[str] = None
+):
+    return database.send_whatsapp_message(req.phone, req.message, req.template_name)
+
+@app.post("/api/marketing/whatsapp/broadcast")
+def send_whatsapp_broadcast(
+    req: WhatsAppBroadcastRequest,
+    x_user_role: Optional[str] = Header(None, alias="X-User-Role"),
+    role: Optional[str] = None
+):
+    clients = database.list_clients()
+    targets = []
+    if req.recipient_type == "all":
+        targets = [c for c in clients if c.get("phone")]
+    elif req.recipient_type == "active_deals":
+        deals = database.list_deals()
+        active_client_ids = {d.get("client_id") for d in deals if d.get("stage") not in ("completed", "ready")}
+        targets = [c for c in clients if c.get("id") in active_client_ids and c.get("phone")]
+    elif req.recipient_type == "completed_deals":
+        deals = database.list_deals()
+        completed_client_ids = {d.get("client_id") for d in deals if d.get("stage") in ("completed", "ready")}
+        targets = [c for c in clients if c.get("id") in completed_client_ids and c.get("phone")]
+    elif req.recipient_type == "manual" and req.client_ids:
+        selected_ids = set(req.client_ids)
+        targets = [c for c in clients if c.get("id") in selected_ids and c.get("phone")]
+
+    results = []
+    for c in targets:
+        phone = c.get("phone")
+        client_name = c.get("name") or "Уважаемый клиент"
+        company = c.get("company") or ""
+        personalized = req.message.replace("{Имя}", client_name).replace("{Компания}", company).replace("{СТО}", "СТО Спецмаш")
+        res = database.send_whatsapp_message(phone, personalized, req.template_name)
+        results.append({
+            "client_id": c.get("id"),
+            "client_name": client_name,
+            "company": company,
+            "phone": phone,
+            "status": "success" if res.get("success") else "failed",
+            "detail": res.get("log", {}).get("detail") or res.get("error", "")
+        })
+
+    return {
+        "success": True,
+        "total_targets": len(targets),
+        "sent_count": len([r for r in results if r["status"] == "success"]),
+        "results": results
+    }
+
+@app.get("/api/marketing/whatsapp/logs")
+def get_whatsapp_logs_endpoint():
+    return database.get_whatsapp_logs()

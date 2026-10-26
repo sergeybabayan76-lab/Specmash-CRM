@@ -338,3 +338,77 @@ body.role-mechanic #stat-inventory-cost-wrapper {
   display: none !important;
 }
 
+
+
+/* ==================== v1.2.3 ENHANCEMENTS ==================== */
+
+/* Always-visible sticky horizontal scrollbar for Deals List (Requirement #3) */
+.sticky-horizontal-scroll {
+  scrollbar-color: #94a3b8 #f1f5f9;
+  scrollbar-width: auto;
+}
+
+.sticky-horizontal-scroll::-webkit-scrollbar {
+  height: 12px;
+  width: 10px;
+}
+
+.sticky-horizontal-scroll::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 6px;
+}
+
+.sticky-horizontal-scroll::-webkit-scrollbar-thumb {
+  background: #94a3b8;
+  border-radius: 6px;
+  border: 2px solid #f1f5f9;
+}
+
+.sticky-horizontal-scroll::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+
+/* Custom scrollbar for dashboard critical parts & top parts (Requirement #6, #7) */
+#critical-parts-table::-webkit-scrollbar,
+#top-parts-container::-webkit-scrollbar {
+  width: 6px;
+}
+
+#critical-parts-table::-webkit-scrollbar-track,
+#top-parts-container::-webkit-scrollbar-track {
+  background: #f8fafc;
+}
+
+#critical-parts-table::-webkit-scrollbar-thumb,
+#top-parts-container::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+
+#critical-parts-table::-webkit-scrollbar-thumb:hover,
+#top-parts-container::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Red highlighted card & row for failed / lost deals (Requirement #14) */
+.deal-card-failed {
+  background-color: #fef2f2 !important;
+  border: 2px solid #ef4444 !important;
+  box-shadow: 0 2px 4px 0 rgba(239, 68, 68, 0.15) !important;
+}
+
+.deal-row-failed {
+  background-color: #fff1f2 !important;
+  border-left: 4px solid #e11d48 !important;
+}
+
+/* WhatsApp Message Bubble in Marketing Section */
+.wa-bubble-preview {
+  position: relative;
+  background-color: #dcf8c6;
+  border-radius: 12px 12px 2px 12px;
+  padding: 10px 14px;
+  max-width: 85%;
+  margin-left: auto;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+}

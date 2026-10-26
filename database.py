@@ -346,6 +346,9 @@ def update_settings(payload: Dict[str, Any]) -> Dict[str, Any]:
                 client.post("/settings", json={"key": key, "value": str(value).strip()}, headers={"Prefer": "resolution=merge-duplicates"})
         return {"message": "Основные настройки программы успешно сохранены"}
 
+def save_setting(key: str, value: Any) -> Dict[str, Any]:
+    return update_settings({key: value})
+
 def get_system_stats() -> Dict[str, Any]:
     if not SUPABASE_KEY:
         return {
@@ -796,27 +799,59 @@ def get_stock_movements(limit: int = 50) -> List[Dict[str, Any]]:
 
 # ==================== DEALS & KANBAN ====================
 
-def serialize_deal_description(description: str, deal_type: str = "service") -> str:
+def serialize_deal_description(description: str, deal_type: str = "service", service_type: str = "service", closing_outcome: str = "success") -> str:
     clean_desc = (description or "").strip()
     clean_desc = re.sub(r'\[DEAL_TYPE:.*?\]', '', clean_desc, flags=re.DOTALL).strip()
-    if deal_type and str(deal_type).strip().lower() == "parts_sale":
-        tag = "[DEAL_TYPE:parts_sale]"
-        return f"{clean_desc}\n{tag}".strip() if clean_desc else tag
+    clean_desc = re.sub(r'\[SERVICE_TYPE:.*?\]', '', clean_desc, flags=re.DOTALL).strip()
+    clean_desc = re.sub(r'\[OUTCOME:.*?\]', '', clean_desc, flags=re.DOTALL).strip()
+    tags = []
+    dtype = (deal_type or "service").strip().lower()
+    if dtype in ("parts_sale", "sales"):
+        tags.append(f"[DEAL_TYPE:{dtype}]")
+    stype = (service_type or "service").strip().lower()
+    if stype in ("service", "pre_sale", "warranty"):
+        tags.append(f"[SERVICE_TYPE:{stype}]")
+    outcome = (closing_outcome or "success").strip().lower()
+    if outcome in ("success", "failed"):
+        tags.append(f"[OUTCOME:{outcome}]")
+    if tags:
+        tag_str = "\n".join(tags)
+        return f"{clean_desc}\n{tag_str}".strip() if clean_desc else tag_str
     return clean_desc
 
-def parse_deal_description(raw_description: str, title: str = "") -> tuple[str, str]:
-    if not raw_description:
+def parse_deal_description(raw_description: str, title: str = "") -> tuple[str, str, str, str]:
+    deal_type = "service"
+    service_type = "service"
+    closing_outcome = "success"
+    clean_desc = (raw_description or "").strip()
+
+    if not clean_desc:
         if title and any(term in title.lower() for term in ("продажа запчаст", "продажа з/ч", "заказ запчаст", "реализация з/ч", "отгрузка з/ч")):
-            return "", "parts_sale"
-        return "", "service"
-    match = re.search(r'\[DEAL_TYPE:(.*?)\]', raw_description, flags=re.DOTALL)
-    if match:
-        dtype = match.group(1).strip().lower()
-        clean_desc = re.sub(r'\[DEAL_TYPE:.*?\]', '', raw_description, flags=re.DOTALL).strip()
-        return clean_desc, dtype
-    if title and any(term in title.lower() for term in ("продажа запчаст", "продажа з/ч", "заказ запчаст", "реализация з/ч", "отгрузка з/ч")):
-        return raw_description.strip(), "parts_sale"
-    return raw_description.strip(), "service"
+            deal_type = "parts_sale"
+        elif title and any(term in title.lower() for term in ("продажа спецтехники", "продажа техники", "отдел продаж")):
+            deal_type = "sales"
+        return "", deal_type, service_type, closing_outcome
+
+    m_dtype = re.search(r'\[DEAL_TYPE:(.*?)\]', clean_desc, flags=re.DOTALL)
+    if m_dtype:
+        deal_type = m_dtype.group(1).strip().lower()
+        clean_desc = re.sub(r'\[DEAL_TYPE:.*?\]', '', clean_desc, flags=re.DOTALL).strip()
+    elif title and any(term in title.lower() for term in ("продажа запчаст", "продажа з/ч", "заказ запчаст", "реализация з/ч", "отгрузка з/ч")):
+        deal_type = "parts_sale"
+    elif title and any(term in title.lower() for term in ("продажа спецтехники", "продажа техники", "отдел продаж")):
+        deal_type = "sales"
+
+    m_stype = re.search(r'\[SERVICE_TYPE:(.*?)\]', clean_desc, flags=re.DOTALL)
+    if m_stype:
+        service_type = m_stype.group(1).strip().lower()
+        clean_desc = re.sub(r'\[SERVICE_TYPE:.*?\]', '', clean_desc, flags=re.DOTALL).strip()
+
+    m_outcome = re.search(r'\[OUTCOME:(.*?)\]', clean_desc, flags=re.DOTALL)
+    if m_outcome:
+        closing_outcome = m_outcome.group(1).strip().lower()
+        clean_desc = re.sub(r'\[OUTCOME:.*?\]', '', clean_desc, flags=re.DOTALL).strip()
+
+    return clean_desc, deal_type, service_type, closing_outcome
 
 def list_deals(stage: Optional[str] = None, q: Optional[str] = None, deal_type: Optional[str] = None) -> List[Dict[str, Any]]:
     if not SUPABASE_KEY:
@@ -845,11 +880,13 @@ def list_deals(stage: Optional[str] = None, q: Optional[str] = None, deal_type: 
             item.pop("clients", None)
             item.pop("equipment", None)
             item.pop("deal_parts", None)
-            clean_desc, dtype = parse_deal_description(d.get("description") or "", d.get("title") or "")
+            clean_desc, dtype, stype, outcome = parse_deal_description(d.get("description") or "", d.get("title") or "")
             if deal_type and deal_type != "all" and dtype != deal_type:
                 continue
             item["description"] = clean_desc
             item["deal_type"] = dtype
+            item["service_type"] = stype
+            item["closing_outcome"] = outcome
             item["client_name"] = cl.get("name", "")
             item["client_company"] = cl.get("company", "")
             item["client_phone"] = cl.get("phone", "")
@@ -869,7 +906,9 @@ def create_deal(deal_data: Dict[str, Any]) -> Dict[str, Any]:
         client_id = deal_data.get("client_id") if deal_data.get("client_id") and deal_data.get("client_id") > 0 else None
         eq_id = deal_data.get("equipment_id") if deal_data.get("equipment_id") and deal_data.get("equipment_id") > 0 else None
         deal_type = (deal_data.get("deal_type") or "service").strip().lower()
-        serialized_desc = serialize_deal_description(deal_data.get("description") or "", deal_type=deal_type)
+        service_type = (deal_data.get("service_type") or "service").strip().lower()
+        closing_outcome = (deal_data.get("closing_outcome") or "success").strip().lower()
+        serialized_desc = serialize_deal_description(deal_data.get("description") or "", deal_type=deal_type, service_type=service_type, closing_outcome=closing_outcome)
 
         payload = {
             "id": next_id,
@@ -913,6 +952,8 @@ def create_deal(deal_data: Dict[str, Any]) -> Dict[str, Any]:
             **payload,
             "description": (deal_data.get("description") or "").strip(),
             "deal_type": deal_type,
+            "service_type": service_type,
+            "closing_outcome": closing_outcome,
             "client_name": cl_name,
             "client_company": cl_comp,
             "client_phone": cl_phone,
@@ -933,9 +974,11 @@ def get_deal(deal_id: int) -> Dict[str, Any]:
         eq = d.get("equipment") or {}
         d.pop("clients", None)
         d.pop("equipment", None)
-        clean_desc, dtype = parse_deal_description(d.get("description") or "", d.get("title") or "")
+        clean_desc, dtype, stype, outcome = parse_deal_description(d.get("description") or "", d.get("title") or "")
         d["description"] = clean_desc
         d["deal_type"] = dtype
+        d["service_type"] = stype
+        d["closing_outcome"] = outcome
         d["client_name"] = cl.get("name", "")
         d["client_company"] = cl.get("company", "")
         d["client_phone"] = cl.get("phone", "")
@@ -988,10 +1031,12 @@ def update_deal(deal_id: int, deal_data: Dict[str, Any]) -> Dict[str, Any]:
             existing_desc = row.get("description") or ""
             existing_title = row.get("title") or ""
             existing_completed_at = row.get("completed_at")
-        old_desc, old_dtype = parse_deal_description(existing_desc, existing_title)
+        old_desc, old_dtype, old_stype, old_outcome = parse_deal_description(existing_desc, existing_title)
         new_dtype = (deal_data.get("deal_type") or old_dtype or "service").strip().lower()
+        new_stype = (deal_data.get("service_type") or old_stype or "service").strip().lower()
+        new_outcome = (deal_data.get("closing_outcome") or old_outcome or "success").strip().lower()
         raw_desc = deal_data.get("description") if "description" in deal_data and deal_data["description"] is not None else old_desc
-        serialized_desc = serialize_deal_description(raw_desc or "", deal_type=new_dtype)
+        serialized_desc = serialize_deal_description(raw_desc or "", deal_type=new_dtype, service_type=new_stype, closing_outcome=new_outcome)
 
         if stage in ("ready", "completed"):
             completed_at = existing_completed_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1016,7 +1061,7 @@ def update_deal(deal_id: int, deal_data: Dict[str, Any]) -> Dict[str, Any]:
             payload["id"] = deal_id
             payload["created_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             client.post("/deals", json=payload, headers={"Prefer": "resolution=merge-duplicates"})
-        return {"id": deal_id, **payload, "description": raw_desc, "deal_type": new_dtype, "message": "Сделка обновлена"}
+        return {"id": deal_id, **payload, "description": raw_desc, "deal_type": new_dtype, "service_type": new_stype, "closing_outcome": new_outcome, "message": "Сделка обновлена"}
 
 def delete_deal(deal_id: int) -> Dict[str, Any]:
     with get_sb_client() as client:
@@ -1186,6 +1231,43 @@ def toggle_task(task_id: int) -> Dict[str, Any]:
         new_status = "completed" if curr != "completed" else "pending"
         client.patch(f"/tasks?id=eq.{task_id}", json={"status": new_status})
         return {"id": task_id, "status": new_status, "message": "Статус задачи изменен"}
+
+def update_task(task_id: int, task_data: Dict[str, Any]) -> Dict[str, Any]:
+    with get_sb_client() as client:
+        r = client.get("/tasks", params={"id": f"eq.{task_id}"})
+        rows = r.json()
+        if not rows:
+            raise KeyError("Задача не найдена")
+
+        existing = rows[0]
+        old_notes, old_resp = parse_task_notes(existing.get("notes") or "")
+        raw_notes = task_data.get("notes") if "notes" in task_data and task_data["notes"] is not None else old_notes
+        responsible = task_data.get("responsible") if "responsible" in task_data and task_data["responsible"] is not None else old_resp
+        serialized_notes = serialize_task_notes((raw_notes or "").strip(), (responsible or "").strip())
+
+        payload: Dict[str, Any] = {"notes": serialized_notes}
+        if "title" in task_data and task_data["title"]:
+            payload["title"] = task_data["title"].strip()
+        if "due_date" in task_data and task_data["due_date"]:
+            payload["due_date"] = task_data["due_date"].strip()
+        if "priority" in task_data and task_data["priority"]:
+            payload["priority"] = task_data["priority"]
+        if "status" in task_data and task_data["status"]:
+            payload["status"] = task_data["status"]
+        if "deal_id" in task_data:
+            payload["deal_id"] = task_data["deal_id"] if task_data["deal_id"] and task_data["deal_id"] > 0 else None
+        if "client_id" in task_data:
+            payload["client_id"] = task_data["client_id"] if task_data["client_id"] and task_data["client_id"] > 0 else None
+        if "remind" in task_data and task_data["remind"] is not None:
+            payload["remind"] = int(task_data["remind"])
+
+        client.patch(f"/tasks?id=eq.{task_id}", json=payload)
+        return {
+            "id": task_id,
+            "message": "Задача успешно обновлена",
+            "responsible": responsible,
+            "notes": raw_notes
+        }
 
 def delete_task(task_id: int) -> Dict[str, Any]:
     with get_sb_client() as client:
@@ -1438,3 +1520,230 @@ def restore_all_data(data: Dict[str, Any]) -> Dict[str, Any]:
                 r = client.post(f"/{table}", json=data[table], headers=headers)
                 counts[table] = len(data[table]) if r.status_code in (200, 201) else 0
         return counts
+
+
+# ==================== TOP SOLD PARTS & EQUIPMENT HISTORY & PERMISSIONS & WHATSAPP ====================
+
+def get_top_sold_parts(limit: int = 10) -> List[Dict[str, Any]]:
+    if not SUPABASE_KEY:
+        return []
+    with get_sb_client() as client:
+        dpr = client.get("/deal_parts", params={"select": "part_id,quantity,selling_price"})
+        parts_r = client.get("/parts", params={"select": "id,sku,name,category,quantity,selling_price,min_threshold"})
+        if parts_r.status_code != 200:
+            return []
+
+        parts_map = {p["id"]: p for p in parts_r.json()}
+        sales_agg: Dict[int, Dict[str, Any]] = {}
+
+        if dpr.status_code == 200:
+            for dp in dpr.json():
+                pid = dp.get("part_id")
+                qty = dp.get("quantity") or 0
+                price = dp.get("selling_price") or 0.0
+                if pid not in sales_agg:
+                    sales_agg[pid] = {"sold_count": 0, "total_revenue": 0.0}
+                sales_agg[pid]["sold_count"] += qty
+                sales_agg[pid]["total_revenue"] += qty * price
+
+        results = []
+        for pid, p in parts_map.items():
+            agg = sales_agg.get(pid, {"sold_count": 0, "total_revenue": 0.0})
+            results.append({
+                "part_id": pid,
+                "sku": p.get("sku") or f"P-{pid}",
+                "name": p.get("name") or f"Запчасть #{pid}",
+                "category": p.get("category") or "Запчасти",
+                "current_stock": p.get("quantity") or 0,
+                "sold_count": agg["sold_count"],
+                "total_revenue": agg["total_revenue"],
+                "unit_price": p.get("selling_price") or 0.0
+            })
+
+        results.sort(key=lambda x: (x["sold_count"], x["total_revenue"], x["unit_price"]), reverse=True)
+        return results[:limit]
+
+def get_equipment_history(eq_id: int) -> Dict[str, Any]:
+    if not SUPABASE_KEY:
+        return {"equipment_id": eq_id, "deals": [], "parts": [], "total_deals": 0, "total_spent": 0.0, "total_parts_count": 0}
+    with get_sb_client() as client:
+        r = client.get("/deals", params={"equipment_id": f"eq.{eq_id}", "select": "*,clients(name,company,phone)", "order": "created_at.desc"})
+        deals_raw = r.json() if r.status_code == 200 else []
+        deals = []
+        deal_ids = []
+        total_spent = 0.0
+
+        for d in deals_raw:
+            cl = d.get("clients") or {}
+            item = dict(d)
+            item.pop("clients", None)
+            clean_desc, dtype, stype, outcome = parse_deal_description(d.get("description") or "", d.get("title") or "")
+            item["description"] = clean_desc
+            item["deal_type"] = dtype
+            item["service_type"] = stype
+            item["closing_outcome"] = outcome
+            item["client_name"] = cl.get("name", "")
+            item["client_company"] = cl.get("company", "")
+            item["client_phone"] = cl.get("phone", "")
+            deals.append(item)
+            deal_ids.append(str(d.get("id")))
+            total_spent += float(d.get("amount") or 0.0)
+
+        parts = []
+        if deal_ids:
+            dpr = client.get("/deal_parts", params={"deal_id": f"in.({','.join(deal_ids)})", "select": "*,parts(sku,name,category)"})
+            if dpr.status_code == 200:
+                for dp in dpr.json():
+                    p = dp.get("parts") or {}
+                    deal_obj = next((dl for dl in deals if dl.get("id") == dp.get("deal_id")), None)
+                    parts.append({
+                        "deal_part_id": dp.get("id"),
+                        "deal_id": dp.get("deal_id"),
+                        "deal_title": deal_obj.get("title", f"Наряд #{dp.get('deal_id')}") if deal_obj else f"Наряд #{dp.get('deal_id')}",
+                        "date": deal_obj.get("created_at", "") if deal_obj else "",
+                        "part_id": dp.get("part_id"),
+                        "sku": p.get("sku") or f"P-{dp.get('part_id')}",
+                        "name": p.get("name") or f"Запчасть #{dp.get('part_id')}",
+                        "category": p.get("category") or "Запчасти",
+                        "quantity": dp.get("quantity") or 1,
+                        "purchase_price": float(dp.get("purchase_price") or 0.0),
+                        "selling_price": float(dp.get("selling_price") or 0.0),
+                        "total_price": float(dp.get("selling_price") or 0.0) * float(dp.get("quantity") or 1)
+                    })
+
+        return {
+            "equipment_id": eq_id,
+            "deals": deals,
+            "parts": parts,
+            "total_deals": len(deals),
+            "total_spent": total_spent,
+            "total_parts_count": sum(p["quantity"] for p in parts)
+        }
+
+DEFAULT_ROLE_PERMISSIONS = {
+    "admin": {
+        "dashboard": True, "deals_sto": True, "deals_parts": True, "deals_sales": True,
+        "warehouse": True, "equipment": True, "clients": True, "tasks": True,
+        "marketing": True, "users": True, "settings": True,
+        "can_delete_deals": True, "can_edit_closed_deals": True,
+        "can_view_revenue": True, "can_edit_tasks": True
+    },
+    "moderator": {
+        "dashboard": True, "deals_sto": True, "deals_parts": True, "deals_sales": False,
+        "warehouse": True, "equipment": True, "clients": True, "tasks": True,
+        "marketing": True, "users": False, "settings": False,
+        "can_delete_deals": False, "can_edit_closed_deals": False,
+        "can_view_revenue": True, "can_edit_tasks": False
+    },
+    "manager": {
+        "dashboard": True, "deals_sto": True, "deals_parts": True, "deals_sales": False,
+        "warehouse": True, "equipment": True, "clients": True, "tasks": True,
+        "marketing": False, "users": False, "settings": False,
+        "can_delete_deals": False, "can_edit_closed_deals": False,
+        "can_view_revenue": False, "can_edit_tasks": False
+    },
+    "sales_manager": {
+        "dashboard": True, "deals_sto": False, "deals_parts": False, "deals_sales": True,
+        "warehouse": True, "equipment": True, "clients": True, "tasks": True,
+        "marketing": True, "users": False, "settings": False,
+        "can_delete_deals": False, "can_edit_closed_deals": False,
+        "can_view_revenue": False, "can_edit_tasks": False
+    },
+    "mechanic": {
+        "dashboard": False, "deals_sto": True, "deals_parts": False, "deals_sales": False,
+        "warehouse": True, "equipment": True, "clients": False, "tasks": True,
+        "marketing": False, "users": False, "settings": False,
+        "can_delete_deals": False, "can_edit_closed_deals": False,
+        "can_view_revenue": False, "can_edit_tasks": False
+    }
+}
+
+def get_user_permissions(user_id: int, role: str = "mechanic") -> Dict[str, Any]:
+    base_perms = dict(DEFAULT_ROLE_PERMISSIONS.get(role, DEFAULT_ROLE_PERMISSIONS["mechanic"]))
+    if not SUPABASE_KEY:
+        return base_perms
+    with get_sb_client() as client:
+        r = client.get("/settings", params={"key": f"eq.user_perms_{user_id}"})
+        if r.status_code == 200 and r.json():
+            val = r.json()[0].get("value")
+            if val:
+                try:
+                    custom = json.loads(val) if isinstance(val, str) else val
+                    base_perms.update(custom)
+                except Exception:
+                    pass
+    return base_perms
+
+def save_user_permissions(user_id: int, permissions: Dict[str, Any]) -> Dict[str, Any]:
+    save_setting(f"user_perms_{user_id}", json.dumps(permissions, ensure_ascii=False))
+    return {"user_id": user_id, "permissions": permissions, "message": "Права доступа сотрудника сохранены"}
+
+def send_whatsapp_message(to_phone: str, message_text: str, template_name: Optional[str] = None) -> Dict[str, Any]:
+    settings = get_settings()
+    phone_id = (settings.get("whatsapp_phone_number_id") or "").strip()
+    token = (settings.get("whatsapp_access_token") or "").strip()
+    clean_phone = re.sub(r'[^0-9+]', '', to_phone)
+    if clean_phone.startswith('+'):
+        clean_phone = clean_phone[1:]
+
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_entry = {
+        "phone": to_phone,
+        "clean_phone": clean_phone,
+        "text": message_text,
+        "template": template_name,
+        "sent_at": now_str,
+        "status": "pending",
+        "detail": ""
+    }
+
+    if not phone_id or not token or token == "EAAGdummyTokenTest" or phone_id == "1234567890":
+        log_entry["status"] = "simulated"
+        log_entry["detail"] = "Режим симуляции: настройте WhatsApp Cloud API в разделе 'Маркетинг'"
+        save_whatsapp_log(log_entry)
+        return {"success": True, "simulated": True, "log": log_entry}
+
+    url = f"https://graph.facebook.com/v19.0/{phone_id}/messages"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": clean_phone,
+        "type": "text",
+        "text": {"preview_url": False, "body": message_text}
+    }
+    try:
+        with httpx.Client(timeout=15.0) as http_client:
+            resp = http_client.post(url, headers=headers, json=payload)
+            if resp.status_code in (200, 201):
+                log_entry["status"] = "sent"
+                log_entry["detail"] = resp.text
+                save_whatsapp_log(log_entry)
+                return {"success": True, "simulated": False, "log": log_entry}
+            else:
+                log_entry["status"] = "failed"
+                log_entry["detail"] = f"HTTP {resp.status_code}: {resp.text}"
+                save_whatsapp_log(log_entry)
+                return {"success": False, "simulated": False, "error": log_entry["detail"]}
+    except Exception as e:
+        log_entry["status"] = "failed"
+        log_entry["detail"] = str(e)
+        save_whatsapp_log(log_entry)
+        return {"success": False, "simulated": False, "error": str(e)}
+
+def get_whatsapp_logs() -> List[Dict[str, Any]]:
+    settings = get_settings()
+    raw = settings.get("whatsapp_logs_json") or "[]"
+    try:
+        return json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:
+        return []
+
+def save_whatsapp_log(entry: Dict[str, Any]) -> None:
+    logs = get_whatsapp_logs()
+    logs.insert(0, entry)
+    logs = logs[:100]
+    save_setting("whatsapp_logs_json", json.dumps(logs, ensure_ascii=False))
