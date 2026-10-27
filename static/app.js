@@ -512,7 +512,9 @@ function getActiveStages() {
 // Check if deal is closed/paid and locked for editing by non-admins (Requirement #5)
 function isDealLockedForUser(deal) {
   if (!deal) return false;
-  const isClosedOrPaid = (deal.stage === 'ready' || deal.stage === 'completed' || deal.stage === 'paid' || deal.stage === 'issued');
+  const activeStages = getActiveStages();
+  const lastStageId = (activeStages && activeStages.length > 0) ? activeStages[activeStages.length - 1].id : 'completed';
+  const isClosedOrPaid = (deal.stage === lastStageId || deal.stage === 'completed' || deal.stage === 'paid' || deal.stage === 'issued' || deal.stage === 'closed');
   const isAdmin = (state.currentUser?.role === 'admin' || state.currentUser?.permissions?.can_edit_closed_deals === true);
   return isClosedOrPaid && !isAdmin;
 }
@@ -1823,9 +1825,10 @@ function renderKanban() {
       if (d.deal_type === 'parts_sale' || d.deal_type === 'sales') return false;
     }
 
-    // Filter by stage (Requirement #11: "Все, кроме оплачено/закрыто" by default)
+    // Filter by stage (Requirement #11: "Все, кроме оплачено/закрыто" by default - only final stage excluded)
     if (stageFilter === 'active_only') {
-      if (d.stage === 'completed' || d.stage === 'ready' || d.stage === 'paid' || d.stage === 'issued') return false;
+      const lastStageId = (activeStages && activeStages.length > 0) ? activeStages[activeStages.length - 1].id : 'completed';
+      if (d.stage === lastStageId || d.stage === 'completed' || d.stage === 'paid' || d.stage === 'issued' || d.stage === 'closed') return false;
     } else if (stageFilter !== 'all') {
       if (d.stage !== stageFilter) return false;
     }
@@ -1899,9 +1902,10 @@ function renderDealsList() {
       if (d.deal_type === 'parts_sale' || d.deal_type === 'sales') return false;
     }
 
-    // Filter by stage (Requirement #11: "Все, кроме оплачено/закрыто" by default)
+    // Filter by stage (Requirement #11: "Все, кроме оплачено/закрыто" by default - only final stage excluded)
     if (stageFilter === 'active_only') {
-      if (d.stage === 'completed' || d.stage === 'ready' || d.stage === 'paid' || d.stage === 'issued') return false;
+      const lastStageId = (activeStages && activeStages.length > 0) ? activeStages[activeStages.length - 1].id : 'completed';
+      if (d.stage === lastStageId || d.stage === 'completed' || d.stage === 'paid' || d.stage === 'issued' || d.stage === 'closed') return false;
     } else if (stageFilter !== 'all') {
       if (d.stage !== stageFilter) return false;
     }
