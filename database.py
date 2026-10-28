@@ -305,12 +305,15 @@ def ensure_default_users():
     mgr_pass = os.getenv("DEFAULT_MANAGER_PASSWORD", "manager123")
     mech_user = os.getenv("DEFAULT_MECHANIC_USERNAME", "mechanic")
     mech_pass = os.getenv("DEFAULT_MECHANIC_PASSWORD", "mech123")
+    sales_user = os.getenv("DEFAULT_SALES_USERNAME", "sales_manager")
+    sales_pass = os.getenv("DEFAULT_SALES_PASSWORD", "sales123")
 
     defaults = [
         (admin_user, admin_pass, "Сергей Бабаян (Администратор)", "admin", "+37499112233"),
         (mod_user, mod_pass, "Смирнова Елена (Модератор)", "moderator", "+37499223344"),
         (mgr_user, mgr_pass, "Мкртчян Армен (Менеджер)", "manager", "+37499445566"),
         (mech_user, mech_pass, "Петров Сергей (Механик)", "mechanic", "+37499334455"),
+        (sales_user, sales_pass, "Менеджер по продажам (Спецтехника)", "sales_manager", "+37499778899"),
     ]
     with get_sb_client() as client:
         for u, p, fn, r, ph in defaults:
