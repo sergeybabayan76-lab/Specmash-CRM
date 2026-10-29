@@ -1,18 +1,13 @@
 @echo off
 chcp 65001 >nul
-title СТО Спецмаш CRM — Supabase PostgreSQL
+title СТО Спецмаш CRM — Сервер
 
 echo ========================================================
-echo   Запуск СТО Спецмаш CRM (FastAPI + Supabase PostgreSQL)
+echo        Запуск СТО Спецмаш CRM (FastAPI + Supabase PostgreSQL)
 echo ========================================================
 echo.
 
 cd /d "%~dp0"
-if not exist ".env" (
-    echo [ПРЕДУПРЕЖДЕНИЕ] Файл .env не найден. Создайте его из .env.example
-    echo и заполните параметры Supabase и APP_SESSION_SECRET перед входом.
-    echo.
-)
 
 :: Ensure Python is on PATH even if terminal wasn't refreshed
 set "PATH=%LOCALAPPDATA%\Programs\Python\Python312;%LOCALAPPDATA%\Programs\Python\Python312\Scripts;%PATH%"
@@ -26,23 +21,8 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-if not exist ".venv\Scripts\python.exe" (
-    echo Создание виртуального окружения...
-    python -m venv .venv
-    if %errorlevel% neq 0 (
-        echo [ОШИБКА] Не удалось создать виртуальное окружение.
-        pause
-        exit /b 1
-    )
-)
-
 echo [1/2] Проверка зависимостей...
-".venv\Scripts\python.exe" -m pip install -r requirements.txt --quiet
-if %errorlevel% neq 0 (
-    echo [ОШИБКА] Не удалось установить зависимости из requirements.txt.
-    pause
-    exit /b 1
-)
+python -m pip install -r requirements.txt --quiet
 
 echo [2/2] Запуск локального сервера...
 echo.
@@ -51,5 +31,5 @@ echo Для остановки сервера нажмите Ctrl + C в это�
 echo.
 
 start "" "http://localhost:8000"
-".venv\Scripts\python.exe" -m uvicorn server:app --host 127.0.0.1 --port 8000 --reload
+python -m uvicorn server:app --host 127.0.0.1 --port 8000 --reload
 pause

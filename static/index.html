@@ -8,7 +8,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Lucide Icons CDN -->
   <script src="https://unpkg.com/lucide@latest"></script>
-  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/styles.css?v=1.2.3.5">
   <script>
     tailwind.config = {
       theme: {
@@ -95,7 +95,7 @@
 
       <div class="mt-5 pt-3.5 border-t border-slate-800/80 text-[11px] text-slate-500 flex items-center justify-between">
         <span>СТО Спецмаш (AMD)</span>
-        <span class="font-mono text-slate-600">Supabase PostgreSQL</span>
+        <span class="font-mono text-slate-600">Supabase Protected</span>
       </div>
     </div>
   </div>
@@ -126,7 +126,10 @@
       <!-- Company Title -->
       <div class="flex-1 min-w-0">
         <h1 id="sidebar-company-name" class="font-bold text-white text-base leading-tight truncate">СТО Спецмаш</h1>
-        <p class="text-xs text-slate-400 truncate">Сервис спецтехники</p>
+        <p class="text-xs text-slate-400 truncate flex items-center gap-1.5">
+          <span>Сервис спецтехники</span>
+          <span class="text-[9px] bg-blue-900/60 text-blue-300 border border-blue-700/50 px-1.5 py-0.2 rounded font-mono font-semibold">v1.2.3</span>
+        </p>
       </div>
 
       <!-- Mobile Close Button -->
@@ -150,34 +153,58 @@
         <span>Дашборд & Выручка</span>
       </a>
 
-      <a href="#kanban" onclick="switchTab('kanban')" id="nav-kanban" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
-        <i data-lucide="trello" class="w-4 h-4"></i>
-        <span>Воронка & Канбан</span>
+      <!-- 1. Kanban СТО (Заказ-наряды) -->
+      <a href="#kanban" onclick="switchDealsDepartment('service'); switchTab('kanban')" id="nav-kanban" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
+        <i data-lucide="wrench" class="w-4 h-4 text-blue-400"></i>
+        <span>Заказ-наряды (СТО)</span>
         <span id="badge-kanban-count" class="ml-auto bg-slate-800 text-slate-300 text-xs px-2 py-0.5 rounded-full font-mono">0</span>
+      </a>
+
+      <!-- 2. Kanban Продажа запчастей (Requirement #1) -->
+      <a href="#kanban" onclick="switchDealsDepartment('parts_sale'); switchTab('kanban')" id="nav-parts-sales" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
+        <i data-lucide="shopping-cart" class="w-4 h-4 text-emerald-400"></i>
+        <span>Продажа запчастей</span>
+        <span id="badge-parts-sales-count" class="ml-auto bg-slate-800 text-slate-300 text-xs px-2 py-0.5 rounded-full font-mono">0</span>
+      </a>
+
+      <!-- 3. Kanban Отдел продаж спецтехники (Requirement #9) -->
+      <a href="#kanban" onclick="switchDealsDepartment('sales'); switchTab('kanban')" id="nav-sales" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
+        <i data-lucide="tractor" class="w-4 h-4 text-indigo-400"></i>
+        <span>Отдел продаж</span>
+        <span id="badge-sales-count" class="ml-auto bg-slate-800 text-slate-300 text-xs px-2 py-0.5 rounded-full font-mono">0</span>
       </a>
 
       <a href="#clients" onclick="switchTab('clients')" id="nav-clients" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
         <i data-lucide="users" class="w-4 h-4"></i>
         <span>База клиентов</span>
-        <span id="badge-clients-count" class="ml-auto text-xs text-slate-500">0</span>
+        <span id="badge-clients-count" class="ml-auto bg-slate-800 text-slate-300 text-xs px-2 py-0.5 rounded-full font-mono">0</span>
       </a>
 
       <a href="#equipment" onclick="switchTab('equipment')" id="nav-equipment" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
         <i data-lucide="truck" class="w-4 h-4"></i>
         <span>База техники</span>
-        <span id="badge-equipment-count" class="ml-auto text-xs text-slate-500">0</span>
+        <span id="badge-equipment-count" class="ml-auto bg-slate-800 text-slate-300 text-xs px-2 py-0.5 rounded-full font-mono">0</span>
       </a>
 
       <a href="#warehouse" onclick="switchTab('warehouse')" id="nav-warehouse" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
         <i data-lucide="package" class="w-4 h-4"></i>
         <span>Склад запчастей</span>
-        <span id="badge-lowstock-alert" class="ml-auto hidden bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs px-2 py-0.5 rounded-full font-mono">0</span>
+        <span id="badge-warehouse-count" class="ml-auto bg-slate-800 text-slate-300 text-xs px-2 py-0.5 rounded-full font-mono">0</span>
+        <span id="badge-lowstock-alert" class="hidden bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs px-2 py-0.5 rounded-full font-mono ml-1">0</span>
       </a>
 
       <a href="#tasks" onclick="switchTab('tasks')" id="nav-tasks" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
         <i data-lucide="calendar-check-2" class="w-4 h-4"></i>
         <span>Задачи & Планировщик</span>
-        <span id="badge-tasks-overdue" class="ml-auto hidden bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs px-2 py-0.5 rounded-full font-mono">0</span>
+        <span id="badge-tasks-count" class="ml-auto bg-slate-800 text-slate-300 text-xs px-2 py-0.5 rounded-full font-mono">0</span>
+        <span id="badge-tasks-overdue" class="hidden bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs px-2 py-0.5 rounded-full font-mono ml-1">0</span>
+      </a>
+
+      <!-- Маркетинг (WhatsApp Cloud API) (Requirement #8) -->
+      <a href="#marketing" onclick="switchTab('marketing')" id="nav-marketing" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
+        <i data-lucide="message-circle" class="w-4 h-4 text-emerald-400"></i>
+        <span>Маркетинг (WhatsApp)</span>
+        <span class="ml-auto bg-emerald-900/60 text-emerald-300 border border-emerald-700/50 text-[10px] px-1.5 py-0.5 rounded font-mono">Cloud API</span>
       </a>
 
       <a href="#users" onclick="switchTab('users')" id="nav-users" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
@@ -203,9 +230,9 @@
       <div class="flex items-center justify-between">
         <span class="flex items-center gap-1.5">
           <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-          <span>Supabase PostgreSQL</span>
+          <span>База Supabase</span>
         </span>
-        <span class="font-mono text-slate-400">облако</span>
+        <span class="font-mono text-slate-400">PostgreSQL</span>
       </div>
       <div class="text-[11px] text-slate-400 flex items-center justify-between">
         <span>СТО Спецмаш (AMD)</span>
@@ -267,12 +294,12 @@
         <!-- Current User Profile Pill with Dropdown -->
         <div class="relative">
           <div onclick="toggleUserDropdown(event)" id="user-profile-btn" class="flex items-center gap-2 pl-2 cursor-pointer hover:bg-slate-100 p-1.5 rounded-lg transition-colors border border-slate-200 shadow-sm select-none" title="Меню пользователя">
-            <div id="user-avatar" class="w-8 h-8 rounded-full bg-blue-600 text-white font-bold text-xs flex items-center justify-center uppercase shadow-sm">
-              АИ
+            <div id="user-avatar" class="w-8 h-8 rounded-full bg-purple-600 text-white font-bold text-xs flex items-center justify-center uppercase shadow-sm">
+              СБ
             </div>
             <div class="text-left hidden md:block">
-              <div id="user-display-name" class="font-bold text-xs text-slate-800 leading-tight">Иванов Алексей</div>
-              <div id="user-display-role" class="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Администратор</div>
+              <div id="user-display-name" class="font-bold text-xs text-slate-800 leading-tight">Сергей Бабаян</div>
+              <div id="user-display-role" class="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">👑 Администратор</div>
             </div>
             <i data-lucide="chevron-down" class="w-3.5 h-3.5 text-slate-400 ml-0.5"></i>
           </div>
@@ -280,8 +307,8 @@
           <!-- User Dropdown Menu -->
           <div id="user-dropdown-menu" class="hidden absolute right-0 mt-2 w-56 bg-white rounded-xl shadow-xl border border-slate-200 py-1.5 z-50 text-xs">
             <div class="px-3.5 py-2.5 border-b border-slate-100 bg-slate-50/60 rounded-t-xl">
-              <div id="dropdown-user-name" class="font-bold text-slate-900 truncate">Иванов Алексей</div>
-              <div id="dropdown-user-role" class="text-slate-500 text-[11px] font-medium mt-0.5">Администратор</div>
+              <div id="dropdown-user-name" class="font-bold text-slate-900 truncate">Сергей Бабаян</div>
+              <div id="dropdown-user-role" class="text-slate-500 text-[11px] font-medium mt-0.5">👑 Администратор</div>
             </div>
             <div class="p-1 space-y-0.5">
               <button onclick="openLoginModal(); closeUserDropdown();" class="w-full px-3 py-2 text-left hover:bg-slate-100 rounded-lg flex items-center gap-2 text-slate-700 transition-colors">
@@ -304,61 +331,104 @@
       <!-- ================= 1. TAB: DASHBOARD ================= -->
       <section id="tab-dashboard" class="space-y-6">
         <!-- Top Metrics Cards (AMD) -->
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
-          <!-- Card 1: Revenue (Visible for Admin & Moderator) -->
-          <div id="dash-card-revenue" class="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm relative overflow-hidden">
-            <div class="flex items-center justify-between mb-3">
-              <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">Общая выручка</span>
-              <span class="p-2 rounded-lg bg-emerald-50 text-emerald-600"><i data-lucide="badge-dollar-sign" class="w-5 h-5"></i></span>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+          <!-- Card 1: Total Revenue (Visible for Admin & Moderator) -->
+          <div id="dash-card-revenue" class="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm relative overflow-hidden flex flex-col justify-between">
+            <div>
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-xs font-bold uppercase tracking-wider text-slate-500">Общая выручка СТО</span>
+                <span class="p-2 rounded-lg bg-emerald-50 text-emerald-600"><i data-lucide="badge-dollar-sign" class="w-5 h-5"></i></span>
+              </div>
+              <div id="stat-revenue" class="text-2xl font-black text-slate-900 font-mono">0 AMD</div>
             </div>
-            <div id="stat-revenue" class="text-2xl font-black text-slate-900 font-mono">0 AMD</div>
-            <div class="mt-2 text-xs flex items-center gap-2">
-              <span class="text-emerald-700 font-medium">Чистая прибыль:</span>
-              <span id="stat-profit" class="font-bold font-mono text-emerald-600">0 AMD</span>
-              <span id="stat-margin" class="ml-auto px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[11px] font-mono font-semibold">0% маржа</span>
+            <div class="mt-3 pt-2.5 border-t border-slate-100 text-xs flex items-center justify-between">
+              <span class="text-slate-500">Прибыль: <strong id="stat-profit" class="font-mono text-emerald-600 font-bold">0 AMD</strong></span>
+              <span id="stat-margin" class="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[11px] font-mono font-semibold">0% маржа</span>
             </div>
           </div>
 
-          <!-- Card 2: Active Pipeline -->
-          <div class="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm relative overflow-hidden">
-            <div class="flex items-center justify-between mb-3">
-              <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">Наряды в работе</span>
-              <span class="p-2 rounded-lg bg-blue-50 text-blue-600"><i data-lucide="trello" class="w-5 h-5"></i></span>
+          <!-- Card 2: Parts Sales Revenue (Requirement #2) -->
+          <div id="dash-card-parts-revenue" class="bg-white p-5 rounded-xl border border-emerald-200/80 bg-gradient-to-br from-white to-emerald-50/20 shadow-sm relative overflow-hidden flex flex-col justify-between">
+            <div>
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-xs font-bold uppercase tracking-wider text-emerald-700">Выручка: Продажа запчастей</span>
+                <span class="p-2 rounded-lg bg-emerald-100/70 text-emerald-700"><i data-lucide="shopping-cart" class="w-5 h-5"></i></span>
+              </div>
+              <div id="stat-parts-revenue" class="text-2xl font-black text-emerald-700 font-mono">0 AMD</div>
             </div>
-            <div id="stat-active-deals" class="text-2xl font-black text-slate-900 font-mono">0</div>
-            <div class="mt-2 text-xs text-slate-500 flex items-center justify-between">
-              <span>Сумма в работе:</span>
+            <div class="mt-3 pt-2.5 border-t border-emerald-100/80 text-xs flex items-center justify-between">
+              <span class="text-slate-600">Прибыль: <strong id="stat-parts-profit" class="font-mono text-emerald-700">0 AMD</strong></span>
+              <div class="flex items-center gap-1.5">
+                <span id="stat-parts-margin" class="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[11px] font-mono font-semibold">0% маржа</span>
+                <span id="stat-parts-completed-count" class="text-[11px] text-slate-500 font-mono font-medium">0 продаж</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card 3: Service & Repair Revenue -->
+          <div id="dash-card-service-revenue" class="bg-white p-5 rounded-xl border border-blue-200/80 bg-gradient-to-br from-white to-blue-50/20 shadow-sm relative overflow-hidden flex flex-col justify-between">
+            <div>
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-xs font-bold uppercase tracking-wider text-blue-700">Выручка: Заказ-наряды (СТО)</span>
+                <span class="p-2 rounded-lg bg-blue-100/70 text-blue-700"><i data-lucide="wrench" class="w-5 h-5"></i></span>
+              </div>
+              <div id="stat-service-revenue" class="text-2xl font-black text-blue-800 font-mono">0 AMD</div>
+            </div>
+            <div class="mt-3 pt-2.5 border-t border-blue-100/80 text-xs flex items-center justify-between">
+              <span class="text-slate-600">Прибыль: <strong id="stat-service-profit" class="font-mono text-blue-700">0 AMD</strong></span>
+              <div class="flex items-center gap-1.5">
+                <span id="stat-service-margin" class="px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 text-[11px] font-mono font-semibold">0% маржа</span>
+                <span id="stat-service-completed-count" class="text-[11px] text-slate-500 font-mono font-medium">0 нарядов</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card 4: Active Deals Pipeline -->
+          <div class="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm relative overflow-hidden flex flex-col justify-between">
+            <div>
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-xs font-bold uppercase tracking-wider text-slate-500">Сделки и наряды в работе</span>
+                <span class="p-2 rounded-lg bg-indigo-50 text-indigo-600"><i data-lucide="trello" class="w-5 h-5"></i></span>
+              </div>
+              <div id="stat-active-deals" class="text-2xl font-black text-slate-900 font-mono">0</div>
+            </div>
+            <div class="mt-3 pt-2.5 border-t border-slate-100 text-xs flex items-center justify-between">
+              <span class="text-slate-500">Сумма в работе:</span>
               <span id="stat-active-volume" class="font-bold text-blue-600 font-mono">0 AMD</span>
             </div>
           </div>
 
-          <!-- Card 3: Warehouse & Inventory -->
-          <div class="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm relative overflow-hidden">
-            <div class="flex items-center justify-between mb-3">
-              <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">Оценка склада запчастей</span>
-              <span class="p-2 rounded-lg bg-amber-50 text-amber-600"><i data-lucide="boxes" class="w-5 h-5"></i></span>
+          <!-- Card 5: Warehouse & Inventory -->
+          <div class="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm relative overflow-hidden flex flex-col justify-between">
+            <div>
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-xs font-bold uppercase tracking-wider text-slate-500">Оценка склада запчастей</span>
+                <span class="p-2 rounded-lg bg-amber-50 text-amber-600"><i data-lucide="boxes" class="w-5 h-5"></i></span>
+              </div>
+              <div id="stat-inventory-retail" class="text-2xl font-black text-slate-900 font-mono">0 AMD</div>
             </div>
-            <div id="stat-inventory-retail" class="text-2xl font-black text-slate-900 font-mono">0 AMD</div>
-            <div class="mt-2 text-xs text-slate-500 flex items-center justify-between">
-              <span id="stat-inventory-cost-wrapper">Себестоимость: <strong id="stat-inventory-cost" class="font-mono">0 AMD</strong></span>
+            <div class="mt-3 pt-2.5 border-t border-slate-100 text-xs flex items-center justify-between">
+              <span id="stat-inventory-cost-wrapper" class="text-slate-500">Себест.: <strong id="stat-inventory-cost" class="font-mono text-slate-700">0 AMD</strong></span>
               <span id="stat-low-stock-pill" class="px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 font-semibold font-mono text-[11px]">0 в дефиците</span>
             </div>
           </div>
 
-          <!-- Card 4: Clients & Fleet -->
-          <div class="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm relative overflow-hidden">
-            <div class="flex items-center justify-between mb-3">
-              <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">Клиенты и Парк СТО</span>
-              <span class="p-2 rounded-lg bg-indigo-50 text-indigo-600"><i data-lucide="truck" class="w-5 h-5"></i></span>
+          <!-- Card 6: Clients & Fleet -->
+          <div class="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm relative overflow-hidden flex flex-col justify-between">
+            <div>
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-xs font-bold uppercase tracking-wider text-slate-500">Клиенты и Парк СТО</span>
+                <span class="p-2 rounded-lg bg-purple-50 text-purple-600"><i data-lucide="truck" class="w-5 h-5"></i></span>
+              </div>
+              <div class="flex items-baseline gap-2">
+                <span id="stat-clients-count" class="text-2xl font-black text-slate-900 font-mono">0</span>
+                <span class="text-xs text-slate-500">клиентов /</span>
+                <span id="stat-equipment-count" class="text-2xl font-black text-purple-600 font-mono">0</span>
+                <span class="text-xs text-slate-500">машин</span>
+              </div>
             </div>
-            <div class="flex items-baseline gap-2">
-              <span id="stat-clients-count" class="text-2xl font-black text-slate-900 font-mono">0</span>
-              <span class="text-xs text-slate-500">клиентов /</span>
-              <span id="stat-equipment-count" class="text-2xl font-black text-indigo-600 font-mono">0</span>
-              <span class="text-xs text-slate-500">машин</span>
-            </div>
-            <div class="mt-2 text-xs text-slate-500 flex items-center justify-between">
-              <span>Просрочено задач:</span>
+            <div class="mt-3 pt-2.5 border-t border-slate-100 text-xs flex items-center justify-between">
+              <span class="text-slate-500">Просрочено задач:</span>
               <span id="stat-overdue-tasks" class="font-bold text-rose-600 font-mono">0</span>
             </div>
           </div>
@@ -416,7 +486,7 @@
               </div>
               <button onclick="switchTab('warehouse')" class="text-xs text-blue-600 hover:underline font-medium">Перейти на склад &rarr;</button>
             </div>
-            <div id="critical-parts-table" class="space-y-2">
+            <div id="critical-parts-table" class="space-y-2 max-h-64 overflow-y-auto pr-1">
               <!-- Populated via JS -->
             </div>
           </div>
@@ -431,6 +501,82 @@
             </div>
           </div>
         </div>
+
+        <!-- Requirement #8: Mechanics Revenue Section (Strictly for Administrators) -->
+        <div id="dash-mechanics-revenue-section" class="hidden bg-white rounded-2xl border border-purple-200 p-6 shadow-sm space-y-4">
+          <div class="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-purple-100">
+            <div class="flex items-center gap-3">
+              <div class="w-9 h-9 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center font-bold shadow-inner">
+                <i data-lucide="wrench" class="w-5 h-5"></i>
+              </div>
+              <div>
+                <div class="flex items-center gap-2">
+                  <h3 class="font-bold text-slate-900 text-base">Выручка и эффективность механиков СТО</h3>
+                  <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 border border-purple-300 font-mono">👑 Только Администратор</span>
+                </div>
+                <p class="text-xs text-slate-500">Показатели выполненных нарядов, общей выручки, себестоимости и чистой прибыли по каждому мастеру</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr class="bg-purple-50/60 border-b border-purple-200 text-slate-600 font-bold uppercase tracking-wider text-[11px]">
+                  <th class="p-3.5">Мастер / Механик</th>
+                  <th class="p-3.5 text-center">Закрыто нарядов</th>
+                  <th class="p-3.5 text-center">В работе</th>
+                  <th class="p-3.5 text-right">Выручка (AMD)</th>
+                  <th class="p-3.5 text-right">Себестоимость (AMD)</th>
+                  <th class="p-3.5 text-right text-emerald-800">Чистая прибыль (AMD)</th>
+                  <th class="p-3.5 text-right">Средний чек</th>
+                </tr>
+              </thead>
+              <tbody id="dash-mechanics-revenue-body" class="divide-y divide-slate-100 font-mono">
+                <!-- Populated via JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <!-- Requirement #7: Top Sold Parts Widget (Топ 10 / 20 / 50 / 100) -->
+        <div class="bg-white rounded-2xl border border-slate-200/90 p-6 shadow-sm space-y-4">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="flex items-center gap-2.5">
+              <span class="p-2 bg-blue-50 text-blue-600 rounded-xl"><i data-lucide="trending-up" class="w-5 h-5"></i></span>
+              <div>
+                <h3 class="font-bold text-slate-900 text-base">Топ продаваемых запчастей</h3>
+                <p class="text-xs text-slate-500">Рейтинг востребованных деталей со склада и заказ-нарядов</p>
+              </div>
+            </div>
+            <!-- Quantity selector buttons: 10 / 20 / 50 / 100 -->
+            <div class="inline-flex p-1 bg-slate-100 rounded-xl text-xs font-semibold gap-1">
+              <button type="button" id="btn-top-10" onclick="setTopPartsLimit(10)" class="px-3 py-1 rounded-lg bg-white text-blue-600 shadow-xs font-bold transition-all">Топ 10</button>
+              <button type="button" id="btn-top-20" onclick="setTopPartsLimit(20)" class="px-3 py-1 rounded-lg text-slate-600 hover:text-slate-900 transition-all">Топ 20</button>
+              <button type="button" id="btn-top-50" onclick="setTopPartsLimit(50)" class="px-3 py-1 rounded-lg text-slate-600 hover:text-slate-900 transition-all">Топ 50</button>
+              <button type="button" id="btn-top-100" onclick="setTopPartsLimit(100)" class="px-3 py-1 rounded-lg text-slate-600 hover:text-slate-900 transition-all">Топ 100</button>
+            </div>
+          </div>
+
+          <div id="top-parts-container" class="overflow-x-auto max-h-72 overflow-y-auto border border-slate-100 rounded-xl shadow-inner">
+            <table class="w-full text-left text-xs">
+              <thead class="sticky top-0 bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase tracking-wider text-[11px] z-10">
+                <tr>
+                  <th class="p-3 w-12 text-center">#</th>
+                  <th class="p-3">Артикул / SKU</th>
+                  <th class="p-3">Наименование запчасти</th>
+                  <th class="p-3">Категория</th>
+                  <th class="p-3 text-center">Продано (шт)</th>
+                  <th class="p-3 text-right">Выручка (AMD)</th>
+                  <th class="p-3 text-center">Остаток на складе</th>
+                </tr>
+              </thead>
+              <tbody id="top-parts-table-body" class="divide-y divide-slate-100 font-sans">
+                <!-- Populated via JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
       </section>
 
       <!-- ================= 2. TAB: DEALS (KANBAN & BITRIX24 LIST) ================= -->
@@ -439,8 +585,24 @@
         <div class="flex flex-wrap items-center justify-between gap-4 mb-4 pb-3 border-b border-slate-200">
           <div class="flex items-center gap-3">
             <div>
-              <h2 class="text-xl font-bold text-slate-900">Сделки и заказ-наряды СТО</h2>
-              <p class="text-xs text-slate-500">СТО Спецмаш • Воронка ремонтов, контроль этапов и списание запчастей</p>
+              <h2 id="kanban-board-title" class="text-xl font-bold text-slate-900">Сделки и заказ-наряды СТО</h2>
+              <p id="kanban-board-subtitle" class="text-xs text-slate-500">СТО Спецмаш • Воронка ремонтов, контроль этапов и списание запчастей</p>
+            </div>
+
+            <!-- Department Switcher (Requirement #1: Отдельный Канбан "Продажа запчастей") -->
+            <div class="inline-flex p-1 bg-slate-200/90 rounded-xl shadow-inner text-xs font-semibold ml-1">
+              <button id="dept-btn-service" type="button" onclick="switchDealsDepartment('service')" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-blue-900 shadow-sm transition-all font-bold">
+                <i data-lucide="wrench" class="w-3.5 h-3.5 text-blue-600"></i>
+                <span>Заказ-наряды СТО</span>
+              </button>
+              <button id="dept-btn-parts-sale" type="button" onclick="switchDealsDepartment('parts_sale')" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-slate-600 hover:text-slate-900 transition-all font-semibold">
+                <i data-lucide="shopping-cart" class="w-3.5 h-3.5 text-emerald-600"></i>
+                <span>Продажа запчастей</span>
+              </button>
+              <button id="dept-btn-sales" type="button" onclick="switchDealsDepartment('sales')" class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-slate-600 hover:text-slate-900 transition-all font-semibold">
+                <i data-lucide="tractor" class="w-3.5 h-3.5 text-indigo-600"></i>
+                <span>Отдел продаж</span>
+              </button>
             </div>
           </div>
 
@@ -457,8 +619,9 @@
               </button>
             </div>
 
-            <!-- Stage Filter for List view -->
-            <select id="deals-stage-filter" onchange="renderDeals()" class="hidden bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs outline-none focus:border-blue-500 font-medium">
+            <!-- Stage Filter for Kanban & List view (Requirement #11) -->
+            <select id="deals-stage-filter" onchange="renderDeals()" class="bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs outline-none focus:border-blue-500 font-medium">
+              <option value="active_only" selected>⚡ Все, кроме оплачено/закрыто</option>
               <option value="all">Все стадии воронки</option>
               <option value="new">📥 Новые заявки</option>
               <option value="diagnostic">🔍 Диагностика</option>
@@ -469,6 +632,14 @@
               <option value="completed">💰 Оплачено / Закрыто</option>
             </select>
 
+            <!-- Deal Type Filter (Requirement #13) -->
+            <select id="deals-type-filter" onchange="renderDeals()" class="bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs outline-none focus:border-blue-500 font-medium">
+              <option value="all" selected>Все типы нарядов</option>
+              <option value="service">🛠️ Сервис</option>
+              <option value="pre_sale">🚜 Предпродажка</option>
+              <option value="warranty">🛡️ Гарантия</option>
+            </select>
+
             <input type="text" id="kanban-filter" oninput="renderDeals()" placeholder="Поиск по сделке, клиенту, технике CASE..." class="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs outline-none focus:border-blue-500 w-56">
 
             <div id="realtime-status-pill" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-medium transition-all" title="Синхронизация карточек в реальном времени активна">
@@ -476,9 +647,9 @@
               <span id="realtime-status-text">WebSockets Live</span>
             </div>
 
-            <button onclick="openDealModal()" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-sm transition-colors">
+            <button onclick="openDealModal(null, null, state.dealsDepartment)" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-sm transition-colors">
               <i data-lucide="plus" class="w-4 h-4"></i>
-              <span>Создать наряд</span>
+              <span id="btn-create-deal-text">Создать наряд</span>
             </button>
           </div>
         </div>
@@ -491,19 +662,21 @@
         </div>
 
         <!-- VIEW 2: Bitrix24 Deals List View with Interactive Stage Indicator -->
-        <div id="deals-list-view" class="hidden flex-1 overflow-y-auto space-y-3 pb-6">
-          <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-x-auto">
+        <div id="deals-list-view" class="hidden flex-1 overflow-hidden flex flex-col space-y-3 pb-6">
+          <!-- Requirement #3: Sticky, permanently visible horizontal and vertical scrollbar -->
+          <div id="deals-table-scroll-container" class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-x-auto overflow-y-auto max-h-[calc(100vh-270px)] sticky-horizontal-scroll">
             <table class="w-full text-left border-collapse text-sm">
-              <thead>
+              <thead class="sticky top-0 bg-slate-50 z-10 shadow-xs">
                 <tr class="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 font-semibold uppercase tracking-wider">
                   <th class="p-3.5">ID / Наряд</th>
                   <th class="p-3.5">Клиент / Контакт</th>
-                  <th class="p-3.5">Техника CASE</th>
+                  <th class="p-3.5">Техника</th>
                   <th class="p-3.5 min-w-[360px]">Стадия наряда (Воронка Bitrix24)</th>
                   <th class="p-3.5 text-right font-mono">Сумма (AMD)</th>
                   <th class="p-3.5 text-right font-mono text-slate-400 col-deal-cost">Себест. (AMD)</th>
                   <th class="p-3.5">Ответственный</th>
                   <th class="p-3.5">Дедлайн</th>
+                  <th class="p-3.5 whitespace-nowrap">Дата регистрации</th>
                   <th class="p-3.5 text-right">Действия</th>
                 </tr>
               </thead>
@@ -679,6 +852,179 @@
         </div>
       </section>
 
+
+      <!-- ================= 8. TAB: MARKETING & WHATSAPP CLOUD API (Requirement #8) ================= -->
+      <section id="tab-marketing" class="hidden space-y-6">
+        <div class="flex flex-wrap items-center justify-between gap-4 pb-3 border-b border-slate-200">
+          <div>
+            <h2 class="text-xl font-bold text-slate-900 flex items-center gap-2">
+              <i data-lucide="message-circle" class="w-6 h-6 text-emerald-600"></i>
+              <span>Маркетинг & Рассылка WhatsApp Cloud API</span>
+            </h2>
+            <p class="text-xs text-slate-500">Автоматическая рассылка сервисных напоминаний, спецпредложений и статусов ремонта клиентам</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <span id="wa-connection-pill" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+              <span class="w-2 h-2 rounded-full bg-slate-400"></span>
+              <span id="wa-connection-text">Проверка статуса...</span>
+            </span>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <!-- Column 1: WhatsApp Cloud API Credentials & Setup -->
+          <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+            <div class="flex items-center justify-between">
+              <h3 class="font-bold text-slate-900 text-sm flex items-center gap-2">
+                <i data-lucide="key" class="w-4 h-4 text-emerald-600"></i>
+                <span>Настройки Meta Cloud API</span>
+              </h3>
+              <a href="https://developers.facebook.com/apps/" target="_blank" class="text-[11px] text-blue-600 hover:underline flex items-center gap-1 font-medium">
+                <span>Meta Portal</span>
+                <i data-lucide="external-link" class="w-3 h-3"></i>
+              </a>
+            </div>
+
+            <form id="form-whatsapp-config" onsubmit="saveWhatsAppConfig(event)" class="space-y-3 text-xs">
+              <div>
+                <label class="block font-bold text-slate-700 uppercase text-[10px] mb-1">Phone Number ID *</label>
+                <input type="text" id="wa-phone-number-id" placeholder="Например: 104829182746192" class="w-full border border-slate-300 rounded-lg p-2.5 outline-none focus:border-emerald-500 font-mono text-xs">
+              </div>
+
+              <div>
+                <label class="block font-bold text-slate-700 uppercase text-[10px] mb-1">WhatsApp Business Account ID (WABA ID)</label>
+                <input type="text" id="wa-waba-id" placeholder="Например: 192837465019283" class="w-full border border-slate-300 rounded-lg p-2.5 outline-none focus:border-emerald-500 font-mono text-xs">
+              </div>
+
+              <div>
+                <label class="block font-bold text-slate-700 uppercase text-[10px] mb-1">Permanent Access Token (Meta Graph API) *</label>
+                <input type="password" id="wa-access-token" placeholder="EAAG..." class="w-full border border-slate-300 rounded-lg p-2.5 outline-none focus:border-emerald-500 font-mono text-xs">
+                <p class="text-[10px] text-slate-400 mt-0.5">Токен системного пользователя с разрешением <code>whatsapp_business_messaging</code></p>
+              </div>
+
+              <div>
+                <label class="block font-bold text-slate-700 uppercase text-[10px] mb-1">Имя отправителя в шапке сообщений</label>
+                <input type="text" id="wa-sender-name" placeholder="СТО Спецмаш" class="w-full border border-slate-300 rounded-lg p-2.5 outline-none focus:border-emerald-500 text-xs">
+              </div>
+
+              <div class="pt-2 flex gap-2">
+                <button type="submit" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-3 rounded-lg text-xs shadow-sm transition-all flex items-center justify-center gap-1.5">
+                  <i data-lucide="save" class="w-3.5 h-3.5"></i>
+                  <span>Сохранить API</span>
+                </button>
+                <button type="button" onclick="testWhatsAppConnection()" class="px-3 py-2 border border-slate-300 hover:bg-slate-50 text-slate-700 rounded-lg text-xs font-semibold">
+                  Тест связи
+                </button>
+              </div>
+            </form>
+          </div>
+
+          <!-- Column 2 & 3: Campaign Composer & Live WhatsApp Preview -->
+          <div class="lg:col-span-2 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+            <h3 class="font-bold text-slate-900 text-sm flex items-center gap-2">
+              <i data-lucide="send" class="w-4 h-4 text-emerald-600"></i>
+              <span>Запуск рассылки сообщений клиентам</span>
+            </h3>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <!-- Composer Options -->
+              <div class="space-y-3 text-xs">
+                <div>
+                  <label class="block font-bold text-slate-700 uppercase text-[10px] mb-1">Аудитория получателей *</label>
+                  <select id="wa-recipient-type" onchange="handleWaAudienceChange(this.value)" class="w-full border border-slate-300 rounded-lg p-2.5 outline-none focus:border-emerald-500 font-medium bg-white">
+                    <option value="all">Все клиенты из базы (по номерам телефонов)</option>
+                    <option value="active_deals">Клиенты с активными заказ-нарядами в работе</option>
+                    <option value="completed_deals">Клиенты с завершенными / закрытыми нарядами</option>
+                  </select>
+                  <div id="wa-audience-count-hint" class="text-[11px] text-emerald-700 font-medium mt-1">Определено получателей: <strong>23</strong></div>
+                </div>
+
+                <div>
+                  <label class="block font-bold text-slate-700 uppercase text-[10px] mb-1">Готовые шаблоны сообщений</label>
+                  <select id="wa-template-preset" onchange="applyWaTemplate(this.value)" class="w-full border border-slate-300 rounded-lg p-2 outline-none focus:border-emerald-500 bg-white">
+                    <option value="">— Выберите шаблон или введите свой текст —</option>
+                    <option value="service_reminder">🛠️ Напоминание о плановом ТО спецтехники</option>
+                    <option value="deal_ready">✅ Уведомление: Заказ-наряд готов к выдаче</option>
+                    <option value="parts_promo">📦 Спецпредложение: Скидка на расходники и фильтры</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label class="block font-bold text-slate-700 uppercase text-[10px] mb-1">Текст сообщения *</label>
+                  <textarea id="wa-message-text" rows="5" oninput="updateWaLivePreview()" placeholder="Здравствуйте, {Имя}!..." class="w-full border border-slate-300 rounded-lg p-2.5 outline-none focus:border-emerald-500 font-sans"></textarea>
+                  <div class="flex items-center gap-1 mt-1 text-[10px] text-slate-500">
+                    <span>Подстановка:</span>
+                    <button type="button" onclick="insertWaTag('{Имя}')" class="px-1.5 py-0.5 bg-slate-100 hover:bg-slate-200 rounded font-mono text-slate-700">{Имя}</button>
+                    <button type="button" onclick="insertWaTag('{Компания}')" class="px-1.5 py-0.5 bg-slate-100 hover:bg-slate-200 rounded font-mono text-slate-700">{Компания}</button>
+                    <button type="button" onclick="insertWaTag('{СТО}')" class="px-1.5 py-0.5 bg-slate-100 hover:bg-slate-200 rounded font-mono text-slate-700">{СТО}</button>
+                  </div>
+                </div>
+
+                <div class="pt-2">
+                  <button type="button" id="btn-wa-send-broadcast" onclick="sendWhatsAppBroadcast()" class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 px-4 rounded-xl text-xs shadow-md transition-all flex items-center justify-center gap-2">
+                    <i data-lucide="send" class="w-4 h-4"></i>
+                    <span>Запустить рассылку в WhatsApp</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Live WhatsApp Message Mockup -->
+              <div class="bg-slate-100 rounded-xl p-4 border border-slate-200 flex flex-col justify-between">
+                <div>
+                  <div class="flex items-center gap-2 pb-2.5 border-b border-slate-200 mb-3 text-xs">
+                    <div class="w-7 h-7 rounded-full bg-emerald-600 text-white flex items-center justify-center font-bold text-xs">WA</div>
+                    <div>
+                      <div class="font-bold text-slate-900 leading-tight" id="wa-preview-sender-name">СТО Спецмаш</div>
+                      <div class="text-[10px] text-emerald-600 font-medium">WhatsApp Business Verified</div>
+                    </div>
+                  </div>
+
+                  <div class="wa-bubble-preview text-xs text-slate-800 space-y-1">
+                    <div id="wa-live-preview-content" class="whitespace-pre-wrap font-sans">Здравствуйте! Рады приветствовать вас в СТО Спецмаш.</div>
+                    <div class="text-[10px] text-slate-400 text-right font-mono flex items-center justify-end gap-1">
+                      <span>12:00</span>
+                      <span class="text-blue-500 font-bold">✓✓</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="text-[11px] text-slate-500 text-center pt-3 border-t border-slate-200 mt-4">
+                  Сообщения отправляются через защищенный Cloud API напрямую на смартфоны клиентов
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- WhatsApp Broadcast Logs Table -->
+        <div class="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-3">
+          <div class="flex items-center justify-between">
+            <h3 class="font-bold text-slate-900 text-sm flex items-center gap-2">
+              <i data-lucide="history" class="w-4 h-4 text-slate-500"></i>
+              <span>Журнал отправленных сообщений WhatsApp</span>
+            </h3>
+            <button onclick="loadWhatsAppLogs()" class="text-xs text-blue-600 hover:underline font-medium">Обновить журнал</button>
+          </div>
+
+          <div class="overflow-x-auto max-h-60 overflow-y-auto border border-slate-100 rounded-xl">
+            <table class="w-full text-left text-xs">
+              <thead class="sticky top-0 bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase tracking-wider text-[11px]">
+                <tr>
+                  <th class="p-3">Дата / Время</th>
+                  <th class="p-3">Получатель (Телефон)</th>
+                  <th class="p-3">Текст сообщения</th>
+                  <th class="p-3">Статус доставки</th>
+                  <th class="p-3">Ответ сервера</th>
+                </tr>
+              </thead>
+              <tbody id="wa-logs-table-body" class="divide-y divide-slate-100">
+                <tr><td colspan="5" class="p-6 text-center text-slate-400 text-xs">История рассылок пока пуста</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
       <!-- ================= 7. TAB: USERS & ROLES ================= -->
       <section id="tab-users" class="hidden space-y-6">
         <!-- Branding & Logo Settings Block -->
@@ -743,7 +1089,7 @@
           </div>
 
           <!-- Roles Info Cards -->
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div class="p-3.5 bg-purple-50/60 rounded-xl border border-purple-200 text-xs space-y-1">
               <div class="font-bold text-purple-900 flex items-center gap-1.5">
                 <span>👑 Администратор</span>
@@ -755,6 +1101,12 @@
                 <span>🛡️ Модератор (Приемщик)</span>
               </div>
               <p class="text-slate-600 text-[11px]">Управление клиентами, заказ-нарядами воронки, складом и планировщиком.</p>
+            </div>
+            <div class="p-3.5 bg-indigo-50/60 rounded-xl border border-indigo-200 text-xs space-y-1">
+              <div class="font-bold text-indigo-900 flex items-center gap-1.5">
+                <span>🚜 Менеджер по продажам</span>
+              </div>
+              <p class="text-slate-600 text-[11px]">Отдел продаж спецтехники, лиды, подбор, коммерческие предложения и отгрузка.</p>
             </div>
             <div class="p-3.5 bg-amber-50/60 rounded-xl border border-amber-200 text-xs space-y-1">
               <div class="font-bold text-amber-900 flex items-center gap-1.5">
@@ -772,6 +1124,7 @@
                   <th class="p-3.5">Сотрудник (ФИО)</th>
                   <th class="p-3.5">Логин</th>
                   <th class="p-3.5">Роль в СТО</th>
+                  <th class="p-3.5">Статус</th>
                   <th class="p-3.5">Телефон</th>
                   <th class="p-3.5">Дата регистрации</th>
                   <th class="p-3.5 text-right">Действия</th>
@@ -796,40 +1149,146 @@
         <div class="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">
           <div class="flex items-center gap-3">
             <div class="p-2.5 rounded-lg bg-emerald-50 text-emerald-600">
-              <i data-lucide="file-down" class="w-6 h-6"></i>
+              <i data-lucide="file-spreadsheet" class="w-6 h-6"></i>
             </div>
             <div>
-              <h3 class="font-bold text-slate-900 text-base">Экспорт в Excel / CSV</h3>
-              <p class="text-xs text-slate-500">Файлы выгружаются с кодировкой UTF-8 BOM и корректно открываются в любом Excel</p>
+              <h3 class="font-bold text-slate-900 text-base">Экспорт баз в Excel (.XLSX) и CSV</h3>
+              <p class="text-xs text-slate-500">Полноценные файлы Microsoft Excel с распределением данных по колонкам и автоформатированием</p>
             </div>
           </div>
 
-          <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 pt-2">
-            <a href="/api/export/clients" class="flex flex-col items-center justify-center p-4 border border-slate-200 hover:border-blue-500 hover:bg-blue-50/50 rounded-lg transition-all text-center">
-              <i data-lucide="users" class="w-5 h-5 text-blue-600 mb-2"></i>
-              <span class="text-xs font-bold text-slate-800">Клиенты</span>
-              <span class="text-[10px] text-slate-400 mt-0.5">.CSV</span>
-            </a>
-            <a href="/api/export/equipment" class="flex flex-col items-center justify-center p-4 border border-slate-200 hover:border-emerald-500 hover:bg-emerald-50/50 rounded-lg transition-all text-center">
-              <i data-lucide="truck" class="w-5 h-5 text-emerald-600 mb-2"></i>
-              <span class="text-xs font-bold text-slate-800">Техника</span>
-              <span class="text-[10px] text-slate-400 mt-0.5">.CSV</span>
-            </a>
-            <a href="/api/export/parts" class="flex flex-col items-center justify-center p-4 border border-slate-200 hover:border-amber-500 hover:bg-amber-50/50 rounded-lg transition-all text-center">
-              <i data-lucide="boxes" class="w-5 h-5 text-amber-600 mb-2"></i>
-              <span class="text-xs font-bold text-slate-800">Склад</span>
-              <span class="text-[10px] text-slate-400 mt-0.5">.CSV</span>
-            </a>
-            <a href="/api/export/deals" class="flex flex-col items-center justify-center p-4 border border-slate-200 hover:border-purple-500 hover:bg-purple-50/50 rounded-lg transition-all text-center">
-              <i data-lucide="trello" class="w-5 h-5 text-purple-600 mb-2"></i>
-              <span class="text-xs font-bold text-slate-800">Сделки</span>
-              <span class="text-[10px] text-slate-400 mt-0.5">.CSV</span>
-            </a>
-            <a href="/api/export/users" class="flex flex-col items-center justify-center p-4 border border-slate-200 hover:border-indigo-500 hover:bg-indigo-50/50 rounded-lg transition-all text-center">
-              <i data-lucide="user-check" class="w-5 h-5 text-indigo-600 mb-2"></i>
-              <span class="text-xs font-bold text-slate-800">Сотрудники</span>
-              <span class="text-[10px] text-slate-400 mt-0.5">.CSV</span>
-            </a>
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3.5 pt-2">
+            <!-- 1. Клиенты -->
+            <div class="p-4 border border-slate-200 hover:border-blue-500 rounded-xl transition-all bg-white flex flex-col justify-between shadow-xs">
+              <div class="flex items-center gap-2 mb-3">
+                <div class="p-2 bg-blue-50 text-blue-600 rounded-lg">
+                  <i data-lucide="users" class="w-4 h-4"></i>
+                </div>
+                <div>
+                  <h4 class="text-xs font-bold text-slate-800">База клиентов</h4>
+                  <p class="text-[10px] text-slate-400">Контакты, ИНН, банки</p>
+                </div>
+              </div>
+              <div class="space-y-1.5 pt-2 border-t border-slate-100">
+                <a href="/api/export/clients/xlsx" onclick="downloadTableExport('clients', 'xlsx'); return false;" download class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 shadow-xs transition-colors">
+                  <i data-lucide="file-spreadsheet" class="w-3.5 h-3.5"></i>
+                  <span>Скачать .XLSX</span>
+                </a>
+                <a href="/api/export/clients?format=csv" onclick="downloadTableExport('clients', 'csv'); return false;" download class="w-full text-slate-500 hover:text-slate-800 hover:bg-slate-50 text-[11px] font-medium py-1 px-2 rounded-md flex items-center justify-center gap-1 transition-colors">
+                  <span>Выгрузить в .CSV</span>
+                </a>
+              </div>
+            </div>
+
+            <!-- 2. Техника -->
+            <div class="p-4 border border-slate-200 hover:border-emerald-500 rounded-xl transition-all bg-white flex flex-col justify-between shadow-xs">
+              <div class="flex items-center gap-2 mb-3">
+                <div class="p-2 bg-emerald-50 text-emerald-600 rounded-lg">
+                  <i data-lucide="truck" class="w-4 h-4"></i>
+                </div>
+                <div>
+                  <h4 class="text-xs font-bold text-slate-800">База техники</h4>
+                  <p class="text-[10px] text-slate-400">VIN, модели, часы</p>
+                </div>
+              </div>
+              <div class="space-y-1.5 pt-2 border-t border-slate-100">
+                <a href="/api/export/equipment/xlsx" onclick="downloadTableExport('equipment', 'xlsx'); return false;" download class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 shadow-xs transition-colors">
+                  <i data-lucide="file-spreadsheet" class="w-3.5 h-3.5"></i>
+                  <span>Скачать .XLSX</span>
+                </a>
+                <a href="/api/export/equipment?format=csv" onclick="downloadTableExport('equipment', 'csv'); return false;" download class="w-full text-slate-500 hover:text-slate-800 hover:bg-slate-50 text-[11px] font-medium py-1 px-2 rounded-md flex items-center justify-center gap-1 transition-colors">
+                  <span>Выгрузить в .CSV</span>
+                </a>
+              </div>
+            </div>
+
+            <!-- 3. Склад -->
+            <div class="p-4 border border-slate-200 hover:border-amber-500 rounded-xl transition-all bg-white flex flex-col justify-between shadow-xs">
+              <div class="flex items-center gap-2 mb-3">
+                <div class="p-2 bg-amber-50 text-amber-600 rounded-lg">
+                  <i data-lucide="boxes" class="w-4 h-4"></i>
+                </div>
+                <div>
+                  <h4 class="text-xs font-bold text-slate-800">Склад запчастей</h4>
+                  <p class="text-[10px] text-slate-400">Артикулы, остатки</p>
+                </div>
+              </div>
+              <div class="space-y-1.5 pt-2 border-t border-slate-100">
+                <a href="/api/export/parts/xlsx" onclick="downloadTableExport('parts', 'xlsx'); return false;" download class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 shadow-xs transition-colors">
+                  <i data-lucide="file-spreadsheet" class="w-3.5 h-3.5"></i>
+                  <span>Скачать .XLSX</span>
+                </a>
+                <a href="/api/export/parts?format=csv" onclick="downloadTableExport('parts', 'csv'); return false;" download class="w-full text-slate-500 hover:text-slate-800 hover:bg-slate-50 text-[11px] font-medium py-1 px-2 rounded-md flex items-center justify-center gap-1 transition-colors">
+                  <span>Выгрузить в .CSV</span>
+                </a>
+              </div>
+            </div>
+
+            <!-- 4. Сделки -->
+            <div class="p-4 border border-slate-200 hover:border-purple-500 rounded-xl transition-all bg-white flex flex-col justify-between shadow-xs">
+              <div class="flex items-center gap-2 mb-3">
+                <div class="p-2 bg-purple-50 text-purple-600 rounded-lg">
+                  <i data-lucide="trello" class="w-4 h-4"></i>
+                </div>
+                <div>
+                  <h4 class="text-xs font-bold text-slate-800">База нарядов</h4>
+                  <p class="text-[10px] text-slate-400">Сделки, сметы, суммы</p>
+                </div>
+              </div>
+              <div class="space-y-1.5 pt-2 border-t border-slate-100">
+                <a href="/api/export/deals/xlsx" onclick="downloadTableExport('deals', 'xlsx'); return false;" download class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 shadow-xs transition-colors">
+                  <i data-lucide="file-spreadsheet" class="w-3.5 h-3.5"></i>
+                  <span>Скачать .XLSX</span>
+                </a>
+                <a href="/api/export/deals?format=csv" onclick="downloadTableExport('deals', 'csv'); return false;" download class="w-full text-slate-500 hover:text-slate-800 hover:bg-slate-50 text-[11px] font-medium py-1 px-2 rounded-md flex items-center justify-center gap-1 transition-colors">
+                  <span>Выгрузить в .CSV</span>
+                </a>
+              </div>
+            </div>
+
+            <!-- 5. Сотрудники -->
+            <div class="p-4 border border-slate-200 hover:border-indigo-500 rounded-xl transition-all bg-white flex flex-col justify-between shadow-xs">
+              <div class="flex items-center gap-2 mb-3">
+                <div class="p-2 bg-indigo-50 text-indigo-600 rounded-lg">
+                  <i data-lucide="user-check" class="w-4 h-4"></i>
+                </div>
+                <div>
+                  <h4 class="text-xs font-bold text-slate-800">Сотрудники</h4>
+                  <p class="text-[10px] text-slate-400">Роли, доступы, тел.</p>
+                </div>
+              </div>
+              <div class="space-y-1.5 pt-2 border-t border-slate-100">
+                <a href="/api/export/users/xlsx" onclick="downloadTableExport('users', 'xlsx'); return false;" download class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 shadow-xs transition-colors">
+                  <i data-lucide="file-spreadsheet" class="w-3.5 h-3.5"></i>
+                  <span>Скачать .XLSX</span>
+                </a>
+                <a href="/api/export/users?format=csv" onclick="downloadTableExport('users', 'csv'); return false;" download class="w-full text-slate-500 hover:text-slate-800 hover:bg-slate-50 text-[11px] font-medium py-1 px-2 rounded-md flex items-center justify-center gap-1 transition-colors">
+                  <span>Выгрузить в .CSV</span>
+                </a>
+              </div>
+            </div>
+
+            <!-- 6. Задачи и напоминания -->
+            <div class="p-4 border border-slate-200 hover:border-amber-500 rounded-xl transition-all bg-white flex flex-col justify-between shadow-xs">
+              <div class="flex items-center gap-2 mb-3">
+                <div class="p-2 bg-amber-50 text-amber-600 rounded-lg">
+                  <i data-lucide="check-square" class="w-4 h-4"></i>
+                </div>
+                <div>
+                  <h4 class="text-xs font-bold text-slate-800">Задачи</h4>
+                  <p class="text-[10px] text-slate-400">Сроки, ответственные</p>
+                </div>
+              </div>
+              <div class="space-y-1.5 pt-2 border-t border-slate-100">
+                <a href="/api/export/tasks/xlsx" onclick="downloadTableExport('tasks', 'xlsx'); return false;" download class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs py-2 px-3 rounded-lg flex items-center justify-center gap-1.5 shadow-xs transition-colors">
+                  <i data-lucide="file-spreadsheet" class="w-3.5 h-3.5"></i>
+                  <span>Скачать .XLSX</span>
+                </a>
+                <a href="/api/export/tasks?format=csv" onclick="downloadTableExport('tasks', 'csv'); return false;" download class="w-full text-slate-500 hover:text-slate-800 hover:bg-slate-50 text-[11px] font-medium py-1 px-2 rounded-md flex items-center justify-center gap-1 transition-colors">
+                  <span>Выгрузить в .CSV</span>
+                </a>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -943,7 +1402,7 @@
 
               <div class="md:col-span-2">
                 <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Ответственное лицо по умолчанию</label>
-                <input type="text" id="setting-default-responsible" value="Иванов Алексей Викторович (Директор)" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
+                <input type="text" id="setting-default-responsible" value="Сергей Бабаян (Директор)" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
               </div>
             </div>
           </div>
@@ -1093,8 +1552,8 @@
                 <i data-lucide="database" class="w-5 h-5"></i>
               </div>
               <div>
-                <h3 class="font-bold text-slate-900 text-base">Supabase PostgreSQL и резервные копии</h3>
-                <p class="text-xs text-slate-400">Состояние облачной базы, экспорт и восстановление JSON</p>
+                <h3 class="font-bold text-slate-900 text-base">База данных Supabase и резервные копии</h3>
+                <p class="text-xs text-slate-400">Состояние облачной базы Supabase и создание резервных копий</p>
               </div>
             </div>
 
@@ -1136,7 +1595,7 @@
                     <span>Активно</span>
                   </span>
                 </div>
-                <p class="text-[11px] text-slate-400">Данные хранятся в Supabase. Экспортируйте резервную копию JSON или восстановите данные из файла.</p>
+                <p class="text-[11px] text-slate-400">Данные синхронизируются локально и на сервере. Скачайте копию базы или восстановите из файла в один клик.</p>
               </div>
               <div class="flex flex-wrap items-center gap-2">
                 <button type="button" onclick="exportJsonBackup()" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5 shadow-sm transition-colors">
@@ -1148,9 +1607,9 @@
                   <span>Восстановить JSON</span>
                   <input type="file" id="backup-file-input" accept=".json" onchange="handleRestoreJsonFile(event)" class="hidden">
                 </label>
-                <button type="button" onclick="downloadDatabaseBackup()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5 shadow-sm transition-colors" title="Скачать резервную копию JSON">
+                <button type="button" onclick="downloadDatabaseBackup()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5 shadow-sm transition-colors" title="Скачать резервную копию Supabase">
                   <i data-lucide="download" class="w-4 h-4"></i>
-                  <span>Скачать JSON</span>
+                  <span>Скачать .db</span>
                 </button>
               </div>
             </div>
@@ -1197,6 +1656,8 @@
             <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Роль *</label>
             <select id="user-role" required class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white font-medium">
               <option value="mechanic">🔧 Механик</option>
+              <option value="manager">💼 Менеджер</option>
+              <option value="sales_manager">🚜 Менеджер по продажам</option>
               <option value="moderator">🛡️ Модератор</option>
               <option value="admin">👑 Администратор</option>
             </select>
@@ -1238,7 +1699,7 @@
 
       <div class="relative my-4 text-center">
         <hr class="border-slate-200">
-        <span class="bg-white px-2 text-[11px] text-slate-400 absolute top-1/2 -translate-y-1/2 left-1/2 -translate-x-1/2">вход сотрудника</span>
+        <span class="bg-white px-2 text-[11px] text-slate-400 absolute top-1/2 -translate-y-1/2 left-1/2 -translate-x-1/2">или ввод логина</span>
       </div>
 
       <!-- Manual login form -->
@@ -1309,10 +1770,98 @@
 
       <form id="form-deal" onsubmit="saveDeal(event)" class="mt-4 space-y-4">
         <input type="hidden" id="deal-id">
-        
+        <input type="hidden" id="deal-type" value="service">
+
+        <!-- Requirement #5: Locked Deal Alert Banner -->
+        <div id="deal-locked-banner" class="hidden p-3 bg-amber-50 border border-amber-300 rounded-xl text-xs text-amber-900 flex items-center gap-2.5 font-medium shadow-xs">
+          <i data-lucide="lock" class="w-4 h-4 text-amber-600 flex-shrink-0"></i>
+          <span>Сделка в стадии «Оплачено» / «Выдано» заблокирована. Редактирование и списание запчастей разрешено только Администратору.</span>
+        </div>
+
+        <!-- Deal Department Switcher: СТО, Продажа з/ч, Отдел продаж (Requirement #9) -->
+        <div class="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl text-xs font-semibold">
+          <button type="button" id="deal-type-btn-service" onclick="setDealModalType('service')" class="flex-1 py-1.5 px-2.5 rounded-lg text-xs font-bold transition-all bg-white text-blue-900 shadow-xs flex items-center justify-center gap-1">
+            <i data-lucide="wrench" class="w-3.5 h-3.5 text-blue-600"></i>
+            <span>СТО</span>
+          </button>
+          <button type="button" id="deal-type-btn-parts" onclick="setDealModalType('parts_sale')" class="flex-1 py-1.5 px-2.5 rounded-lg text-xs font-semibold transition-all text-slate-600 hover:text-slate-900 flex items-center justify-center gap-1">
+            <i data-lucide="shopping-cart" class="w-3.5 h-3.5 text-emerald-600"></i>
+            <span>Продажа з/ч</span>
+          </button>
+          <button type="button" id="deal-type-btn-sales" onclick="setDealModalType('sales')" class="flex-1 py-1.5 px-2.5 rounded-lg text-xs font-semibold transition-all text-slate-600 hover:text-slate-900 flex items-center justify-center gap-1">
+            <i data-lucide="tractor" class="w-3.5 h-3.5 text-indigo-600"></i>
+            <span>Отдел продаж</span>
+          </button>
+        </div>
+
+        <!-- Deal Service Type & Closing Outcome (Requirement #13, #14) -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs">
+          <div>
+            <label class="block font-bold text-slate-700 uppercase text-[10px] mb-1">Тип заказ-наряда (Сервис / Предпродажка / Гарантия) *</label>
+            <select id="deal-service-type" class="w-full border border-slate-300 rounded-lg p-2 font-medium bg-white outline-none focus:border-blue-500">
+              <option value="service">🛠️ Сервис (Обычный ремонт / ТО)</option>
+              <option value="pre_sale">🚜 Предпродажка (Предпродажная подготовка)</option>
+              <option value="warranty">🛡️ Гарантия (Гарантийный случай)</option>
+            </select>
+          </div>
+          <div>
+            <label class="block font-bold text-slate-700 uppercase text-[10px] mb-1">Исход сделки (Успешно / Не успешно) *</label>
+            <select id="deal-closing-outcome" class="w-full border border-slate-300 rounded-lg p-2 font-medium bg-white outline-none focus:border-blue-500">
+              <option value="success">✅ Успешно (Оплачено / Выдано)</option>
+              <option value="failed">❌ Не удачно (Отказ / Срыв сделки)</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Requirement #4: Deal Registration and Completion Dates -->
+        <div id="deal-dates-banner" class="hidden p-3 bg-slate-50 border border-slate-200 rounded-xl flex flex-wrap items-center justify-between text-xs text-slate-600 gap-2">
+          <div class="flex items-center gap-2">
+            <div class="w-6 h-6 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center">
+              <i data-lucide="calendar" class="w-3.5 h-3.5"></i>
+            </div>
+            <div>
+              <span class="text-[10px] text-slate-400 block font-medium uppercase leading-tight">Дата регистрации</span>
+              <span id="deal-date-created" class="font-bold text-slate-800 font-mono text-xs">—</span>
+            </div>
+          </div>
+          <div class="flex items-center gap-2">
+            <div class="w-6 h-6 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center">
+              <i data-lucide="calendar-check" class="w-3.5 h-3.5"></i>
+            </div>
+            <div>
+              <span class="text-[10px] text-slate-400 block font-medium uppercase leading-tight">Дата закрытия</span>
+              <span id="deal-date-completed" class="font-bold text-emerald-700 font-mono text-xs">В работе</span>
+            </div>
+          </div>
+        </div>
+
         <div>
-          <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Тема / Название наряда *</label>
+          <label id="deal-title-label" class="block text-xs font-bold text-slate-700 uppercase mb-1">Тема / Название наряда *</label>
           <input type="text" id="deal-title" required placeholder="Например: Капитальный ремонт гидравлики CASE" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
+        </div>
+
+        <!-- Requirement #8: Client search & auto-fill -->
+        <div class="p-3 bg-blue-50/60 rounded-xl border border-blue-200 space-y-2">
+          <label class="block text-xs font-bold text-blue-900 uppercase">🔍 Быстрый поиск и автозаполнение клиента</label>
+          <div class="relative">
+            <input type="text" id="deal-client-search" autocomplete="off"
+                   placeholder="Начните вводить имя, телефон, компанию или ИНН клиента..."
+                   oninput="handleDealClientSearch(this.value)"
+                   class="w-full border border-blue-300 rounded-lg pl-8 pr-8 py-2 text-xs outline-none focus:border-blue-600 focus:bg-white bg-white/90 shadow-xs">
+            <i data-lucide="search" class="w-4 h-4 text-blue-500 absolute left-2.5 top-2.5 pointer-events-none"></i>
+            <button type="button" id="deal-client-search-clear" onclick="clearDealClientSearch()" class="hidden absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600">
+              <i data-lucide="x" class="w-4 h-4"></i>
+            </button>
+            <!-- Suggestions dropdown -->
+            <div id="deal-client-search-results" class="hidden absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-xl z-40 max-h-56 overflow-y-auto divide-y divide-slate-100"></div>
+          </div>
+          <div id="deal-client-selected-badge" class="hidden text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-lg flex items-center justify-between">
+            <div class="flex items-center gap-1.5">
+              <i data-lucide="check-circle-2" class="w-3.5 h-3.5 text-emerald-600"></i>
+              <span id="deal-client-selected-text" class="font-medium"></span>
+            </div>
+            <button type="button" onclick="clearDealClientSearch()" class="text-emerald-700 hover:underline text-[11px] font-bold">Сбросить</button>
+          </div>
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1395,13 +1944,39 @@
             <button type="button" onclick="showAttachPartRow()" class="text-xs text-blue-600 hover:underline font-semibold">+ Списать запчасть со склада</button>
           </div>
 
-          <div id="attach-part-row" class="hidden p-3 bg-amber-50/50 rounded-lg border border-amber-200 mb-3 flex items-center gap-2">
-            <select id="attach-part-select" class="flex-1 text-xs border border-slate-300 rounded px-2 py-1.5 bg-white">
-              <!-- populated -->
-            </select>
-            <input type="number" id="attach-part-qty" value="1" min="1" class="w-16 text-xs border border-slate-300 rounded px-2 py-1.5 font-mono text-center">
-            <button type="button" onclick="submitAttachPart()" class="bg-amber-600 text-white text-xs px-3 py-1.5 rounded font-medium hover:bg-amber-700">Списать</button>
-            <button type="button" onclick="hideAttachPartRow()" class="text-slate-400 hover:text-slate-600 text-xs px-1"><i data-lucide="x" class="w-4 h-4"></i></button>
+          <!-- Requirement #6: Searchable parts write-off with SKU & Name autocomplete -->
+          <div id="attach-part-row" class="hidden p-3 bg-amber-50/80 rounded-xl border border-amber-300 mb-3 space-y-2.5 shadow-xs">
+            <div class="flex items-center justify-between text-xs font-bold text-amber-900 uppercase">
+              <span class="flex items-center gap-1.5"><i data-lucide="search" class="w-3.5 h-3.5 text-amber-600"></i> Поиск и списание запчасти</span>
+              <button type="button" onclick="hideAttachPartRow()" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-4 h-4"></i></button>
+            </div>
+
+            <div class="relative">
+              <input type="text" id="attach-part-search" autocomplete="off"
+                     placeholder="Введите код (артикул) или наименование запчасти..."
+                     oninput="handleAttachPartSearch(this.value)"
+                     class="w-full border border-amber-300 rounded-lg pl-8 pr-8 py-2 text-xs outline-none focus:border-amber-600 focus:bg-white bg-white/95 shadow-xs">
+              <i data-lucide="search" class="w-4 h-4 text-amber-500 absolute left-2.5 top-2.5 pointer-events-none"></i>
+              <button type="button" id="attach-part-search-clear" onclick="clearAttachPartSearch()" class="hidden absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600">
+                <i data-lucide="x" class="w-4 h-4"></i>
+              </button>
+              <!-- Search suggestions -->
+              <div id="attach-part-suggestions" class="hidden absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-2xl z-50 max-h-56 overflow-y-auto divide-y divide-slate-100"></div>
+            </div>
+
+            <div class="flex items-center gap-2">
+              <select id="attach-part-select" onchange="handleAttachPartSelectChange(this.value)" class="flex-1 text-xs border border-amber-300 rounded-lg px-2.5 py-2 bg-white outline-none">
+                <!-- populated -->
+              </select>
+              <div class="flex items-center gap-1.5 shrink-0">
+                <span class="text-xs text-slate-600 font-medium">Шт:</span>
+                <input type="number" id="attach-part-qty" value="1" min="1" class="w-16 text-xs border border-amber-300 rounded-lg px-2 py-2 font-mono text-center outline-none bg-white font-bold">
+              </div>
+              <button type="button" onclick="submitAttachPart()" class="bg-amber-600 hover:bg-amber-700 text-white text-xs px-4 py-2 rounded-lg font-bold shadow-sm flex items-center gap-1.5 shrink-0">
+                <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+                <span>Списать</span>
+              </button>
+            </div>
           </div>
 
           <div id="deal-attached-parts-list" class="space-y-1.5 max-h-36 overflow-y-auto">
@@ -1430,24 +2005,57 @@
 
       <form id="form-client" onsubmit="saveClient(event)" class="mt-4 space-y-4">
         <input type="hidden" id="client-id">
+
+        <!-- Duplicate Client Warning Banner (Requirement #6) -->
+        <div id="client-duplicate-warning" class="hidden p-3.5 bg-amber-50 border border-amber-300 rounded-xl text-xs text-amber-900 space-y-1.5 transition-all shadow-xs">
+          <div class="flex items-center gap-2 font-bold text-amber-800">
+            <i data-lucide="alert-triangle" class="w-4 h-4 text-amber-600"></i>
+            <span>Обнаружено совпадение с существующим клиентом!</span>
+          </div>
+          <div id="client-duplicate-info" class="text-xs text-slate-700 pl-6 space-y-0.5 font-medium"></div>
+        </div>
+
         <div>
           <label class="block text-xs font-bold text-slate-700 uppercase mb-1">ФИО / Контактное лицо *</label>
-          <input type="text" id="client-name" required placeholder="Иванов Иван Иванович" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
+          <input type="text" id="client-name" required placeholder="Акопян Ашот" oninput="checkClientDuplicate()" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
         </div>
         <div>
           <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Компания / Юрлицо</label>
-          <input type="text" id="client-company" placeholder="ООО «АвтоДорСтрой»" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
+          <input type="text" id="client-company" placeholder="ООО «АвтоДорСтрой»" oninput="checkClientDuplicate()" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
         </div>
         <div class="grid grid-cols-2 gap-4">
           <div>
             <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Телефон *</label>
-            <input type="text" id="client-phone" required placeholder="+37499999999" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
+            <input type="text" id="client-phone" required placeholder="+37499999999" oninput="checkClientDuplicate()" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
           </div>
           <div>
             <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Email</label>
             <input type="email" id="client-email" placeholder="client@example.com" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
           </div>
         </div>
+
+        <!-- Optional Requisites: TIN, Bank Name, Bank Account (Requirement #5) -->
+        <div class="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2.5">
+          <div class="text-[11px] font-bold uppercase text-slate-600 flex items-center gap-1.5">
+            <i data-lucide="landmark" class="w-3.5 h-3.5 text-blue-600"></i>
+            <span>Банковские реквизиты (необязательно)</span>
+          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+            <div>
+              <label class="block text-[10px] font-bold text-slate-600 uppercase mb-1">ИНН</label>
+              <input type="text" id="client-inn" placeholder="02589412" oninput="checkClientDuplicate()" class="w-full border border-slate-300 bg-white rounded-lg px-2.5 py-1.5 text-xs outline-none focus:border-blue-500 font-mono">
+            </div>
+            <div>
+              <label class="block text-[10px] font-bold text-slate-600 uppercase mb-1">Название банка</label>
+              <input type="text" id="client-bank-name" placeholder="Америабанк" class="w-full border border-slate-300 bg-white rounded-lg px-2.5 py-1.5 text-xs outline-none focus:border-blue-500">
+            </div>
+            <div>
+              <label class="block text-[10px] font-bold text-slate-600 uppercase mb-1">Счет банка</label>
+              <input type="text" id="client-bank-account" placeholder="220011223344" class="w-full border border-slate-300 bg-white rounded-lg px-2.5 py-1.5 text-xs outline-none focus:border-blue-500 font-mono">
+            </div>
+          </div>
+        </div>
+
         <div>
           <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Фактический адрес</label>
           <input type="text" id="client-address" placeholder="г. Ереван, ул. Себастия, 1" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
@@ -1469,15 +2077,41 @@
   </div>
 
   <!-- Modal: Equipment -->
-  <div id="modal-equipment" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4 modal-overlay">
-    <div class="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 modal-box">
-      <div class="flex items-center justify-between pb-4 border-b border-slate-100">
-        <h3 id="modal-equipment-title" class="font-bold text-slate-900 text-lg">Регистрация техники</h3>
+  <div id="modal-equipment" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4 modal-overlay overflow-y-auto">
+    <div class="bg-white rounded-2xl max-w-4xl w-full p-6 shadow-2xl border border-slate-100 modal-box my-6">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-100">
+        <div>
+          <h3 id="modal-equipment-title" class="font-bold text-slate-900 text-lg">Карточка техники</h3>
+          <p id="modal-equipment-subtitle" class="text-xs text-slate-500"></p>
+        </div>
         <button onclick="closeModal('modal-equipment')" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+
+      <!-- Equipment Tabs (Requirement #15) -->
+      <div id="equipment-tabs-header" class="flex items-center gap-2 border-b border-slate-200 mt-3 mb-4 text-xs font-semibold">
+        <button type="button" id="tab-btn-eq-info" onclick="switchEqModalTab('info')" class="px-3.5 py-2 border-b-2 border-blue-600 text-blue-600 transition-all">Параметры техники</button>
+        <button type="button" id="tab-btn-eq-history" onclick="switchEqModalTab('history')" class="px-3.5 py-2 border-b-2 border-transparent text-slate-500 hover:text-slate-800 transition-all flex items-center gap-1.5">
+          <span>История обслуживания</span>
+          <span id="eq-deals-count-pill" class="bg-slate-100 text-slate-700 px-1.5 py-0.2 rounded-full font-mono text-[10px]">0</span>
+        </button>
+        <button type="button" id="tab-btn-eq-parts" onclick="switchEqModalTab('parts')" class="px-3.5 py-2 border-b-2 border-transparent text-slate-500 hover:text-slate-800 transition-all flex items-center gap-1.5">
+          <span>Списанные запчасти</span>
+          <span id="eq-parts-count-pill" class="bg-slate-100 text-slate-700 px-1.5 py-0.2 rounded-full font-mono text-[10px]">0</span>
+        </button>
       </div>
 
       <form id="form-equipment" onsubmit="saveEquipment(event)" class="mt-4 space-y-4">
         <input type="hidden" id="equipment-id">
+
+        <!-- Duplicate Equipment Warning Banner (Requirement #6) -->
+        <div id="equipment-duplicate-warning" class="hidden p-3.5 bg-amber-50 border border-amber-300 rounded-xl text-xs text-amber-900 space-y-1.5 transition-all shadow-xs">
+          <div class="flex items-center gap-2 font-bold text-amber-800">
+            <i data-lucide="alert-triangle" class="w-4 h-4 text-amber-600"></i>
+            <span>Обнаружено совпадение по VIN / Серийному номеру!</span>
+          </div>
+          <div id="equipment-duplicate-info" class="text-xs text-slate-700 pl-6 space-y-0.5 font-medium"></div>
+        </div>
+
         <div>
           <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Владелец (Клиент)</label>
           <select id="equipment-client" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white">
@@ -1514,7 +2148,7 @@
         <div class="grid grid-cols-3 gap-3">
           <div>
             <label class="block text-xs font-bold text-slate-700 uppercase mb-1">VIN / Серийный №</label>
-            <input type="text" id="equipment-vin" placeholder="CASE12345..." class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
+            <input type="text" id="equipment-vin" placeholder="CASE12345..." oninput="checkEquipmentDuplicate()" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-mono">
           </div>
           <div>
             <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Год выпуска</label>
@@ -1538,6 +2172,58 @@
           </div>
         </div>
       </form>
+
+      <!-- Panel 2: Equipment Maintenance History Table (Requirement #15) -->
+      <div id="eq-panel-history" class="hidden space-y-3 pt-2">
+        <div class="flex items-center justify-between">
+          <h4 class="font-bold text-slate-800 text-xs uppercase tracking-wider">Все выполненные и текущие заказ-наряды</h4>
+          <span id="eq-history-total-spent" class="text-xs font-mono font-bold text-blue-600">0 AMD</span>
+        </div>
+        <div class="overflow-x-auto max-h-72 overflow-y-auto border border-slate-200 rounded-xl">
+          <table class="w-full text-left text-xs">
+            <thead class="sticky top-0 bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase text-[10px]">
+              <tr>
+                <th class="p-2.5">ID / Наряд</th>
+                <th class="p-2.5">Тип</th>
+                <th class="p-2.5">Клиент</th>
+                <th class="p-2.5">Стадия</th>
+                <th class="p-2.5">Мастер</th>
+                <th class="p-2.5 text-right font-mono">Сумма</th>
+                <th class="p-2.5">Дата регистрации</th>
+              </tr>
+            </thead>
+            <tbody id="eq-history-table-body" class="divide-y divide-slate-100 font-sans">
+              <tr><td colspan="7" class="p-6 text-center text-slate-400">История обслуживания отсутствует</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Panel 3: Equipment Consumed Spare Parts Table (Requirement #15) -->
+      <div id="eq-panel-parts" class="hidden space-y-3 pt-2">
+        <div class="flex items-center justify-between">
+          <h4 class="font-bold text-slate-800 text-xs uppercase tracking-wider">Списанные со склада запчасти для этой техники</h4>
+          <span id="eq-parts-total-cost" class="text-xs font-mono font-bold text-emerald-600">0 AMD</span>
+        </div>
+        <div class="overflow-x-auto max-h-72 overflow-y-auto border border-slate-200 rounded-xl">
+          <table class="w-full text-left text-xs">
+            <thead class="sticky top-0 bg-slate-50 border-b border-slate-200 text-slate-500 font-semibold uppercase text-[10px]">
+              <tr>
+                <th class="p-2.5">Артикул</th>
+                <th class="p-2.5">Наименование запчасти</th>
+                <th class="p-2.5 text-center">Кол-во</th>
+                <th class="p-2.5 text-right font-mono">Цена (AMD)</th>
+                <th class="p-2.5 text-right font-mono">Итого (AMD)</th>
+                <th class="p-2.5">Заказ-наряд</th>
+                <th class="p-2.5">Дата</th>
+              </tr>
+            </thead>
+            <tbody id="eq-parts-table-body" class="divide-y divide-slate-100 font-sans">
+              <tr><td colspan="7" class="p-6 text-center text-slate-400">Запчасти не списывались для этой техники</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -1641,15 +2327,24 @@
     </div>
   </div>
 
-  <!-- Modal: Task -->
+  <!-- Modal: Task (Requirement #1: Admin edit tasks) -->
   <div id="modal-task" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4 modal-overlay">
     <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 modal-box">
       <div class="flex items-center justify-between pb-3 border-b border-slate-100">
-        <h3 class="font-bold text-slate-900 text-base">Новая задача / напоминание</h3>
+        <h3 id="modal-task-title" class="font-bold text-slate-900 text-base">Новая задача / напоминание</h3>
         <button onclick="closeModal('modal-task')" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-5 h-5"></i></button>
       </div>
 
       <form id="form-task" onsubmit="saveTask(event)" class="mt-4 space-y-4">
+        <input type="hidden" id="task-id">
+        <!-- Status container visible when editing -->
+        <div id="task-status-container" class="hidden">
+          <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Статус задачи</label>
+          <select id="task-status" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500 bg-white font-medium">
+            <option value="pending">⏳ К выполнению (В ожидании)</option>
+            <option value="completed">✅ Выполнено</option>
+          </select>
+        </div>
         <div>
           <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Название задачи *</label>
           <input type="text" id="task-title" required placeholder="Позвонить клиенту по согласованию сметы CASE" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
@@ -1684,6 +2379,14 @@
               <option value="">Не привязан</option>
             </select>
           </div>
+        </div>
+
+        <!-- Requirement #2: Task Responsible Assignment -->
+        <div>
+          <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Ответственный сотрудник</label>
+          <select id="task-responsible" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500 bg-white font-medium">
+            <option value="">— Не назначен —</option>
+          </select>
         </div>
 
         <div>
@@ -1722,6 +2425,22 @@
         <div>
           <span class="text-slate-400 block">Адрес:</span>
           <span id="view-client-address" class="text-slate-800"></span>
+        </div>
+      </div>
+
+      <!-- Client Requisites Display (Requirement #5) -->
+      <div id="view-client-requisites-block" class="mt-3 p-3 bg-slate-50 border border-slate-200 rounded-xl grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+        <div>
+          <span class="text-slate-400 block font-medium">ИНН:</span>
+          <span id="view-client-inn" class="font-bold text-slate-800 font-mono">—</span>
+        </div>
+        <div>
+          <span class="text-slate-400 block font-medium">Банк:</span>
+          <span id="view-client-bank-name" class="font-bold text-slate-800">—</span>
+        </div>
+        <div>
+          <span class="text-slate-400 block font-medium">Счет банка:</span>
+          <span id="view-client-bank-account" class="font-bold text-slate-800 font-mono">—</span>
         </div>
       </div>
 
@@ -1785,10 +2504,120 @@
     </div>
   </div>
 
+
+  <!-- Modal: User Permissions Matrix (Requirement #10) -->
+  <div id="modal-user-permissions" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4 modal-overlay overflow-y-auto">
+    <div class="bg-white rounded-2xl max-w-xl w-full p-6 shadow-2xl border border-slate-100 modal-box my-6">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-100">
+        <div>
+          <h3 class="font-bold text-slate-900 text-base flex items-center gap-2">
+            <i data-lucide="shield-check" class="w-5 h-5 text-purple-600"></i>
+            <span>Настройка прав доступа сотрудника</span>
+          </h3>
+          <p id="perm-user-subtitle" class="text-xs text-slate-500 mt-0.5"></p>
+        </div>
+        <button onclick="closeModal('modal-user-permissions')" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+
+      <form id="form-user-permissions" onsubmit="saveUserPermissions(event)" class="mt-4 space-y-4">
+        <input type="hidden" id="perm-user-id">
+
+        <div>
+          <h4 class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Доступ к разделам CRM</h4>
+          <div class="grid grid-cols-2 gap-2 text-xs">
+            <label class="flex items-center gap-2 p-2 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer">
+              <input type="checkbox" id="perm-dashboard" class="rounded text-purple-600">
+              <span class="font-medium text-slate-800">Дашборд & Выручка</span>
+            </label>
+            <label class="flex items-center gap-2 p-2 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer">
+              <input type="checkbox" id="perm-deals-sto" class="rounded text-purple-600">
+              <span class="font-medium text-slate-800">Заказ-наряды (СТО)</span>
+            </label>
+            <label class="flex items-center gap-2 p-2 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer">
+              <input type="checkbox" id="perm-deals-parts" class="rounded text-purple-600">
+              <span class="font-medium text-slate-800">Продажа запчастей</span>
+            </label>
+            <label class="flex items-center gap-2 p-2 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer">
+              <input type="checkbox" id="perm-deals-sales" class="rounded text-purple-600">
+              <span class="font-medium text-slate-800">Отдел продаж спецтехники</span>
+            </label>
+            <label class="flex items-center gap-2 p-2 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer">
+              <input type="checkbox" id="perm-warehouse" class="rounded text-purple-600">
+              <span class="font-medium text-slate-800">Склад запчастей</span>
+            </label>
+            <label class="flex items-center gap-2 p-2 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer">
+              <input type="checkbox" id="perm-equipment" class="rounded text-purple-600">
+              <span class="font-medium text-slate-800">База техники</span>
+            </label>
+            <label class="flex items-center gap-2 p-2 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer">
+              <input type="checkbox" id="perm-clients" class="rounded text-purple-600">
+              <span class="font-medium text-slate-800">База клиентов</span>
+            </label>
+            <label class="flex items-center gap-2 p-2 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer">
+              <input type="checkbox" id="perm-tasks" class="rounded text-purple-600">
+              <span class="font-medium text-slate-800">Задачи & Планировщик</span>
+            </label>
+            <label class="flex items-center gap-2 p-2 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer">
+              <input type="checkbox" id="perm-marketing" class="rounded text-purple-600">
+              <span class="font-medium text-slate-800">Маркетинг (WhatsApp)</span>
+            </label>
+            <label class="flex items-center gap-2 p-2 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer">
+              <input type="checkbox" id="perm-users" class="rounded text-purple-600">
+              <span class="font-medium text-slate-800">Сотрудники & Роли</span>
+            </label>
+            <label class="flex items-center gap-2 p-2 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer">
+              <input type="checkbox" id="perm-settings" class="rounded text-purple-600">
+              <span class="font-medium text-slate-800">Настройки СТО</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="pt-2 border-t border-slate-100">
+          <h4 class="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">Специальные полномочия</h4>
+          <div class="space-y-2 text-xs">
+            <label class="flex items-center gap-2 p-2 rounded-lg border border-amber-200 bg-amber-50/50 hover:bg-amber-50 cursor-pointer">
+              <input type="checkbox" id="perm-can-delete-deals" class="rounded text-amber-600">
+              <div>
+                <span class="font-bold text-slate-900 block">Разрешить удаление сделок и нарядов</span>
+                <span class="text-[11px] text-slate-500">По умолчанию удаление закрытых сделок разрешено только Администраторам</span>
+              </div>
+            </label>
+            <label class="flex items-center gap-2 p-2 rounded-lg border border-amber-200 bg-amber-50/50 hover:bg-amber-50 cursor-pointer">
+              <input type="checkbox" id="perm-can-edit-closed-deals" class="rounded text-amber-600">
+              <div>
+                <span class="font-bold text-slate-900 block">Разрешить изменение закрытых/оплаченных сделок</span>
+                <span class="text-[11px] text-slate-500">Редактирование, смена стадии и списание з/ч после "выдано" и "оплачено"</span>
+              </div>
+            </label>
+            <label class="flex items-center gap-2 p-2 rounded-lg border border-purple-200 bg-purple-50/50 hover:bg-purple-50 cursor-pointer">
+              <input type="checkbox" id="perm-can-view-revenue" class="rounded text-purple-600">
+              <div>
+                <span class="font-bold text-slate-900 block">Просмотр финансовой аналитики и выручки</span>
+                <span class="text-[11px] text-slate-500">Доступ к карточкам общей выручки, себестоимости и прибыли</span>
+              </div>
+            </label>
+            <label class="flex items-center gap-2 p-2 rounded-lg border border-blue-200 bg-blue-50/50 hover:bg-blue-50 cursor-pointer">
+              <input type="checkbox" id="perm-can-edit-tasks" class="rounded text-blue-600">
+              <div>
+                <span class="font-bold text-slate-900 block">Разрешить редактирование задач других сотрудников</span>
+                <span class="text-[11px] text-slate-500">Изменение сроков, текста и ответственного</span>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <div class="flex gap-2 justify-end pt-3 border-t border-slate-100">
+          <button type="button" onclick="closeModal('modal-user-permissions')" class="px-3 py-1.5 border border-slate-300 rounded-lg text-xs text-slate-700 hover:bg-slate-100">Отмена</button>
+          <button type="submit" class="px-4 py-1.5 bg-purple-600 hover:bg-purple-700 text-white font-medium rounded-lg text-xs shadow-md">Сохранить права</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- Toast Container -->
   <div id="toast-container"></div>
 
   <!-- Scripts -->
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=1.2.3.5"></script>
 </body>
 </html>

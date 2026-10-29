@@ -53,3 +53,6 @@ Thumbs.db
 # Temporary log files
 *.log
 scratch/
+crm.db
+database_dump*.json
+*.dump.json

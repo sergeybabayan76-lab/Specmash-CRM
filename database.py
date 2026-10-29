@@ -1,65 +1,70 @@
 """
 Database management and models for СТО Спецмаш CRM.
-Powered by Supabase PostgreSQL with high-performance PostgREST client and automatic fallback.
+Powered by Supabase PostgreSQL through the PostgREST client.
 """
 
 import os
+import json
 import hashlib
 import secrets
 from datetime import datetime
 import re
 from typing import List, Dict, Any, Optional
+from urllib.parse import quote
 import httpx
 
-# Load environment variables from .env if present
+try:
+    import psycopg
+except ImportError:
+    psycopg = None
+
+_env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    load_dotenv(dotenv_path=_env_path, override=False)
 except ImportError:
     pass
 
-# Fallback: load .env manually if python-dotenv is not available
-_env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
-if os.path.exists(_env_path):
-    try:
-        with open(_env_path, "r", encoding="utf-8") as _f:
-            for _line in _f:
-                _line = _line.strip()
-                if not _line or _line.startswith("#") or "=" not in _line:
-                    continue
-                _k, _v = _line.split("=", 1)
-                _k = _k.strip()
-                _v = _v.strip().strip("'\"")
-                if _k and _k not in os.environ:
-                    os.environ[_k] = _v
-    except Exception:
-        pass
-
-# Supabase PostgreSQL Configuration via Environment Variables
-SUPABASE_URL = ""
-SUPABASE_KEY = ""
+# Supabase PostgreSQL configuration. SUPABASE_KEY is server-only.
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "").strip().strip("'\"`")
 
 def get_supabase_url() -> str:
     global SUPABASE_URL
     if SUPABASE_URL:
         return SUPABASE_URL
-    raw_url = os.getenv("SUPABASE_URL", "").strip()
-    url_match = re.fullmatch(r"https://[A-Za-z0-9.-]+\.supabase\.co/?", raw_url)
-    SUPABASE_URL = url_match.group(0).rstrip("/") if url_match else ""
+    SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
     return SUPABASE_URL
 
 def get_supabase_key() -> str:
     global SUPABASE_KEY
     if SUPABASE_KEY:
         return SUPABASE_KEY
-
     SUPABASE_KEY = (
-        os.getenv("SUPABASE_KEY")
-        or os.getenv("SUPABASE_SECRET_KEY")
-        or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-        or ""
-    ).strip().strip("'\"`")
+        os.getenv("SUPABASE_SECRET_KEY", "").strip().strip("'\"`")
+        or os.getenv("SUPABASE_KEY", "").strip().strip("'\"`")
+    )
     return SUPABASE_KEY
+
+def get_supabase_public_key() -> str:
+    return (
+        os.getenv("SUPABASE_PUBLISHABLE_KEY", "").strip().strip("'\"`")
+        or os.getenv("SUPABASE_PUBLIC_KEY", "").strip().strip("'\"`")
+    )
+
+def get_database_url() -> str:
+    configured_url = (
+        os.getenv("SUPABASE_DB_URL", "").strip().strip("'\"`")
+        or os.getenv("DATABASE_URL", "").strip().strip("'\"`")
+    )
+    if configured_url:
+        return configured_url
+
+    password = os.getenv("SUPABASE_DB_PASSWORD", "").strip().strip("'\"`")
+    project_ref = get_supabase_url().removeprefix("https://").split(".", 1)[0]
+    if password and project_ref:
+        return f"postgresql://postgres:{quote(password, safe='')}@db.{project_ref}.supabase.co:5432/postgres"
+    return ""
 
 # Initialize on import
 SUPABASE_URL = get_supabase_url()
@@ -71,16 +76,9 @@ def check_connection() -> Dict[str, Any]:
     if not key:
         return {
             "connected": False,
-            "error": "SUPABASE_KEY не задана в .env или окружении сервера",
+            "error": "SUPABASE_KEY не найдена в переменных окружения Vercel",
             "url": url,
             "has_key": False
-        }
-    if not url:
-        return {
-            "connected": False,
-            "error": "SUPABASE_URL не задан или имеет неверный формат",
-            "url": "",
-            "has_key": True
         }
     try:
         with get_sb_client() as client:
@@ -116,7 +114,7 @@ DEFAULT_SETTINGS = {
     "company_address": "г. Ереван, ул. Себастия, 12",
     "company_tin": "02589412",
     "currency": "AMD",
-    "default_responsible": "Иванов Алексей Викторович (Директор)",
+    "default_responsible": "Сергей Бабаян (Директор)",
     "warranty_months": "6",
     "logo_url": "",
     "auth_icon": "wrench",
@@ -126,16 +124,14 @@ DEFAULT_SETTINGS = {
 def get_sb_client() -> httpx.Client:
     key = get_supabase_key()
     url = get_supabase_url()
-    if not key or not url:
-        raise RuntimeError("Настройте SUPABASE_URL и серверный SUPABASE_KEY в .env")
     headers = {
         "Content-Type": "application/json",
         "Prefer": "return=representation",
-        "User-Agent": "SpecMash-CRM/FastAPI",
-        "apikey": key,
+        "User-Agent": "SpecMash-CRM/FastAPI"
     }
-    if not key.startswith("sb_secret_"):
-        headers["Authorization"] = f"Bearer {key}"
+    if key:
+        headers["apikey"] = key
+        headers["Authorization"] = "Bearer " + key
     return httpx.Client(
         base_url=f"{url}/rest/v1",
         headers=headers,
@@ -143,17 +139,56 @@ def get_sb_client() -> httpx.Client:
     )
 
 def init_db():
-    """Verifies Supabase schema and optionally creates an admin from explicit credentials."""
-    if not get_supabase_key() or not get_supabase_url():
-        print("[Supabase Warning] Set SUPABASE_URL and a server-only SUPABASE_KEY in .env.")
-        return
-    try:
-        ensure_bootstrap_admin()
-    except Exception as exc:
+    """Creates the empty Supabase schema on first startup and bootstraps one admin."""
+    if not get_supabase_key():
         raise RuntimeError(
-            "Cannot initialize Supabase. Verify the project URL/key and run schema.sql "
-            "in the new project's SQL Editor."
-        ) from exc
+            "SUPABASE_SECRET_KEY is not configured. Add it to the environment before starting the server."
+        )
+    initialize_schema()
+    ensure_bootstrap_admin()
+
+def initialize_schema() -> None:
+    """Apply the idempotent PostgreSQL schema when the database is empty."""
+    if psycopg is None:
+        raise RuntimeError("Package psycopg is not installed. Run: pip install -r requirements.txt")
+
+    database_url = get_database_url()
+    if not database_url:
+        raise RuntimeError(
+            "SUPABASE_DB_URL is not configured. Add the PostgreSQL connection URI from "
+            "Supabase Project Settings -> Database -> Connection string."
+        )
+
+    schema_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schema.sql")
+    with open(schema_path, "r", encoding="utf-8") as schema_file:
+        schema_sql = schema_file.read()
+    if not schema_sql.strip():
+        raise RuntimeError("schema.sql is empty")
+
+    with psycopg.connect(database_url, connect_timeout=15) as connection:
+        connection.execute(schema_sql)
+        connection.execute(
+            "INSERT INTO public.schema_migrations (version) VALUES (%s) "
+            "ON CONFLICT (version) DO NOTHING",
+            ("20261029_initial_schema",),
+        )
+        connection.commit()
+
+def ensure_bootstrap_admin() -> None:
+    """Create only the explicitly configured first administrator, never demo accounts."""
+    username = os.getenv("BOOTSTRAP_ADMIN_USERNAME", "").strip().lower()
+    password = os.getenv("BOOTSTRAP_ADMIN_PASSWORD", "")
+    if not username or not password:
+        return
+    if get_user_by_username(username):
+        return
+    create_user({
+        "username": username,
+        "password": password,
+        "full_name": "Администратор",
+        "role": "admin",
+        "phone": "",
+    })
 
 def hash_password(password: str, salt: Optional[str] = None) -> tuple[str, str]:
     if not salt:
@@ -251,35 +286,6 @@ def delete_user(user_id: int) -> Dict[str, Any]:
         r = client.delete(f"/users?id=eq.{user_id}")
         return {"id": user_id, "message": "Сотрудник удален"}
 
-def ensure_bootstrap_admin():
-    admin_user = os.getenv("BOOTSTRAP_ADMIN_USERNAME", "").strip().lower()
-    admin_pass = os.getenv("BOOTSTRAP_ADMIN_PASSWORD", "")
-    if bool(admin_user) != bool(admin_pass):
-        raise RuntimeError("Both BOOTSTRAP_ADMIN_USERNAME and BOOTSTRAP_ADMIN_PASSWORD must be set.")
-    if admin_user and (len(admin_user) < 3 or len(admin_pass) < 12):
-        raise RuntimeError("Bootstrap username must be at least 3 characters and password at least 12 characters.")
-
-    with get_sb_client() as client:
-        response = client.get("/users", params={"select": "id", "limit": "1"})
-        response.raise_for_status()
-        if response.json() or not admin_user:
-            if not admin_user:
-                print("[Supabase] Database verified; no users created. Set bootstrap credentials to create the first admin.")
-            return
-
-        password_hash, salt = hash_password(admin_pass)
-        response = client.post("/users?on_conflict=username", json={
-            "id": 1,
-            "username": admin_user,
-            "password_hash": password_hash,
-            "salt": salt,
-            "full_name": "Администратор",
-            "role": "admin",
-            "phone": "",
-            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }, headers={"Prefer": "resolution=ignore-duplicates,return=minimal"})
-        response.raise_for_status()
-
 # ==================== SETTINGS ====================
 
 def get_settings() -> Dict[str, Any]:
@@ -302,14 +308,17 @@ def update_settings(payload: Dict[str, Any]) -> Dict[str, Any]:
                 client.post("/settings", json={"key": key, "value": str(value).strip()}, headers={"Prefer": "resolution=merge-duplicates"})
         return {"message": "Основные настройки программы успешно сохранены"}
 
+def save_setting(key: str, value: Any) -> Dict[str, Any]:
+    return update_settings({key: value})
+
 def get_system_stats() -> Dict[str, Any]:
     if not SUPABASE_KEY:
         return {
-            "version": "2.0.0 (Supabase PostgreSQL)",
+            "version": "1.2.0 (Supabase PostgreSQL)",
             "db_type": "PostgreSQL (Cloud Supabase)",
             "configured": False,
-            "message": "Настройте Supabase URL и серверный ключ в окружении приложения",
-            "db_size_kb": None,
+            "message": "Пожалуйста, добавьте SUPABASE_KEY в Vercel Environment Variables",
+            "db_size_kb": 0.0,
             "counts": {"clients": 0, "equipment": 0, "parts": 0, "deals": 0, "users": 0, "tasks": 0}
         }
     with get_sb_client() as client:
@@ -318,9 +327,9 @@ def get_system_stats() -> Dict[str, Any]:
             return len(r.json()) if r.status_code == 200 else 0
 
         return {
-            "version": "2.0.0 (Supabase PostgreSQL)",
+            "version": "1.2.0 (Supabase PostgreSQL)",
             "db_type": "PostgreSQL (Cloud Supabase)",
-            "db_size_kb": None,
+            "db_size_kb": 128.0,
             "counts": {
                 "clients": count("clients"),
                 "equipment": count("equipment"),
@@ -333,8 +342,51 @@ def get_system_stats() -> Dict[str, Any]:
 
 # ==================== CLIENTS ====================
 
+def serialize_client_notes(notes: str, inn: str = "", bank_name: str = "", bank_account: str = "") -> str:
+    clean_notes = (notes or "").strip()
+    clean_notes = re.sub(r'\[CLIENT_REQUISITES:.*?\]', '', clean_notes, flags=re.DOTALL).strip()
+    meta = {}
+    if inn and str(inn).strip():
+        meta["inn"] = str(inn).strip()
+    if bank_name and str(bank_name).strip():
+        meta["bank_name"] = str(bank_name).strip()
+    if bank_account and str(bank_account).strip():
+        meta["bank_account"] = str(bank_account).strip()
+    if meta:
+        meta_str = f"[CLIENT_REQUISITES:{json.dumps(meta, ensure_ascii=False)}]"
+        return f"{clean_notes}\n{meta_str}".strip() if clean_notes else meta_str
+    return clean_notes
+
+def parse_client_notes(raw_notes: str) -> tuple[str, str, str, str]:
+    if not raw_notes:
+        return "", "", "", ""
+    inn, bank_name, bank_account = "", "", ""
+    match = re.search(r'\[CLIENT_REQUISITES:(.*?)\]', raw_notes, flags=re.DOTALL)
+    if match:
+        try:
+            meta = json.loads(match.group(1))
+            inn = meta.get("inn", "")
+            bank_name = meta.get("bank_name", "")
+            bank_account = meta.get("bank_account", "")
+        except Exception:
+            pass
+        clean_notes = re.sub(r'\[CLIENT_REQUISITES:.*?\]', '', raw_notes, flags=re.DOTALL).strip()
+        return clean_notes, inn, bank_name, bank_account
+
+    m_inn = re.search(r'(?:ИНН|TIN)[:\s]+([0-9A-Za-z]+)', raw_notes, re.IGNORECASE)
+    if m_inn:
+        inn = m_inn.group(1).strip()
+    m_bank = re.search(r'(?:Банк|Название банка)[:\s]+([^\n\r,]+)', raw_notes, re.IGNORECASE)
+    if m_bank:
+        bank_name = m_bank.group(1).strip()
+    m_acc = re.search(r'(?:Счет|Счёт|Р/с|Р/С|IBAN)[:\s]+([0-9A-Za-z\s]+)', raw_notes, re.IGNORECASE)
+    if m_acc:
+        bank_account = m_acc.group(1).strip()
+
+    return raw_notes.strip(), inn, bank_name, bank_account
+
 def list_clients(q: Optional[str] = None) -> List[Dict[str, Any]]:
-    if not SUPABASE_KEY:
+    if not get_supabase_key():
         return []
     with get_sb_client() as client:
         params = {
@@ -344,11 +396,11 @@ def list_clients(q: Optional[str] = None) -> List[Dict[str, Any]]:
         if q:
             term = q.strip()
             params["or"] = f"(name.ilike.*{term}*,company.ilike.*{term}*,phone.ilike.*{term}*,email.ilike.*{term}*)"
-        
+
         r = client.get("/clients", params=params)
         if r.status_code != 200:
             return []
-        
+
         clients = []
         for c in r.json():
             eq_count = len(c.get("equipment") or [])
@@ -358,6 +410,11 @@ def list_clients(q: Optional[str] = None) -> List[Dict[str, Any]]:
             item = dict(c)
             item.pop("equipment", None)
             item.pop("deals", None)
+            clean_notes, inn, bank_name, bank_account = parse_client_notes(item.get("notes") or "")
+            item["notes"] = clean_notes
+            item["inn"] = inn
+            item["bank_name"] = bank_name
+            item["bank_account"] = bank_account
             item["equipment_count"] = eq_count
             item["deals_count"] = deals_count
             item["total_revenue"] = total_rev
@@ -368,6 +425,12 @@ def create_client(client_data: Dict[str, Any]) -> Dict[str, Any]:
     with get_sb_client() as client:
         next_id = get_next_id(client, "clients")
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        serialized_notes = serialize_client_notes(
+            client_data.get("notes") or "",
+            inn=client_data.get("inn") or "",
+            bank_name=client_data.get("bank_name") or "",
+            bank_account=client_data.get("bank_account") or ""
+        )
         payload = {
             "id": next_id,
             "name": client_data["name"].strip(),
@@ -375,7 +438,7 @@ def create_client(client_data: Dict[str, Any]) -> Dict[str, Any]:
             "phone": client_data["phone"].strip(),
             "email": (client_data.get("email") or "").strip(),
             "address": (client_data.get("address") or "").strip(),
-            "notes": (client_data.get("notes") or "").strip(),
+            "notes": serialized_notes,
             "created_at": now_str
         }
         r = client.post("/clients", json=payload)
@@ -383,6 +446,10 @@ def create_client(client_data: Dict[str, Any]) -> Dict[str, Any]:
             raise Exception(r.text)
         res = r.json()
         item = res[0] if isinstance(res, list) else res
+        item["inn"] = client_data.get("inn") or ""
+        item["bank_name"] = client_data.get("bank_name") or ""
+        item["bank_account"] = client_data.get("bank_account") or ""
+        item["notes"] = (client_data.get("notes") or "").strip()
         item["message"] = "Клиент успешно добавлен"
         return item
 
@@ -393,6 +460,11 @@ def get_crm_client(client_id: int) -> Dict[str, Any]:
         if not rows:
             raise KeyError("Клиент не найден")
         c = rows[0]
+        clean_notes, inn, bank_name, bank_account = parse_client_notes(c.get("notes") or "")
+        c["notes"] = clean_notes
+        c["inn"] = inn
+        c["bank_name"] = bank_name
+        c["bank_account"] = bank_account
 
         eq_r = client.get("/equipment", params={"client_id": f"eq.{client_id}", "order": "id.desc"})
         c["equipment"] = eq_r.json() if eq_r.status_code == 200 else []
@@ -416,21 +488,41 @@ get_client_by_id = get_crm_client
 
 def update_client(client_id: int, client_data: Dict[str, Any]) -> Dict[str, Any]:
     with get_sb_client() as client:
+        existing_r = client.get("/clients", params={"id": f"eq.{client_id}", "select": "notes"})
+        existing_notes = ""
+        if existing_r.status_code == 200 and existing_r.json():
+            existing_notes = existing_r.json()[0].get("notes") or ""
+        old_clean, old_inn, old_bank, old_acc = parse_client_notes(existing_notes)
+
+        new_inn = client_data.get("inn") if "inn" in client_data and client_data["inn"] is not None else old_inn
+        new_bank = client_data.get("bank_name") if "bank_name" in client_data and client_data["bank_name"] is not None else old_bank
+        new_acc = client_data.get("bank_account") if "bank_account" in client_data and client_data["bank_account"] is not None else old_acc
+        new_notes_raw = client_data.get("notes") if "notes" in client_data and client_data["notes"] is not None else old_clean
+
+        serialized_notes = serialize_client_notes(new_notes_raw, inn=new_inn, bank_name=new_bank, bank_account=new_acc)
+
         payload = {
             "name": client_data["name"].strip(),
             "company": (client_data.get("company") or "").strip(),
             "phone": client_data["phone"].strip(),
             "email": (client_data.get("email") or "").strip(),
             "address": (client_data.get("address") or "").strip(),
-            "notes": (client_data.get("notes") or "").strip(),
+            "notes": serialized_notes,
         }
         r = client.patch(f"/clients?id=eq.{client_id}", json=payload)
         if r.status_code not in (200, 204):
-            # Upsert fallback
             payload["id"] = client_id
             payload["created_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             client.post("/clients", json=payload, headers={"Prefer": "resolution=merge-duplicates"})
-        return {"id": client_id, **payload, "message": "Данные клиента обновлены"}
+        return {
+            "id": client_id,
+            **payload,
+            "inn": new_inn,
+            "bank_name": new_bank,
+            "bank_account": new_acc,
+            "notes": new_notes_raw,
+            "message": "Данные клиента обновлены"
+        }
 
 def delete_client(client_id: int) -> Dict[str, Any]:
     with get_sb_client() as client:
@@ -669,7 +761,61 @@ def get_stock_movements(limit: int = 50) -> List[Dict[str, Any]]:
 
 # ==================== DEALS & KANBAN ====================
 
-def list_deals(stage: Optional[str] = None, q: Optional[str] = None) -> List[Dict[str, Any]]:
+def serialize_deal_description(description: str, deal_type: str = "service", service_type: str = "service", closing_outcome: str = "success") -> str:
+    clean_desc = (description or "").strip()
+    clean_desc = re.sub(r'\[DEAL_TYPE:.*?\]', '', clean_desc, flags=re.DOTALL).strip()
+    clean_desc = re.sub(r'\[SERVICE_TYPE:.*?\]', '', clean_desc, flags=re.DOTALL).strip()
+    clean_desc = re.sub(r'\[OUTCOME:.*?\]', '', clean_desc, flags=re.DOTALL).strip()
+    tags = []
+    dtype = (deal_type or "service").strip().lower()
+    if dtype in ("parts_sale", "sales"):
+        tags.append(f"[DEAL_TYPE:{dtype}]")
+    stype = (service_type or "service").strip().lower()
+    if stype in ("service", "pre_sale", "warranty"):
+        tags.append(f"[SERVICE_TYPE:{stype}]")
+    outcome = (closing_outcome or "success").strip().lower()
+    if outcome in ("success", "failed"):
+        tags.append(f"[OUTCOME:{outcome}]")
+    if tags:
+        tag_str = "\n".join(tags)
+        return f"{clean_desc}\n{tag_str}".strip() if clean_desc else tag_str
+    return clean_desc
+
+def parse_deal_description(raw_description: str, title: str = "") -> tuple[str, str, str, str]:
+    deal_type = "service"
+    service_type = "service"
+    closing_outcome = "success"
+    clean_desc = (raw_description or "").strip()
+
+    if not clean_desc:
+        if title and any(term in title.lower() for term in ("продажа запчаст", "продажа з/ч", "заказ запчаст", "реализация з/ч", "отгрузка з/ч")):
+            deal_type = "parts_sale"
+        elif title and any(term in title.lower() for term in ("продажа спецтехники", "продажа техники", "отдел продаж")):
+            deal_type = "sales"
+        return "", deal_type, service_type, closing_outcome
+
+    m_dtype = re.search(r'\[DEAL_TYPE:(.*?)\]', clean_desc, flags=re.DOTALL)
+    if m_dtype:
+        deal_type = m_dtype.group(1).strip().lower()
+        clean_desc = re.sub(r'\[DEAL_TYPE:.*?\]', '', clean_desc, flags=re.DOTALL).strip()
+    elif title and any(term in title.lower() for term in ("продажа запчаст", "продажа з/ч", "заказ запчаст", "реализация з/ч", "отгрузка з/ч")):
+        deal_type = "parts_sale"
+    elif title and any(term in title.lower() for term in ("продажа спецтехники", "продажа техники", "отдел продаж")):
+        deal_type = "sales"
+
+    m_stype = re.search(r'\[SERVICE_TYPE:(.*?)\]', clean_desc, flags=re.DOTALL)
+    if m_stype:
+        service_type = m_stype.group(1).strip().lower()
+        clean_desc = re.sub(r'\[SERVICE_TYPE:.*?\]', '', clean_desc, flags=re.DOTALL).strip()
+
+    m_outcome = re.search(r'\[OUTCOME:(.*?)\]', clean_desc, flags=re.DOTALL)
+    if m_outcome:
+        closing_outcome = m_outcome.group(1).strip().lower()
+        clean_desc = re.sub(r'\[OUTCOME:.*?\]', '', clean_desc, flags=re.DOTALL).strip()
+
+    return clean_desc, deal_type, service_type, closing_outcome
+
+def list_deals(stage: Optional[str] = None, q: Optional[str] = None, deal_type: Optional[str] = None) -> List[Dict[str, Any]]:
     if not SUPABASE_KEY:
         return []
     with get_sb_client() as client:
@@ -696,6 +842,13 @@ def list_deals(stage: Optional[str] = None, q: Optional[str] = None) -> List[Dic
             item.pop("clients", None)
             item.pop("equipment", None)
             item.pop("deal_parts", None)
+            clean_desc, dtype, stype, outcome = parse_deal_description(d.get("description") or "", d.get("title") or "")
+            if deal_type and deal_type != "all" and dtype != deal_type:
+                continue
+            item["description"] = clean_desc
+            item["deal_type"] = dtype
+            item["service_type"] = stype
+            item["closing_outcome"] = outcome
             item["client_name"] = cl.get("name", "")
             item["client_company"] = cl.get("company", "")
             item["client_phone"] = cl.get("phone", "")
@@ -710,10 +863,14 @@ def create_deal(deal_data: Dict[str, Any]) -> Dict[str, Any]:
         next_id = get_next_id(client, "deals")
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         stage = deal_data.get("stage", "new")
-        completed_at = now_str if stage == "completed" else None
+        completed_at = now_str if stage in ("ready", "completed") else None
 
         client_id = deal_data.get("client_id") if deal_data.get("client_id") and deal_data.get("client_id") > 0 else None
         eq_id = deal_data.get("equipment_id") if deal_data.get("equipment_id") and deal_data.get("equipment_id") > 0 else None
+        deal_type = (deal_data.get("deal_type") or "service").strip().lower()
+        service_type = (deal_data.get("service_type") or "service").strip().lower()
+        closing_outcome = (deal_data.get("closing_outcome") or "success").strip().lower()
+        serialized_desc = serialize_deal_description(deal_data.get("description") or "", deal_type=deal_type, service_type=service_type, closing_outcome=closing_outcome)
 
         payload = {
             "id": next_id,
@@ -725,7 +882,7 @@ def create_deal(deal_data: Dict[str, Any]) -> Dict[str, Any]:
             "cost": float(deal_data.get("cost") or 0.0),
             "priority": deal_data.get("priority", "normal"),
             "responsible": deal_data.get("responsible", "Мастер-приемщик"),
-            "description": (deal_data.get("description") or "").strip(),
+            "description": serialized_desc,
             "deadline": deal_data.get("deadline") or None,
             "created_at": now_str,
             "completed_at": completed_at
@@ -755,6 +912,10 @@ def create_deal(deal_data: Dict[str, Any]) -> Dict[str, Any]:
 
         return {
             **payload,
+            "description": (deal_data.get("description") or "").strip(),
+            "deal_type": deal_type,
+            "service_type": service_type,
+            "closing_outcome": closing_outcome,
             "client_name": cl_name,
             "client_company": cl_comp,
             "client_phone": cl_phone,
@@ -775,6 +936,11 @@ def get_deal(deal_id: int) -> Dict[str, Any]:
         eq = d.get("equipment") or {}
         d.pop("clients", None)
         d.pop("equipment", None)
+        clean_desc, dtype, stype, outcome = parse_deal_description(d.get("description") or "", d.get("title") or "")
+        d["description"] = clean_desc
+        d["deal_type"] = dtype
+        d["service_type"] = stype
+        d["closing_outcome"] = outcome
         d["client_name"] = cl.get("name", "")
         d["client_company"] = cl.get("company", "")
         d["client_phone"] = cl.get("phone", "")
@@ -805,19 +971,39 @@ def get_deal(deal_id: int) -> Dict[str, Any]:
 def update_deal_stage(deal_id: int, stage: str) -> Dict[str, Any]:
     with get_sb_client() as client:
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        completed_at = now_str if stage == "completed" else None
-        client.patch(f"/deals?id=eq.{deal_id}", json={
-            "stage": stage,
-            "completed_at": completed_at
-        })
-        return {"id": deal_id, "stage": stage, "completed_at": completed_at, "message": "Статус наряда успешно изменен"}
+        patch_payload = {"stage": stage}
+        if stage in ("ready", "completed"):
+            patch_payload["completed_at"] = now_str
+        client.patch(f"/deals?id=eq.{deal_id}", json=patch_payload)
+        return {"id": deal_id, "stage": stage, "completed_at": patch_payload.get("completed_at"), "message": "Статус наряда успешно изменен"}
 
 def update_deal(deal_id: int, deal_data: Dict[str, Any]) -> Dict[str, Any]:
     with get_sb_client() as client:
         stage = deal_data.get("stage", "new")
-        completed_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S") if stage == "completed" else None
+        completed_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S") if stage in ("ready", "completed") else None
         client_id = deal_data.get("client_id") if deal_data.get("client_id") and deal_data.get("client_id") > 0 else None
         eq_id = deal_data.get("equipment_id") if deal_data.get("equipment_id") and deal_data.get("equipment_id") > 0 else None
+
+        existing_r = client.get("/deals", params={"id": f"eq.{deal_id}", "select": "description,title,completed_at,created_at"})
+        existing_desc = ""
+        existing_title = ""
+        existing_completed_at = None
+        if existing_r.status_code == 200 and existing_r.json():
+            row = existing_r.json()[0]
+            existing_desc = row.get("description") or ""
+            existing_title = row.get("title") or ""
+            existing_completed_at = row.get("completed_at")
+        old_desc, old_dtype, old_stype, old_outcome = parse_deal_description(existing_desc, existing_title)
+        new_dtype = (deal_data.get("deal_type") or old_dtype or "service").strip().lower()
+        new_stype = (deal_data.get("service_type") or old_stype or "service").strip().lower()
+        new_outcome = (deal_data.get("closing_outcome") or old_outcome or "success").strip().lower()
+        raw_desc = deal_data.get("description") if "description" in deal_data and deal_data["description"] is not None else old_desc
+        serialized_desc = serialize_deal_description(raw_desc or "", deal_type=new_dtype, service_type=new_stype, closing_outcome=new_outcome)
+
+        if stage in ("ready", "completed"):
+            completed_at = existing_completed_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            completed_at = None
 
         payload = {
             "title": deal_data["title"].strip(),
@@ -828,7 +1014,7 @@ def update_deal(deal_id: int, deal_data: Dict[str, Any]) -> Dict[str, Any]:
             "cost": float(deal_data.get("cost") or 0.0),
             "priority": deal_data.get("priority", "normal"),
             "responsible": deal_data.get("responsible", "Мастер-приемщик"),
-            "description": (deal_data.get("description") or "").strip(),
+            "description": serialized_desc,
             "deadline": deal_data.get("deadline") or None,
             "completed_at": completed_at
         }
@@ -837,7 +1023,7 @@ def update_deal(deal_id: int, deal_data: Dict[str, Any]) -> Dict[str, Any]:
             payload["id"] = deal_id
             payload["created_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             client.post("/deals", json=payload, headers={"Prefer": "resolution=merge-duplicates"})
-        return {"id": deal_id, **payload, "message": "Сделка обновлена"}
+        return {"id": deal_id, **payload, "description": raw_desc, "deal_type": new_dtype, "service_type": new_stype, "closing_outcome": new_outcome, "message": "Сделка обновлена"}
 
 def delete_deal(deal_id: int) -> Dict[str, Any]:
     with get_sb_client() as client:
@@ -926,6 +1112,22 @@ def remove_part_from_deal(deal_id: int, deal_part_id: int) -> Dict[str, Any]:
 
 # ==================== TASKS ====================
 
+def serialize_task_notes(notes: str, responsible: Optional[str] = None) -> str:
+    base = notes or ""
+    base = re.sub(r'\[RESPONSIBLE:[^\]]*\]', '', base).strip()
+    if responsible and responsible.strip():
+        tag = f"[RESPONSIBLE:{responsible.strip()}]"
+        return f"{base}\n{tag}".strip() if base else tag
+    return base
+
+def parse_task_notes(raw_notes: str) -> tuple[str, str]:
+    if not raw_notes:
+        return "", ""
+    m = re.search(r'\[RESPONSIBLE:([^\]]+)\]', raw_notes)
+    responsible = m.group(1).strip() if m else ""
+    clean_notes = re.sub(r'\[RESPONSIBLE:[^\]]*\]', '', raw_notes).strip()
+    return clean_notes, responsible
+
 def list_tasks(status: Optional[str] = None) -> List[Dict[str, Any]]:
     if not SUPABASE_KEY:
         return []
@@ -943,6 +1145,9 @@ def list_tasks(status: Optional[str] = None) -> List[Dict[str, Any]]:
             item = dict(t)
             item.pop("clients", None)
             item.pop("deals", None)
+            clean_notes, resp = parse_task_notes(item.get("notes") or "")
+            item["notes"] = clean_notes
+            item["responsible"] = resp
             item["client_name"] = cl.get("name", "")
             item["client_company"] = cl.get("company", "")
             item["deal_title"] = dl.get("title", "")
@@ -953,6 +1158,9 @@ def create_task(task_data: Dict[str, Any]) -> Dict[str, Any]:
     with get_sb_client() as client:
         next_id = get_next_id(client, "tasks")
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        raw_notes = (task_data.get("notes") or "").strip()
+        responsible = (task_data.get("responsible") or "").strip()
+        serialized_notes = serialize_task_notes(raw_notes, responsible)
         payload = {
             "id": next_id,
             "title": task_data["title"].strip(),
@@ -962,7 +1170,7 @@ def create_task(task_data: Dict[str, Any]) -> Dict[str, Any]:
             "priority": task_data.get("priority", "normal"),
             "status": task_data.get("status", "pending"),
             "remind": int(task_data.get("remind", 1)),
-            "notes": (task_data.get("notes") or "").strip(),
+            "notes": serialized_notes,
             "created_at": now_str
         }
         r = client.post("/tasks", json=payload)
@@ -970,6 +1178,8 @@ def create_task(task_data: Dict[str, Any]) -> Dict[str, Any]:
             raise Exception(r.text)
         res = r.json()
         item = res[0] if isinstance(res, list) else res
+        item["responsible"] = responsible
+        item["notes"] = raw_notes
         item["message"] = "Задача добавлена в планировщик"
         return item
 
@@ -984,12 +1194,57 @@ def toggle_task(task_id: int) -> Dict[str, Any]:
         client.patch(f"/tasks?id=eq.{task_id}", json={"status": new_status})
         return {"id": task_id, "status": new_status, "message": "Статус задачи изменен"}
 
+def update_task(task_id: int, task_data: Dict[str, Any]) -> Dict[str, Any]:
+    with get_sb_client() as client:
+        r = client.get("/tasks", params={"id": f"eq.{task_id}"})
+        rows = r.json()
+        if not rows:
+            raise KeyError("Задача не найдена")
+
+        existing = rows[0]
+        old_notes, old_resp = parse_task_notes(existing.get("notes") or "")
+        raw_notes = task_data.get("notes") if "notes" in task_data and task_data["notes"] is not None else old_notes
+        responsible = task_data.get("responsible") if "responsible" in task_data and task_data["responsible"] is not None else old_resp
+        serialized_notes = serialize_task_notes((raw_notes or "").strip(), (responsible or "").strip())
+
+        payload: Dict[str, Any] = {"notes": serialized_notes}
+        if "title" in task_data and task_data["title"]:
+            payload["title"] = task_data["title"].strip()
+        if "due_date" in task_data and task_data["due_date"]:
+            payload["due_date"] = task_data["due_date"].strip()
+        if "priority" in task_data and task_data["priority"]:
+            payload["priority"] = task_data["priority"]
+        if "status" in task_data and task_data["status"]:
+            payload["status"] = task_data["status"]
+        if "deal_id" in task_data:
+            payload["deal_id"] = task_data["deal_id"] if task_data["deal_id"] and task_data["deal_id"] > 0 else None
+        if "client_id" in task_data:
+            payload["client_id"] = task_data["client_id"] if task_data["client_id"] and task_data["client_id"] > 0 else None
+        if "remind" in task_data and task_data["remind"] is not None:
+            payload["remind"] = int(task_data["remind"])
+
+        client.patch(f"/tasks?id=eq.{task_id}", json=payload)
+        return {
+            "id": task_id,
+            "message": "Задача успешно обновлена",
+            "responsible": responsible,
+            "notes": raw_notes
+        }
+
 def delete_task(task_id: int) -> Dict[str, Any]:
     with get_sb_client() as client:
         client.delete(f"/tasks?id=eq.{task_id}")
         return {"id": task_id, "message": "Задача удалена"}
 
 # ==================== DASHBOARD METRICS ====================
+
+def _to_float(v: Any, default: float = 0.0) -> float:
+    try:
+        if v is None:
+            return default
+        return float(v)
+    except (ValueError, TypeError):
+        return default
 
 def get_dashboard_metrics() -> Dict[str, Any]:
     if not SUPABASE_KEY:
@@ -999,29 +1254,89 @@ def get_dashboard_metrics() -> Dict[str, Any]:
             "margin_percent": 0,
             "active_deals_count": 0,
             "total_clients": 0,
+            "total_equipment": 0,
+            "total_parts": 0,
+            "total_tasks": 0,
+            "total_users": 0,
             "warehouse_value": 0,
             "critical_parts_count": 0,
+            "low_stock_parts": 0,
             "monthly_data": [],
             "top_clients": [],
-            "critical_parts": []
+            "critical_parts": [],
+            "mechanics_revenue": []
         }
     with get_sb_client() as client:
-        deals = client.get("/deals", params={"select": "*,clients(name),equipment(name)", "order": "id.desc"}).json() or []
-        completed = [d for d in deals if d.get("stage") == "completed"]
-        active = [d for d in deals if d.get("stage") not in ("completed", "cancelled")]
+        deals = client.get("/deals", params={"select": "*,clients(name,company),equipment(name)", "order": "id.desc"}).json() or []
+        for d in deals:
+            clean_desc, dtype, stype, outcome = parse_deal_description(d.get("description") or "", d.get("title") or "")
+            d["deal_type"] = dtype
+            d["service_type"] = stype
+            d["closing_outcome"] = outcome
 
-        total_rev = sum(d.get("amount", 0) for d in completed)
-        total_cost = sum(d.get("cost", 0) for d in completed)
+        closed_stages = ("completed", "ready", "paid", "issued", "parts_paid", "parts_shipped", "sales_delivered")
+        completed = [d for d in deals if d.get("stage") in closed_stages]
+        active = [d for d in deals if d.get("stage") not in closed_stages and d.get("stage") != "cancelled"]
+
+        # 1. Service metrics
+        service_deals = [d for d in deals if d.get("deal_type") not in ("parts_sale", "sales")]
+        service_completed = [d for d in completed if d.get("deal_type") not in ("parts_sale", "sales")]
+        service_active = [d for d in active if d.get("deal_type") not in ("parts_sale", "sales")]
+        service_rev = sum(_to_float(d.get("amount")) for d in service_completed)
+        service_cost = sum(_to_float(d.get("cost")) for d in service_completed)
+        service_profit = service_rev - service_cost
+
+        # 2. Parts sale metrics
+        parts_deals = [d for d in deals if d.get("deal_type") == "parts_sale"]
+        parts_completed = [d for d in completed if d.get("deal_type") == "parts_sale"]
+        parts_active = [d for d in active if d.get("deal_type") == "parts_sale"]
+        parts_rev = sum(_to_float(d.get("amount")) for d in parts_completed)
+        parts_cost = sum(_to_float(d.get("cost")) for d in parts_completed)
+        parts_profit = parts_rev - parts_cost
+
+        # 3. Sales department metrics
+        sales_deals = [d for d in deals if d.get("deal_type") == "sales"]
+        sales_completed = [d for d in completed if d.get("deal_type") == "sales"]
+        sales_active = [d for d in active if d.get("deal_type") == "sales"]
+        sales_rev = sum(_to_float(d.get("amount")) for d in sales_completed)
+        sales_cost = sum(_to_float(d.get("cost")) for d in sales_completed)
+        sales_profit = sales_rev - sales_cost
+
+        total_rev = service_rev + parts_rev + sales_rev
+        total_cost = service_cost + parts_cost + sales_cost
         net_profit = total_rev - total_cost
 
+        # Warehouse parts
         parts = client.get("/parts", params={"select": "*"}).json() or []
-        inv_cost = sum(p.get("quantity", 0) * p.get("purchase_price", 0) for p in parts)
-        inv_retail = sum(p.get("quantity", 0) * p.get("selling_price", 0) for p in parts)
-        low_stock = sum(1 for p in parts if p.get("quantity", 0) <= p.get("min_threshold", 2))
+        inv_cost = 0.0
+        inv_retail = 0.0
+        critical_list = []
+        for p in parts:
+            qty = _to_float(p.get("quantity"), 0.0)
+            p_price = _to_float(p.get("purchase_price"), 0.0)
+            s_price = _to_float(p.get("selling_price"), 0.0)
+            min_th = _to_float(p.get("min_threshold"), 2.0)
+            inv_cost += qty * p_price
+            inv_retail += qty * s_price
+            if qty <= min_th:
+                critical_list.append({
+                    "id": p.get("id"),
+                    "name": p.get("name") or "Без названия",
+                    "sku": p.get("sku") or "—",
+                    "category": p.get("category") or "",
+                    "quantity": int(qty) if qty.is_integer() else round(qty, 2),
+                    "min_threshold": int(min_th) if min_th.is_integer() else round(min_th, 2),
+                    "location": p.get("location") or "Склад",
+                    "purchase_price": round(p_price, 2),
+                    "selling_price": round(s_price, 2)
+                })
+
+        critical_list.sort(key=lambda x: x["quantity"])
+        low_stock = len(critical_list)
 
         clients = client.get("/clients", params={"select": "id,name,company"}).json() or []
         equipment = client.get("/equipment", params={"select": "id"}).json() or []
-        users = client.get("/users", params={"select": "id"}).json() or []
+        users = client.get("/users", params={"select": "id,username,full_name,role,phone"}).json() or []
 
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
         tasks = client.get("/tasks", params={"select": "id,due_date,status"}).json() or []
@@ -1031,44 +1346,224 @@ def get_dashboard_metrics() -> Dict[str, Any]:
         for d in deals:
             st = d.get("stage", "new")
             if st not in stages:
-                stages[st] = {"count": 0, "amount": 0}
+                stages[st] = {"count": 0, "amount": 0.0}
             stages[st]["count"] += 1
-            stages[st]["amount"] += d.get("amount", 0)
+            stages[st]["amount"] += _to_float(d.get("amount"))
 
         # Recent deals format
         recent = []
-        for d in deals[:5]:
+        for d in deals[:8]:
             cl = d.get("clients") or {}
             eq = d.get("equipment") or {}
+            clean_desc, dtype, stype, outcome = parse_deal_description(d.get("description") or "", d.get("title") or "")
             recent.append({
                 "id": d.get("id"),
                 "title": d.get("title"),
+                "deal_type": dtype,
+                "service_type": stype,
+                "closing_outcome": outcome,
                 "amount": d.get("amount"),
                 "stage": d.get("stage"),
                 "created_at": d.get("created_at"),
-                "client_name": cl.get("name", ""),
-                "equipment_name": eq.get("name", "")
+                "completed_at": d.get("completed_at"),
+                "client_name": cl.get("name") or "—",
+                "client_company": cl.get("company") or "",
+                "equipment_name": eq.get("name") or "—"
             })
+
+        # Top clients by revenue
+        client_spent: Dict[int, Dict[str, Any]] = {}
+        for d in deals:
+            cid = d.get("client_id")
+            if not cid:
+                continue
+            amt = _to_float(d.get("amount"), 0.0)
+            cl = d.get("clients") or {}
+            c_name = cl.get("name") or f"Клиент #{cid}"
+            c_comp = cl.get("company") or ""
+            if cid not in client_spent:
+                client_spent[cid] = {
+                    "id": cid,
+                    "name": c_name,
+                    "company": c_comp,
+                    "total_spent": 0.0,
+                    "completed_deals": 0,
+                    "deals_count": 0
+                }
+            client_spent[cid]["deals_count"] += 1
+            if d.get("stage") in closed_stages or amt > 0:
+                client_spent[cid]["completed_deals"] += 1
+                client_spent[cid]["total_spent"] += amt
+
+        top_clients = list(client_spent.values())
+        top_clients.sort(key=lambda x: (x["total_spent"], x["completed_deals"]), reverse=True)
+        top_clients = top_clients[:5]
+
+        # Monthly chart data (last 6 months)
+        month_names = {
+            1: "Янв", 2: "Фев", 3: "Мар", 4: "Апр", 5: "Май", 6: "Июн",
+            7: "Июл", 8: "Авг", 9: "Сен", 10: "Окт", 11: "Ноя", 12: "Дек"
+        }
+        monthly_map = {}
+        now = datetime.now()
+        for i in range(5, -1, -1):
+            m_idx = (now.month - i - 1) % 12 + 1
+            y_offset = (now.month - i - 1) // 12
+            yr = now.year + y_offset
+            k = f"{yr}-{m_idx:02d}"
+            monthly_map[k] = {
+                "month": f"{month_names.get(m_idx, str(m_idx))} {str(yr)[2:]}",
+                "revenue": 0.0,
+                "cost": 0.0
+            }
+
+        for d in deals:
+            if d.get("stage") in closed_stages:
+                dt_str = d.get("completed_at") or d.get("created_at") or ""
+                amt = _to_float(d.get("amount"), 0.0)
+                c_cost = _to_float(d.get("cost"), 0.0)
+                if len(dt_str) >= 7:
+                    k = dt_str[:7]
+                    if k in monthly_map:
+                        monthly_map[k]["revenue"] += amt
+                        monthly_map[k]["cost"] += c_cost
+                    else:
+                        cur_k = f"{now.year}-{now.month:02d}"
+                        if cur_k in monthly_map:
+                            monthly_map[cur_k]["revenue"] += amt
+                            monthly_map[cur_k]["cost"] += c_cost
+
+        cur_k = f"{now.year}-{now.month:02d}"
+        if sum(m["revenue"] for m in monthly_map.values()) == 0 and total_rev > 0 and cur_k in monthly_map:
+            monthly_map[cur_k]["revenue"] = total_rev
+            monthly_map[cur_k]["cost"] = total_cost
+
+        monthly_data = list(monthly_map.values())
+
+        # Mechanics Revenue Breakdown (strictly for Administrators)
+        mechanics_map: Dict[str, Dict[str, Any]] = {}
+        for u in users:
+            if u.get("role") == "mechanic":
+                uid = str(u.get("id"))
+                mechanics_map[uid] = {
+                    "user_id": u.get("id"),
+                    "name": u.get("full_name") or u.get("username"),
+                    "username": u.get("username") or "",
+                    "completed_deals_count": 0,
+                    "active_deals_count": 0,
+                    "total_revenue": 0.0,
+                    "total_cost": 0.0,
+                    "net_profit": 0.0,
+                    "avg_deal": 0.0
+                }
+
+        for d in deals:
+            if d.get("deal_type") == "parts_sale":
+                continue
+            resp = (d.get("responsible") or "").strip()
+            if not resp:
+                continue
+
+            matched_key = None
+            resp_lower = resp.lower()
+            for mid, mdata in mechanics_map.items():
+                m_name = mdata["name"].lower()
+                m_user = mdata["username"].lower()
+                if resp_lower == m_name or resp_lower == m_user or resp_lower in m_name or m_name in resp_lower:
+                    matched_key = mid
+                    break
+
+            if not matched_key:
+                matched_key = f"resp_{resp}"
+                if matched_key not in mechanics_map:
+                    mechanics_map[matched_key] = {
+                        "user_id": None,
+                        "name": resp,
+                        "username": resp,
+                        "completed_deals_count": 0,
+                        "active_deals_count": 0,
+                        "total_revenue": 0.0,
+                        "total_cost": 0.0,
+                        "net_profit": 0.0,
+                        "avg_deal": 0.0
+                    }
+
+            entry = mechanics_map[matched_key]
+            d_amt = _to_float(d.get("amount"), 0.0)
+            d_cost = _to_float(d.get("cost"), 0.0)
+
+            if d.get("stage") in closed_stages:
+                entry["completed_deals_count"] += 1
+                entry["total_revenue"] += d_amt
+                entry["total_cost"] += d_cost
+            elif d.get("stage") not in closed_stages and d.get("stage") != "cancelled":
+                entry["active_deals_count"] += 1
+
+        mechanics_revenue = list(mechanics_map.values())
+        for m in mechanics_revenue:
+            m["net_profit"] = round(m["total_revenue"] - m["total_cost"], 2)
+            m["total_revenue"] = round(m["total_revenue"], 2)
+            m["total_cost"] = round(m["total_cost"], 2)
+            m["avg_deal"] = round(m["total_revenue"] / m["completed_deals_count"], 2) if m["completed_deals_count"] > 0 else 0.0
+
+        mechanics_revenue.sort(key=lambda x: (x["total_revenue"], x["completed_deals_count"]), reverse=True)
 
         return {
             "total_revenue": round(total_rev, 2),
             "total_cost": round(total_cost, 2),
             "net_profit": round(net_profit, 2),
             "margin_percent": round((net_profit / total_rev * 100), 1) if total_rev > 0 else 0,
+
+            # Parts Sales revenue metrics
+            "parts_sales_revenue": round(parts_rev, 2),
+            "parts_sales_cost": round(parts_cost, 2),
+            "parts_sales_profit": round(parts_profit, 2),
+            "parts_sales_margin": round((parts_profit / parts_rev * 100), 1) if parts_rev > 0 else 0,
+            "parts_sales_count": len(parts_deals),
+            "parts_sales_completed_count": len(parts_completed),
+            "parts_sales_active_count": len(parts_active),
+            "parts_sales_active_volume": round(sum(_to_float(d.get("amount")) for d in parts_active), 2),
+
+            # Service revenue metrics
+            "service_revenue": round(service_rev, 2),
+            "service_cost": round(service_cost, 2),
+            "service_profit": round(service_profit, 2),
+            "service_margin": round((service_profit / service_rev * 100), 1) if service_rev > 0 else 0,
+            "service_deals_count": len(service_deals),
+            "service_completed_count": len(service_completed),
+            "service_active_count": len(service_active),
+            "service_active_volume": round(sum(_to_float(d.get("amount")) for d in service_active), 2),
+
+            # Machinery Sales metrics
+            "sales_revenue": round(sales_rev, 2),
+            "sales_cost": round(sales_cost, 2),
+            "sales_profit": round(sales_profit, 2),
+            "sales_margin": round((sales_profit / sales_rev * 100), 1) if sales_rev > 0 else 0,
+            "sales_deals_count": len(sales_deals),
+            "sales_completed_count": len(sales_completed),
+            "sales_active_count": len(sales_active),
+            "sales_active_volume": round(sum(_to_float(d.get("amount")) for d in sales_active), 2),
+
             "completed_count": len(completed),
             "avg_deal": round(total_rev / len(completed), 2) if completed else 0,
             "active_deals_count": len(active),
             "total_deals_count": len(deals),
-            "active_deals_volume": round(sum(d.get("amount", 0) for d in active), 2),
+            "active_deals_volume": round(sum(_to_float(d.get("amount")) for d in active), 2),
             "total_clients": len(clients),
             "total_equipment": len(equipment),
+            "total_parts": len(parts),
+            "total_tasks": len(tasks),
             "total_users": len(users),
             "low_stock_parts": low_stock,
+            "critical_parts": critical_list[:25],
+            "mechanics_revenue": mechanics_revenue,
             "inventory_cost": round(inv_cost, 2),
             "inventory_retail": round(inv_retail, 2),
             "overdue_tasks": overdue,
             "deals_by_stage": stages,
-            "recent_deals": recent
+            "recent_deals": recent,
+            "top_clients": top_clients,
+            "monthly_data": monthly_data
         }
 
 # ==================== DUMP & RESTORE ====================
@@ -1090,3 +1585,230 @@ def restore_all_data(data: Dict[str, Any]) -> Dict[str, Any]:
                 r = client.post(f"/{table}", json=data[table], headers=headers)
                 counts[table] = len(data[table]) if r.status_code in (200, 201) else 0
         return counts
+
+
+# ==================== TOP SOLD PARTS & EQUIPMENT HISTORY & PERMISSIONS & WHATSAPP ====================
+
+def get_top_sold_parts(limit: int = 10) -> List[Dict[str, Any]]:
+    if not SUPABASE_KEY:
+        return []
+    with get_sb_client() as client:
+        dpr = client.get("/deal_parts", params={"select": "part_id,quantity,selling_price"})
+        parts_r = client.get("/parts", params={"select": "id,sku,name,category,quantity,selling_price,min_threshold"})
+        if parts_r.status_code != 200:
+            return []
+
+        parts_map = {p["id"]: p for p in parts_r.json()}
+        sales_agg: Dict[int, Dict[str, Any]] = {}
+
+        if dpr.status_code == 200:
+            for dp in dpr.json():
+                pid = dp.get("part_id")
+                qty = dp.get("quantity") or 0
+                price = dp.get("selling_price") or 0.0
+                if pid not in sales_agg:
+                    sales_agg[pid] = {"sold_count": 0, "total_revenue": 0.0}
+                sales_agg[pid]["sold_count"] += qty
+                sales_agg[pid]["total_revenue"] += qty * price
+
+        results = []
+        for pid, p in parts_map.items():
+            agg = sales_agg.get(pid, {"sold_count": 0, "total_revenue": 0.0})
+            results.append({
+                "part_id": pid,
+                "sku": p.get("sku") or f"P-{pid}",
+                "name": p.get("name") or f"Запчасть #{pid}",
+                "category": p.get("category") or "Запчасти",
+                "current_stock": p.get("quantity") or 0,
+                "sold_count": agg["sold_count"],
+                "total_revenue": agg["total_revenue"],
+                "unit_price": p.get("selling_price") or 0.0
+            })
+
+        results.sort(key=lambda x: (x["sold_count"], x["total_revenue"], x["unit_price"]), reverse=True)
+        return results[:limit]
+
+def get_equipment_history(eq_id: int) -> Dict[str, Any]:
+    if not SUPABASE_KEY:
+        return {"equipment_id": eq_id, "deals": [], "parts": [], "total_deals": 0, "total_spent": 0.0, "total_parts_count": 0}
+    with get_sb_client() as client:
+        r = client.get("/deals", params={"equipment_id": f"eq.{eq_id}", "select": "*,clients(name,company,phone)", "order": "created_at.desc"})
+        deals_raw = r.json() if r.status_code == 200 else []
+        deals = []
+        deal_ids = []
+        total_spent = 0.0
+
+        for d in deals_raw:
+            cl = d.get("clients") or {}
+            item = dict(d)
+            item.pop("clients", None)
+            clean_desc, dtype, stype, outcome = parse_deal_description(d.get("description") or "", d.get("title") or "")
+            item["description"] = clean_desc
+            item["deal_type"] = dtype
+            item["service_type"] = stype
+            item["closing_outcome"] = outcome
+            item["client_name"] = cl.get("name", "")
+            item["client_company"] = cl.get("company", "")
+            item["client_phone"] = cl.get("phone", "")
+            deals.append(item)
+            deal_ids.append(str(d.get("id")))
+            total_spent += float(d.get("amount") or 0.0)
+
+        parts = []
+        if deal_ids:
+            dpr = client.get("/deal_parts", params={"deal_id": f"in.({','.join(deal_ids)})", "select": "*,parts(sku,name,category)"})
+            if dpr.status_code == 200:
+                for dp in dpr.json():
+                    p = dp.get("parts") or {}
+                    deal_obj = next((dl for dl in deals if dl.get("id") == dp.get("deal_id")), None)
+                    parts.append({
+                        "deal_part_id": dp.get("id"),
+                        "deal_id": dp.get("deal_id"),
+                        "deal_title": deal_obj.get("title", f"Наряд #{dp.get('deal_id')}") if deal_obj else f"Наряд #{dp.get('deal_id')}",
+                        "date": deal_obj.get("created_at", "") if deal_obj else "",
+                        "part_id": dp.get("part_id"),
+                        "sku": p.get("sku") or f"P-{dp.get('part_id')}",
+                        "name": p.get("name") or f"Запчасть #{dp.get('part_id')}",
+                        "category": p.get("category") or "Запчасти",
+                        "quantity": dp.get("quantity") or 1,
+                        "purchase_price": float(dp.get("purchase_price") or 0.0),
+                        "selling_price": float(dp.get("selling_price") or 0.0),
+                        "total_price": float(dp.get("selling_price") or 0.0) * float(dp.get("quantity") or 1)
+                    })
+
+        return {
+            "equipment_id": eq_id,
+            "deals": deals,
+            "parts": parts,
+            "total_deals": len(deals),
+            "total_spent": total_spent,
+            "total_parts_count": sum(p["quantity"] for p in parts)
+        }
+
+DEFAULT_ROLE_PERMISSIONS = {
+    "admin": {
+        "dashboard": True, "deals_sto": True, "deals_parts": True, "deals_sales": True,
+        "warehouse": True, "equipment": True, "clients": True, "tasks": True,
+        "marketing": True, "users": True, "settings": True,
+        "can_delete_deals": True, "can_edit_closed_deals": True,
+        "can_view_revenue": True, "can_edit_tasks": True
+    },
+    "moderator": {
+        "dashboard": True, "deals_sto": True, "deals_parts": True, "deals_sales": False,
+        "warehouse": True, "equipment": True, "clients": True, "tasks": True,
+        "marketing": True, "users": False, "settings": False,
+        "can_delete_deals": False, "can_edit_closed_deals": False,
+        "can_view_revenue": True, "can_edit_tasks": False
+    },
+    "manager": {
+        "dashboard": True, "deals_sto": True, "deals_parts": True, "deals_sales": False,
+        "warehouse": True, "equipment": True, "clients": True, "tasks": True,
+        "marketing": False, "users": False, "settings": False,
+        "can_delete_deals": False, "can_edit_closed_deals": False,
+        "can_view_revenue": False, "can_edit_tasks": False
+    },
+    "sales_manager": {
+        "dashboard": True, "deals_sto": False, "deals_parts": False, "deals_sales": True,
+        "warehouse": True, "equipment": True, "clients": True, "tasks": True,
+        "marketing": True, "users": False, "settings": False,
+        "can_delete_deals": False, "can_edit_closed_deals": False,
+        "can_view_revenue": False, "can_edit_tasks": False
+    },
+    "mechanic": {
+        "dashboard": False, "deals_sto": True, "deals_parts": False, "deals_sales": False,
+        "warehouse": True, "equipment": True, "clients": False, "tasks": True,
+        "marketing": False, "users": False, "settings": False,
+        "can_delete_deals": False, "can_edit_closed_deals": False,
+        "can_view_revenue": False, "can_edit_tasks": False
+    }
+}
+
+def get_user_permissions(user_id: int, role: str = "mechanic") -> Dict[str, Any]:
+    base_perms = dict(DEFAULT_ROLE_PERMISSIONS.get(role, DEFAULT_ROLE_PERMISSIONS["mechanic"]))
+    if not SUPABASE_KEY:
+        return base_perms
+    with get_sb_client() as client:
+        r = client.get("/settings", params={"key": f"eq.user_perms_{user_id}"})
+        if r.status_code == 200 and r.json():
+            val = r.json()[0].get("value")
+            if val:
+                try:
+                    custom = json.loads(val) if isinstance(val, str) else val
+                    base_perms.update(custom)
+                except Exception:
+                    pass
+    return base_perms
+
+def save_user_permissions(user_id: int, permissions: Dict[str, Any]) -> Dict[str, Any]:
+    save_setting(f"user_perms_{user_id}", json.dumps(permissions, ensure_ascii=False))
+    return {"user_id": user_id, "permissions": permissions, "message": "Права доступа сотрудника сохранены"}
+
+def send_whatsapp_message(to_phone: str, message_text: str, template_name: Optional[str] = None) -> Dict[str, Any]:
+    settings = get_settings()
+    phone_id = (settings.get("whatsapp_phone_number_id") or "").strip()
+    token = (settings.get("whatsapp_access_token") or "").strip()
+    clean_phone = re.sub(r'[^0-9+]', '', to_phone)
+    if clean_phone.startswith('+'):
+        clean_phone = clean_phone[1:]
+
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_entry = {
+        "phone": to_phone,
+        "clean_phone": clean_phone,
+        "text": message_text,
+        "template": template_name,
+        "sent_at": now_str,
+        "status": "pending",
+        "detail": ""
+    }
+
+    if not phone_id or not token or token == "EAAGdummyTokenTest" or phone_id == "1234567890":
+        log_entry["status"] = "simulated"
+        log_entry["detail"] = "Режим симуляции: настройте WhatsApp Cloud API в разделе 'Маркетинг'"
+        save_whatsapp_log(log_entry)
+        return {"success": True, "simulated": True, "log": log_entry}
+
+    url = f"https://graph.facebook.com/v19.0/{phone_id}/messages"
+    headers = {
+        "Authorization": "Bearer " + token,
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": clean_phone,
+        "type": "text",
+        "text": {"preview_url": False, "body": message_text}
+    }
+    try:
+        with httpx.Client(timeout=15.0) as http_client:
+            resp = http_client.post(url, headers=headers, json=payload)
+            if resp.status_code in (200, 201):
+                log_entry["status"] = "sent"
+                log_entry["detail"] = resp.text
+                save_whatsapp_log(log_entry)
+                return {"success": True, "simulated": False, "log": log_entry}
+            else:
+                log_entry["status"] = "failed"
+                log_entry["detail"] = f"HTTP {resp.status_code}: {resp.text}"
+                save_whatsapp_log(log_entry)
+                return {"success": False, "simulated": False, "error": log_entry["detail"]}
+    except Exception as e:
+        log_entry["status"] = "failed"
+        log_entry["detail"] = str(e)
+        save_whatsapp_log(log_entry)
+        return {"success": False, "simulated": False, "error": str(e)}
+
+def get_whatsapp_logs() -> List[Dict[str, Any]]:
+    settings = get_settings()
+    raw = settings.get("whatsapp_logs_json") or "[]"
+    try:
+        return json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:
+        return []
+
+def save_whatsapp_log(entry: Dict[str, Any]) -> None:
+    logs = get_whatsapp_logs()
+    logs.insert(0, entry)
+    logs = logs[:100]
+    save_setting("whatsapp_logs_json", json.dumps(logs, ensure_ascii=False))
