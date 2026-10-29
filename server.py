@@ -320,7 +320,7 @@ def login(req: LoginRequest):
     if not database.get_supabase_key():
         raise HTTPException(
             status_code=503,
-            detail="База данных Supabase не подключена. Пожалуйста, добавьте переменную SUPABASE_KEY в настройках Vercel."
+            detail="База данных Supabase не подключена. Добавьте SUPABASE_SECRET_KEY в переменные окружения."
         )
     user = database.get_user_by_username(req.username.strip().lower())
     if not user:
@@ -429,7 +429,33 @@ def get_system_stats():
 
 @app.get("/api/settings/backup")
 def download_database_backup():
-    return database.dump_all_data()
+    try:
+        dump = database.dump_postgres_sql()
+        filename = f"specmash_crm_postgres_{datetime.now().strftime('%Y%m%d_%H%M%S')}.sql"
+        return Response(
+            content=dump,
+            media_type="application/sql",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка создания SQL-бэкапа: {str(e)}")
+
+
+@app.post("/api/settings/backup/restore")
+async def restore_database_backup(file: UploadFile = File(...)):
+    if not file.filename or not file.filename.lower().endswith(".sql"):
+        raise HTTPException(status_code=400, detail="Загрузите файл PostgreSQL .sql")
+    try:
+        content = await file.read()
+        dump = content.decode("utf-8-sig")
+        result = database.restore_postgres_sql(dump)
+        return {"message": "PostgreSQL-база успешно восстановлена", **result}
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=400, detail="SQL-бэкап должен быть в кодировке UTF-8")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ошибка восстановления SQL-бэкапа: {str(e)}")
 
 @app.get("/api/backup/json")
 def export_json_backup():

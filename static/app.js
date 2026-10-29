@@ -4350,57 +4350,48 @@ async function handleImport(type) {
   }
 }
 
-async function exportJsonBackup() {
+async function exportSqlBackup() {
   try {
-    showToast('Подготовка резервной копии базы данных...', 'info');
-    const res = await fetch('/api/backup/json');
-    if (!res.ok) throw new Error('Ошибка создания резервной копии');
-    const data = await res.json();
-
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    showToast('Подготовка полного SQL-бэкапа PostgreSQL...', 'info');
+    const res = await fetch('/api/settings/backup');
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({}));
+      throw new Error(error.detail || 'Ошибка создания SQL-бэкапа');
+    }
+    const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     a.href = url;
-    a.download = `specmash_crm_backup_${timestamp}.json`;
+    a.download = `specmash_crm_postgres_${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.sql`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    showToast('Резервная копия базы данных успешно выгружена (JSON)');
+    showToast('Полный PostgreSQL SQL-бэкап успешно скачан');
   } catch (err) {
     showToast(err.message, 'error');
   }
 }
 
-async function handleRestoreJsonFile(event) {
+async function handleRestoreSqlFile(event) {
   const file = event.target.files?.[0];
   if (!file) return;
 
-  if (!confirm(`Вы действительно хотите восстановить базу данных из файла "${file.name}"? Записи будут синхронизированы и обновлены.`)) {
+  if (!confirm(`Восстановить PostgreSQL из файла "${file.name}"? Текущие данные CRM будут заменены данными из бэкапа.`)) {
     event.target.value = '';
     return;
   }
 
   try {
-    showToast('Восстановление базы данных...', 'info');
-    const text = await file.text();
-    const json = JSON.parse(text);
-
-    const res = await fetch('/api/backup/restore', {
+    showToast('Восстановление PostgreSQL-базы...', 'info');
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await fetch('/api/settings/backup/restore', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(json)
+      body: formData
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || 'Ошибка восстановления');
-
-    // Update local store
-    if (json.users) json.users.forEach(u => crmStore.saveItem('users', u));
-    if (json.clients) json.clients.forEach(c => crmStore.saveItem('clients', c));
-    if (json.equipment) json.equipment.forEach(e => crmStore.saveItem('equipment', e));
-    if (json.deals) json.deals.forEach(d => crmStore.saveItem('deals', d));
-    if (json.parts) json.parts.forEach(p => crmStore.saveItem('parts', p));
 
     showToast(data.message || 'База успешно восстановлена!', 'success');
     event.target.value = '';
@@ -4416,7 +4407,7 @@ async function handleRestoreJsonFile(event) {
       loadUsers()
     ]);
   } catch (err) {
-    showToast('Ошибка при чтении файла: ' + err.message, 'error');
+    showToast('Ошибка восстановления: ' + err.message, 'error');
     event.target.value = '';
   }
 }

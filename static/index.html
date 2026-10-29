@@ -1595,21 +1595,21 @@
                     <span>Активно</span>
                   </span>
                 </div>
-                <p class="text-[11px] text-slate-400">Данные синхронизируются локально и на сервере. Скачайте копию базы или восстановите из файла в один клик.</p>
+                <p class="text-[11px] text-slate-400">Полный SQL-бэкап PostgreSQL содержит схему, данные и последовательности. Восстановление заменяет данные CRM транзакционно.</p>
               </div>
               <div class="flex flex-wrap items-center gap-2">
-                <button type="button" onclick="exportJsonBackup()" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5 shadow-sm transition-colors">
-                  <i data-lucide="file-json" class="w-4 h-4"></i>
-                  <span>Экспорт JSON</span>
+                <button type="button" onclick="exportSqlBackup()" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5 shadow-sm transition-colors">
+                  <i data-lucide="database" class="w-4 h-4"></i>
+                  <span>Экспорт SQL</span>
                 </button>
                 <label class="cursor-pointer bg-slate-700 hover:bg-slate-800 text-white text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5 shadow-sm transition-colors">
                   <i data-lucide="upload" class="w-4 h-4"></i>
-                  <span>Восстановить JSON</span>
-                  <input type="file" id="backup-file-input" accept=".json" onchange="handleRestoreJsonFile(event)" class="hidden">
+                  <span>Импорт SQL</span>
+                  <input type="file" id="backup-file-input" accept=".sql,text/sql" onchange="handleRestoreSqlFile(event)" class="hidden">
                 </label>
                 <button type="button" onclick="downloadDatabaseBackup()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5 shadow-sm transition-colors" title="Скачать резервную копию Supabase">
                   <i data-lucide="download" class="w-4 h-4"></i>
-                  <span>Скачать .db</span>
+                  <span>Скачать SQL-бэкап</span>
                 </button>
               </div>
             </div>
