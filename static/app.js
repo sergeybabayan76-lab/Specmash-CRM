@@ -1840,7 +1840,7 @@ function renderDealsList() {
                 ${isFailed ? '<span class="bg-rose-600 text-white font-bold text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1 shadow-xs"><i data-lucide="x-circle" class="w-3 h-3"></i> ❌ Не удачно</span>' : ''}
                 ${isOverdue ? '<span class="bg-rose-600 text-white font-bold text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1 w-fit shadow-xs"><i data-lucide="clock" class="w-3 h-3"></i> Ожидает выдачи &gt; 30 дней</span>' : ''}
                 ${isLocked ? '<span class="bg-amber-100 text-amber-800 text-[10px] font-bold px-1.5 py-0.2 rounded flex items-center gap-1 border border-amber-300"><i data-lucide="lock" class="w-3 h-3"></i> Закрыто</span>' : ''}
-                ${Number(deal.parts_count || 0) > 0 ? `<span class="bg-amber-50 text-amber-700 border border-amber-200 text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold" title="Списано со склада">${deal.parts_count} з/ч</span>` : ''}
+                <span class="bg-amber-50 text-amber-700 border border-amber-200 text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold" title="Использовано запчастей">${Number(deal.parts_count || 0)} з/ч</span>
               </div>
             </div>
           </div>
@@ -1861,7 +1861,8 @@ function renderDealsList() {
             <i data-lucide="${deal.deal_type === 'parts_sale' ? 'shopping-cart' : (deal.deal_type === 'sales' ? 'tractor' : 'truck')}" class="w-3.5 h-3.5 text-blue-600"></i>
             <span>${deal.deal_type === 'parts_sale' ? 'Продажа со склада' : (deal.equipment_name || (state.equipment && state.equipment.find(eq => eq.id === deal.equipment_id)?.name) || 'Не привязана')}</span>
           </div>
-          <div class="text-[11px] text-slate-400 font-mono">${deal.equipment_category || ''}</div>
+          <div class="text-[11px] text-slate-400 font-mono">${deal.equipment_vin ? `VIN: ${deal.equipment_vin}` : 'VIN: —'}</div>
+          <div class="text-[11px] text-amber-700 font-mono">Запчасти: ${Number(deal.parts_count || 0)}</div>
         </td>
 
         <td class="p-3.5">
@@ -2115,7 +2116,7 @@ function renderKanbanCard(deal) {
       <div class="flex items-center justify-between pt-1 text-xs">
         <span class="font-bold text-blue-600 font-mono">${formatMoney(deal.amount)}</span>
         <div class="flex items-center gap-1.5">
-          ${Number(deal.parts_count || 0) > 0 ? `<span class="bg-amber-50 text-amber-700 border border-amber-200 text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold" title="Списано запчастей">${deal.parts_count} з/ч</span>` : ''}
+          <span class="bg-amber-50 text-amber-700 border border-amber-200 text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold" title="Использовано запчастей">${Number(deal.parts_count || 0)} з/ч</span>
           <span class="text-[10px] text-slate-500 font-medium">${deal.responsible || ''}</span>
         </div>
       </div>
