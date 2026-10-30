@@ -1556,7 +1556,8 @@ def get_dashboard_metrics() -> Dict[str, Any]:
 
         for d in deals:
             if d.get("stage") in closed_stages:
-                dt_str = d.get("completed_at") or d.get("created_at") or ""
+                dt_value = d.get("completed_at") or d.get("created_at") or ""
+                dt_str = dt_value.isoformat() if hasattr(dt_value, "isoformat") else str(dt_value)
                 amt = _to_float(d.get("amount"), 0.0)
                 c_cost = _to_float(d.get("cost"), 0.0)
                 if len(dt_str) >= 7:
