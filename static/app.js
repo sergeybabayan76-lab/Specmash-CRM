@@ -801,6 +801,27 @@ async function loadSettings() {
   }
 }
 
+function applyFavicon(url) {
+  const cleanUrl = (url && typeof url === 'string' && url.trim().length > 0) ? url.trim() : '/favicon.ico';
+  const ids = [
+    { id: 'app-favicon', rel: 'icon' },
+    { id: 'app-shortcut-icon', rel: 'shortcut icon' },
+    { id: 'app-apple-touch-icon', rel: 'apple-touch-icon' }
+  ];
+  ids.forEach(({ id, rel }) => {
+    let link = document.getElementById(id);
+    if (!link) {
+      link = document.createElement('link');
+      link.id = id;
+      link.rel = rel;
+      document.head.appendChild(link);
+    }
+    if (link.getAttribute('href') !== cleanUrl) {
+      link.setAttribute('href', cleanUrl);
+    }
+  });
+}
+
 function applyAuthScreenBranding(settings) {
   if (!settings) return;
   const nameEl = document.getElementById('auth-screen-company-name');
@@ -818,12 +839,14 @@ function applyAuthScreenBranding(settings) {
       authImg.classList.remove('hidden');
     }
     if (authIcon) authIcon.classList.add('hidden');
+    applyFavicon(settings.auth_logo_url);
   } else {
     if (authImg) authImg.classList.add('hidden');
     if (authIcon) {
       authIcon.classList.remove('hidden');
       authIcon.setAttribute('data-lucide', settings.auth_icon || 'wrench');
     }
+    applyFavicon(settings.logo_url || '/favicon.ico');
   }
   if (window.lucide) lucide.createIcons();
 }
@@ -869,12 +892,14 @@ function updateAuthIconPreview(iconName, logoUrl) {
       imgEl.classList.remove('hidden');
     }
     if (iconEl) iconEl.classList.add('hidden');
+    applyFavicon(logoUrl);
   } else {
     if (imgEl) imgEl.classList.add('hidden');
     if (iconEl) {
       iconEl.classList.remove('hidden');
       iconEl.setAttribute('data-lucide', iconName || 'wrench');
     }
+    applyFavicon(state.settings?.logo_url || '/favicon.ico');
   }
 
   // Highlight active button in options

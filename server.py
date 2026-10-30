@@ -9,12 +9,13 @@ import io
 import json
 import time
 import uuid
+import base64
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 
 from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Form, Response, WebSocket, WebSocketDisconnect, Header
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -522,6 +523,45 @@ def delete_logo():
             os.remove(old_path)
     database.update_settings({"logo_url": ""})
     return {"message": "Логотип сброшен к стандартному"}
+
+@app.get("/favicon.ico", include_in_schema=False)
+@app.get("/api/settings/favicon", include_in_schema=False)
+def serve_favicon():
+    """Serves the login screen logo (auth_logo_url) as the application favicon."""
+    try:
+        settings = database.get_settings()
+    except Exception:
+        settings = {}
+
+    fav_src = (settings.get("auth_logo_url") or "").strip() or (settings.get("logo_url") or "").strip()
+
+    if fav_src.startswith("data:"):
+        try:
+            header, _, b64_data = fav_src.partition(",")
+            mime = header.split(";")[0][5:] or "image/png"
+            raw_bytes = base64.b64decode(b64_data)
+            return Response(content=raw_bytes, media_type=mime, headers={"Cache-Control": "no-cache"})
+        except Exception:
+            pass
+    elif fav_src.startswith("/static/"):
+        rel_path = fav_src[len("/static/"):].split("?", 1)[0]
+        full_path = os.path.normpath(os.path.join(STATIC_DIR, rel_path))
+        if full_path.startswith(os.path.normpath(STATIC_DIR)) and os.path.isfile(full_path):
+            return FileResponse(full_path, headers={"Cache-Control": "no-cache"})
+    elif fav_src.startswith(("http://", "https://")):
+        return RedirectResponse(fav_src)
+
+    default_logo = os.path.join(UPLOADS_DIR, "logo.png")
+    if os.path.isfile(default_logo):
+        return FileResponse(default_logo, headers={"Cache-Control": "no-cache"})
+
+    fallback_svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">'
+        '<rect width="64" height="64" rx="14" fill="#2563eb"/>'
+        '<path d="M42.7 21.3a10 10 0 0 0-13.4 13.4L16 48l4 4 13.3-13.3a10 10 0 0 0 13.4-13.4l-5.7 5.7-4-4 5.7-5.7z" fill="#fff"/>'
+        '</svg>'
+    )
+    return Response(content=fallback_svg, media_type="image/svg+xml", headers={"Cache-Control": "no-cache"})
 
 # ----------------- Dashboard & Analytics -----------------
 
