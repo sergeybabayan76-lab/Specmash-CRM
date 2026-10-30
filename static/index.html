@@ -95,7 +95,7 @@
 
       <div class="mt-5 pt-3.5 border-t border-slate-800/80 text-[11px] text-slate-500 flex items-center justify-between">
         <span>СТО Спецмаш (AMD)</span>
-        <span class="font-mono text-slate-600">Supabase Protected</span>
+        <span class="font-mono text-slate-600">PostgreSQL Protected</span>
       </div>
     </div>
   </div>
@@ -230,7 +230,7 @@
       <div class="flex items-center justify-between">
         <span class="flex items-center gap-1.5">
           <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-          <span>База Supabase</span>
+          <span>Локальная база</span>
         </span>
         <span class="font-mono text-slate-400">PostgreSQL</span>
       </div>
@@ -1552,8 +1552,8 @@
                 <i data-lucide="database" class="w-5 h-5"></i>
               </div>
               <div>
-                <h3 class="font-bold text-slate-900 text-base">База данных Supabase и резервные копии</h3>
-                <p class="text-xs text-slate-400">Состояние облачной базы Supabase и создание резервных копий</p>
+                <h3 class="font-bold text-slate-900 text-base">PostgreSQL и резервные копии</h3>
+                <p class="text-xs text-slate-400">Состояние локальной PostgreSQL-базы и создание резервных копий</p>
               </div>
             </div>
 
@@ -1607,7 +1607,7 @@
                   <span>Импорт SQL</span>
                   <input type="file" id="backup-file-input" accept=".sql,text/sql" onchange="handleRestoreSqlFile(event)" class="hidden">
                 </label>
-                <button type="button" onclick="downloadDatabaseBackup()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5 shadow-sm transition-colors" title="Скачать резервную копию Supabase">
+                <button type="button" onclick="downloadDatabaseBackup()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1.5 shadow-sm transition-colors" title="Скачать резервную копию PostgreSQL">
                   <i data-lucide="download" class="w-4 h-4"></i>
                   <span>Скачать SQL-бэкап</span>
                 </button>

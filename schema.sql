@@ -1,8 +1,8 @@
 -- =====================================================================
--- СТО СПЕЦМАШ CRM — ПОЛНАЯ СХЕМА БАЗЫ ДАННЫХ И ДАННЫЕ (POSTGRESQL / SUPABASE)
+-- СТО СПЕЦМАШ CRM — ПОЛНАЯ СХЕМА БАЗЫ ДАННЫХ (LOCAL POSTGRESQL)
 -- Версия CRM: 1.2.3 (Актуальная версия со всеми обновлениями и модулями)
 -- Дата экспорта: 2026-10-28 16:16:12
--- Инструкция: Запустите этот скрипт в Supabase SQL Editor или psql.
+-- Инструкция: скрипт применяется приложением автоматически или через psql.
 -- =====================================================================
 
 -- Отключение внешних ключей на время массовой загрузки (при необходимости)
@@ -186,33 +186,5 @@ CREATE INDEX IF NOT EXISTS stock_movements_part_id_idx ON public.stock_movements
 CREATE INDEX IF NOT EXISTS stock_movements_deal_id_idx ON public.stock_movements(deal_id);
 CREATE INDEX IF NOT EXISTS parts_sku_idx ON public.parts(sku);
 CREATE INDEX IF NOT EXISTS parts_category_idx ON public.parts(category);
-
--- =====================================================================
--- БЕЗОПАСНОСТЬ: ROW LEVEL SECURITY (RLS) И ПРАВА ДОСТУПА
--- =====================================================================
-ALTER TABLE public.settings ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.clients ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.equipment ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.parts ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.deals ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.deal_parts ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.tasks ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.stock_movements ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.whatsapp_logs ENABLE ROW LEVEL SECURITY;
-
--- Запрет прямого неавторизованного доступа из браузера
-REVOKE ALL ON public.settings, public.users, public.clients, public.equipment,
-    public.parts, public.deals, public.deal_parts, public.tasks, public.stock_movements, public.whatsapp_logs
-    FROM anon, authenticated;
-
--- Полный доступ для служебного бэкенда (service_role)
-GRANT USAGE ON SCHEMA public TO service_role;
-GRANT ALL PRIVILEGES ON public.settings, public.users, public.clients, public.equipment,
-    public.parts, public.deals, public.deal_parts, public.tasks, public.stock_movements, public.whatsapp_logs
-    TO service_role;
-
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO service_role;
-
 
 -- =====================================================================

@@ -1,6 +1,6 @@
 """
 FastAPI Backend Server for СТО Спецмаш CRM.
-Powered by Supabase PostgreSQL with real-time WebSockets synchronization for Kanban board.
+Powered by local PostgreSQL with real-time WebSockets synchronization for Kanban board.
 """
 
 import os
@@ -154,27 +154,21 @@ def get_online_users():
 
 @app.get("/api/health")
 def health_check():
-    """Diagnostic endpoint to verify environment variables and database connectivity on Vercel."""
+    """Diagnostic endpoint for the local PostgreSQL connection."""
     conn_info = database.check_connection()
     return {
         "status": "ok" if conn_info.get("connected") else "warning",
         "database": conn_info,
         "environment_variables_configured": {
-            "SUPABASE_URL": bool(database.get_supabase_url()),
-            "SUPABASE_SECRET_KEY": bool(database.get_supabase_key()),
-            "SUPABASE_PUBLISHABLE_KEY": bool(database.get_supabase_public_key()),
-            "SUPABASE_DB_URL": bool(database.get_database_url()),
+            "DATABASE_URL": bool(database.get_database_url()),
         },
         "server_time": datetime.now().isoformat()
     }
 
 @app.get("/api/realtime/config")
 def get_realtime_config():
-    """Provides Supabase Realtime endpoint parameters securely to authenticated frontend."""
-    return {
-        "url": database.get_supabase_url(),
-        "key": database.get_supabase_public_key()
-    }
+    """Realtime is provided by the application's FastAPI WebSocket."""
+    return {"enabled": False, "provider": "fastapi"}
 
 # ----------------- Pydantic Models -----------------
 
@@ -317,10 +311,10 @@ class TaskCreate(BaseModel):
 
 @app.post("/api/auth/login")
 def login(req: LoginRequest):
-    if not database.get_supabase_key():
+    if not database.get_database_url():
         raise HTTPException(
             status_code=503,
-            detail="База данных Supabase не подключена. Добавьте SUPABASE_SECRET_KEY в переменные окружения."
+            detail="Локальная PostgreSQL-база не подключена. Проверьте DATABASE_URL."
         )
     user = database.get_user_by_username(req.username.strip().lower())
     if not user:

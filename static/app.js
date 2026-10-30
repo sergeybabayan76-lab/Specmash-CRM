@@ -97,7 +97,7 @@ function updateSidebarCounters(data = null) {
  * Currency: AMD
  */
 
-// In-memory cache for the current Supabase session.
+// In-memory cache for the current application session.
 const crmStore = {
   cache: {},
 
@@ -142,10 +142,9 @@ const crmStore = {
   }
 };
 
-// ================= REAL-TIME WEBSOCKETS & SUPABASE REALTIME =================
+// ================= REAL-TIME WEBSOCKETS =================
 
 let fastApiWs = null;
-let supabaseWs = null;
 let realtimeHeartbeatInterval = null;
 let kanbanPollingTimer = null;
 let isRealtimeConnected = false;
@@ -172,7 +171,6 @@ function updateRealtimeStatus(status, text) {
 
 function initRealtimeSync() {
   initFastApiWebSocket();
-  initSupabaseRealtime();
   startKanbanBackgroundPolling();
 }
 
@@ -209,9 +207,7 @@ function initFastApiWebSocket() {
     };
 
     fastApiWs.onerror = () => {
-      if (!supabaseWs || supabaseWs.readyState !== WebSocket.OPEN) {
-        updateRealtimeStatus('syncing', 'Supabase Realtime');
-      }
+      updateRealtimeStatus('syncing', 'Авто-синхронизация');
     };
 
     fastApiWs.onclose = () => {
@@ -224,96 +220,6 @@ function initFastApiWebSocket() {
     };
   } catch (e) {
     console.warn('[FastAPI WS Init Warning]', e);
-  }
-}
-
-async function initSupabaseRealtime() {
-  if (supabaseWs && (supabaseWs.readyState === WebSocket.OPEN || supabaseWs.readyState === WebSocket.CONNECTING)) {
-    return;
-  }
-
-  let sbHost = 'wnrnbptadgvmyibszpvk.supabase.co';
-  let sbKey = '';
-
-  try {
-    const res = await fetch('/api/realtime/config');
-    if (res.ok) {
-      const cfg = await res.json();
-      if (cfg.url) sbHost = cfg.url.replace(/^https?:\/\//, '');
-      if (cfg.key) sbKey = cfg.key;
-    }
-  } catch (e) {}
-
-  if (!sbKey) return;
-  const sbUrl = `wss://${sbHost}/realtime/v1/websocket?apikey=${encodeURIComponent(sbKey)}&vsn=1.0.0`;
-
-  try {
-    supabaseWs = new WebSocket(sbUrl);
-
-    supabaseWs.onopen = () => {
-      updateRealtimeStatus('connected', 'Supabase Realtime Онлайн');
-      // Join realtime channel for deals table postgres_changes
-      const joinMsg = {
-        topic: 'realtime:public:deals',
-        event: 'phx_join',
-        payload: {
-          config: {
-            broadcast: { self: true },
-            postgres_changes: [{ event: '*', schema: 'public', table: 'deals' }]
-          }
-        },
-        ref: '1'
-      };
-      supabaseWs.send(JSON.stringify(joinMsg));
-
-      if (realtimeHeartbeatInterval) clearInterval(realtimeHeartbeatInterval);
-      realtimeHeartbeatInterval = setInterval(() => {
-        if (supabaseWs && supabaseWs.readyState === WebSocket.OPEN) {
-          supabaseWs.send(JSON.stringify({
-            topic: 'phoenix',
-            event: 'heartbeat',
-            payload: {},
-            ref: 'hb'
-          }));
-        }
-      }, 25000);
-    };
-
-    supabaseWs.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-        if (msg.event === 'postgres_changes' && msg.payload && msg.payload.data) {
-          const change = msg.payload.data;
-          const changeType = change.type;
-          const record = change.record;
-          const oldRecord = change.old_record;
-
-          if (changeType === 'UPDATE' && record) {
-            handleRemoteDealStageChange(record.id, record.stage, record);
-          } else if (changeType === 'INSERT' && record) {
-            handleRemoteDealCreated(record);
-          } else if (changeType === 'DELETE' && oldRecord) {
-            handleRemoteDealDeleted(oldRecord.id);
-          }
-        }
-      } catch (e) {}
-    };
-
-    supabaseWs.onerror = () => {
-      updateRealtimeStatus('idle', 'Авто-синхронизация');
-    };
-
-    supabaseWs.onclose = () => {
-      supabaseWs = null;
-      if (realtimeHeartbeatInterval) clearInterval(realtimeHeartbeatInterval);
-      setTimeout(() => {
-        if (state.currentUser && state.currentUser.id) {
-          initSupabaseRealtime();
-        }
-      }, 5000);
-    };
-  } catch (e) {
-    console.warn('[Supabase Realtime Init Warning]', e);
   }
 }
 
@@ -1183,7 +1089,7 @@ async function saveAdminSettings(e) {
 }
 
 function downloadDatabaseBackup() {
-  showToast('Формирование и скачивание резервной копии Supabase...', 'info');
+  showToast('Формирование и скачивание резервной копии PostgreSQL...', 'info');
   window.location.href = '/api/settings/backup';
 }
 
