@@ -97,7 +97,7 @@ function updateSidebarCounters(data = null) {
  * Currency: AMD
  */
 
-// In-memory cache for the current Supabase session.
+// In-memory cache for the current application session.
 const crmStore = {
   cache: {},
 
@@ -142,10 +142,9 @@ const crmStore = {
   }
 };
 
-// ================= REAL-TIME WEBSOCKETS & SUPABASE REALTIME =================
+// ================= REAL-TIME WEBSOCKETS =================
 
 let fastApiWs = null;
-let supabaseWs = null;
 let realtimeHeartbeatInterval = null;
 let kanbanPollingTimer = null;
 let isRealtimeConnected = false;
@@ -172,7 +171,6 @@ function updateRealtimeStatus(status, text) {
 
 function initRealtimeSync() {
   initFastApiWebSocket();
-  initSupabaseRealtime();
   startKanbanBackgroundPolling();
 }
 
@@ -209,9 +207,7 @@ function initFastApiWebSocket() {
     };
 
     fastApiWs.onerror = () => {
-      if (!supabaseWs || supabaseWs.readyState !== WebSocket.OPEN) {
-        updateRealtimeStatus('syncing', 'Supabase Realtime');
-      }
+      updateRealtimeStatus('syncing', 'Авто-синхронизация');
     };
 
     fastApiWs.onclose = () => {
@@ -224,96 +220,6 @@ function initFastApiWebSocket() {
     };
   } catch (e) {
     console.warn('[FastAPI WS Init Warning]', e);
-  }
-}
-
-async function initSupabaseRealtime() {
-  if (supabaseWs && (supabaseWs.readyState === WebSocket.OPEN || supabaseWs.readyState === WebSocket.CONNECTING)) {
-    return;
-  }
-
-  let sbHost = 'wnrnbptadgvmyibszpvk.supabase.co';
-  let sbKey = '';
-
-  try {
-    const res = await fetch('/api/realtime/config');
-    if (res.ok) {
-      const cfg = await res.json();
-      if (cfg.url) sbHost = cfg.url.replace(/^https?:\/\//, '');
-      if (cfg.key) sbKey = cfg.key;
-    }
-  } catch (e) {}
-
-  if (!sbKey) return;
-  const sbUrl = `wss://${sbHost}/realtime/v1/websocket?apikey=${encodeURIComponent(sbKey)}&vsn=1.0.0`;
-
-  try {
-    supabaseWs = new WebSocket(sbUrl);
-
-    supabaseWs.onopen = () => {
-      updateRealtimeStatus('connected', 'Supabase Realtime Онлайн');
-      // Join realtime channel for deals table postgres_changes
-      const joinMsg = {
-        topic: 'realtime:public:deals',
-        event: 'phx_join',
-        payload: {
-          config: {
-            broadcast: { self: true },
-            postgres_changes: [{ event: '*', schema: 'public', table: 'deals' }]
-          }
-        },
-        ref: '1'
-      };
-      supabaseWs.send(JSON.stringify(joinMsg));
-
-      if (realtimeHeartbeatInterval) clearInterval(realtimeHeartbeatInterval);
-      realtimeHeartbeatInterval = setInterval(() => {
-        if (supabaseWs && supabaseWs.readyState === WebSocket.OPEN) {
-          supabaseWs.send(JSON.stringify({
-            topic: 'phoenix',
-            event: 'heartbeat',
-            payload: {},
-            ref: 'hb'
-          }));
-        }
-      }, 25000);
-    };
-
-    supabaseWs.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-        if (msg.event === 'postgres_changes' && msg.payload && msg.payload.data) {
-          const change = msg.payload.data;
-          const changeType = change.type;
-          const record = change.record;
-          const oldRecord = change.old_record;
-
-          if (changeType === 'UPDATE' && record) {
-            handleRemoteDealStageChange(record.id, record.stage, record);
-          } else if (changeType === 'INSERT' && record) {
-            handleRemoteDealCreated(record);
-          } else if (changeType === 'DELETE' && oldRecord) {
-            handleRemoteDealDeleted(oldRecord.id);
-          }
-        }
-      } catch (e) {}
-    };
-
-    supabaseWs.onerror = () => {
-      updateRealtimeStatus('idle', 'Авто-синхронизация');
-    };
-
-    supabaseWs.onclose = () => {
-      supabaseWs = null;
-      if (realtimeHeartbeatInterval) clearInterval(realtimeHeartbeatInterval);
-      setTimeout(() => {
-        if (state.currentUser && state.currentUser.id) {
-          initSupabaseRealtime();
-        }
-      }, 5000);
-    };
-  } catch (e) {
-    console.warn('[Supabase Realtime Init Warning]', e);
   }
 }
 
@@ -425,29 +331,6 @@ function startKanbanBackgroundPolling() {
     }
   }, 3500);
 }
-
-// Global State Cache
-const state = {
-  currentTab: 'dashboard',
-  currentUser: null,
-  dealsViewMode: 'list', // Requirement #12: List view by default
-  dealsDepartment: 'service', // 'service' | 'parts_sale' | 'sales'
-  dealModalType: 'service',
-  activeEqModalTab: 'info',
-  topPartsLimit: 10,
-  settings: {
-    company_name: 'СТО Спецмаш',
-    logo_url: ''
-  },
-  clients: [],
-  equipment: [],
-  parts: [],
-  deals: [],
-  tasks: [],
-  users: [],
-  dashboard: {},
-  draggedDealId: null,
-};
 
 // Kanban Stage Definitions (СТО: Service & Repairs)
 const SERVICE_KANBAN_STAGES = [
@@ -569,7 +452,15 @@ function stopHeartbeat() {
 }
 
 function initAuth() {
-  state.currentUser = null;
+  state.currentTab = window.SpecmashApp.router.fromHash();
+  try {
+    const savedUser = localStorage.getItem('specmash_current_user');
+    state.currentUser = savedUser ? JSON.parse(savedUser) : null;
+  } catch (err) {
+    console.warn('Saved session is invalid and will be cleared');
+    localStorage.removeItem('specmash_current_user');
+    state.currentUser = null;
+  }
 
   // Enforce auth: if no logged-in user, strictly show auth screen and block all views
   if (!state.currentUser || !state.currentUser.id) {
@@ -666,6 +557,7 @@ async function handleAuthScreenLogin(e) {
     if (!res.ok) throw new Error(data.detail || data.message || 'Неверный логин или пароль');
 
     state.currentUser = data;
+    localStorage.setItem('specmash_current_user', JSON.stringify(data));
     showAppLayout();
     applyUserPermissions();
     startHeartbeat();
@@ -688,6 +580,7 @@ async function handleAuthScreenLogin(e) {
 function handleLogout() {
   stopHeartbeat();
   state.currentUser = null;
+  localStorage.removeItem('specmash_current_user');
   crmStore.cache = {};
   closeUserDropdown();
   showAuthScreen();
@@ -848,6 +741,7 @@ async function handleManualLogin(e) {
     if (!res.ok) throw new Error(data.detail || data.message || 'Неверный логин или пароль');
 
     state.currentUser = data;
+    localStorage.setItem('specmash_current_user', JSON.stringify(data));
     applyUserPermissions();
     startHeartbeat();
     closeModal('modal-login');
@@ -1002,6 +896,10 @@ function openLogoModal() {
 
 async function uploadLogoFile(file) {
   if (!file) return;
+  if (file.size > 5 * 1024 * 1024) {
+    showToast('Размер логотипа не должен превышать 5 МБ', 'error');
+    return;
+  }
 
   const formData = new FormData();
   formData.append('file', file);
@@ -1183,7 +1081,7 @@ async function saveAdminSettings(e) {
 }
 
 function downloadDatabaseBackup() {
-  showToast('Формирование и скачивание резервной копии Supabase...', 'info');
+  showToast('Формирование и скачивание резервной копии PostgreSQL...', 'info');
   window.location.href = '/api/settings/backup';
 }
 
@@ -1247,7 +1145,7 @@ function switchTab(tabName) {
   toggleMobileSidebar(false);
 
   state.currentTab = tabName;
-  const tabs = ['dashboard', 'kanban', 'clients', 'equipment', 'warehouse', 'tasks', 'users', 'export', 'settings', 'marketing'];
+  const tabs = window.SpecmashApp.router.tabs;
 
   tabs.forEach(t => {
     const section = document.getElementById(`tab-${t}`);
@@ -1259,6 +1157,13 @@ function switchTab(tabName) {
       } else {
         navItem.className = 'nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800';
       }
+
+      window.addEventListener('hashchange', () => {
+        const tabName = window.SpecmashApp.router.fromHash();
+        if (state.currentUser && state.currentTab !== tabName) {
+          switchTab(tabName);
+        }
+      });
     }
   });
 
@@ -1287,18 +1192,7 @@ function switchTab(tabName) {
     if (navSales) navSales.className = navInactive;
   }
 
-  if (tabName === 'dashboard') loadDashboard();
-  else if (tabName === 'kanban') loadDeals();
-  else if (tabName === 'clients') loadClients();
-  else if (tabName === 'equipment') loadEquipment();
-  else if (tabName === 'warehouse') loadParts();
-  else if (tabName === 'tasks') loadTasks();
-  else if (tabName === 'users') loadUsers();
-  else if (tabName === 'settings') loadAdminSettings();
-  else if (tabName === 'marketing') {
-    loadWhatsAppConfig();
-    loadWhatsAppLogs();
-  }
+  window.SpecmashApp.pages.load(tabName);
 
   if (window.lucide) lucide.createIcons();
 }
@@ -1327,7 +1221,7 @@ function handleGlobalSearch(query) {
 async function loadDashboard() {
   if (!state.currentUser || !state.currentUser.id) return;
   try {
-    const res = await fetch('/api/dashboard');
+    const res = await window.SpecmashApp.api.get('/api/dashboard');
     const data = await res.json();
     state.dashboard = data;
 
@@ -1920,7 +1814,7 @@ function renderDealsList() {
                 ${isFailed ? '<span class="bg-rose-600 text-white font-bold text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1 shadow-xs"><i data-lucide="x-circle" class="w-3 h-3"></i> ❌ Не удачно</span>' : ''}
                 ${isOverdue ? '<span class="bg-rose-600 text-white font-bold text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1 w-fit shadow-xs"><i data-lucide="clock" class="w-3 h-3"></i> Ожидает выдачи &gt; 30 дней</span>' : ''}
                 ${isLocked ? '<span class="bg-amber-100 text-amber-800 text-[10px] font-bold px-1.5 py-0.2 rounded flex items-center gap-1 border border-amber-300"><i data-lucide="lock" class="w-3 h-3"></i> Закрыто</span>' : ''}
-                ${Number(deal.parts_count || 0) > 0 ? `<span class="bg-amber-50 text-amber-700 border border-amber-200 text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold" title="Списано со склада">${deal.parts_count} з/ч</span>` : ''}
+                <span class="bg-amber-50 text-amber-700 border border-amber-200 text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold" title="Использовано запчастей">${Number(deal.parts_count || 0)} з/ч</span>
               </div>
             </div>
           </div>
@@ -1941,7 +1835,7 @@ function renderDealsList() {
             <i data-lucide="${deal.deal_type === 'parts_sale' ? 'shopping-cart' : (deal.deal_type === 'sales' ? 'tractor' : 'truck')}" class="w-3.5 h-3.5 text-blue-600"></i>
             <span>${deal.deal_type === 'parts_sale' ? 'Продажа со склада' : (deal.equipment_name || (state.equipment && state.equipment.find(eq => eq.id === deal.equipment_id)?.name) || 'Не привязана')}</span>
           </div>
-          <div class="text-[11px] text-slate-400 font-mono">${deal.equipment_category || ''}</div>
+          <div class="text-[11px] text-slate-400 font-mono">${deal.equipment_vin ? `VIN: ${deal.equipment_vin}` : 'VIN: —'}</div>
         </td>
 
         <td class="p-3.5">
@@ -2195,7 +2089,7 @@ function renderKanbanCard(deal) {
       <div class="flex items-center justify-between pt-1 text-xs">
         <span class="font-bold text-blue-600 font-mono">${formatMoney(deal.amount)}</span>
         <div class="flex items-center gap-1.5">
-          ${Number(deal.parts_count || 0) > 0 ? `<span class="bg-amber-50 text-amber-700 border border-amber-200 text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold" title="Списано запчастей">${deal.parts_count} з/ч</span>` : ''}
+          <span class="bg-amber-50 text-amber-700 border border-amber-200 text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold" title="Использовано запчастей">${Number(deal.parts_count || 0)} з/ч</span>
           <span class="text-[10px] text-slate-500 font-medium">${deal.responsible || ''}</span>
         </div>
       </div>

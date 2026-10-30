@@ -1,7 +1,4 @@
-"""
-Database management and models for СТО Спецмаш CRM.
-Powered by Supabase PostgreSQL through the PostgREST client.
-"""
+"""Database management and models for the Specmash CRM."""
 
 import os
 import json
@@ -12,13 +9,14 @@ import re
 from typing import List, Dict, Any, Optional
 from urllib.parse import quote
 import httpx
-
 try:
     import psycopg
     from psycopg import sql as psycopg_sql
+    from psycopg.rows import dict_row
 except ImportError:
     psycopg = None
     psycopg_sql = None
+    dict_row = None
 
 _env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
 try:
@@ -27,87 +25,37 @@ try:
 except ImportError:
     pass
 
-# Supabase REST API configuration. The internal SUPABASE_KEY variable contains
-# the server-only SUPABASE_SECRET_KEY value.
-SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY", "").strip().strip("'\"`")
-
-def get_supabase_url() -> str:
-    global SUPABASE_URL
-    if SUPABASE_URL:
-        return SUPABASE_URL
-    SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip().rstrip("/")
-    return SUPABASE_URL
-
-def get_supabase_key() -> str:
-    global SUPABASE_KEY
-    if SUPABASE_KEY:
-        return SUPABASE_KEY
-    SUPABASE_KEY = (
-        os.getenv("SUPABASE_SECRET_KEY", "").strip().strip("'\"`")
-        or os.getenv("SUPABASE_KEY", "").strip().strip("'\"`")
-    )
-    return SUPABASE_KEY
-
-def get_supabase_public_key() -> str:
-    return (
-        os.getenv("SUPABASE_PUBLISHABLE_KEY", "").strip().strip("'\"`")
-        or os.getenv("SUPABASE_PUBLIC_KEY", "").strip().strip("'\"`")
-    )
-
 def get_database_url() -> str:
-    configured_url = (
-        os.getenv("SUPABASE_DB_URL", "").strip().strip("'\"`")
-        or os.getenv("DATABASE_URL", "").strip().strip("'\"`")
-    )
-    if configured_url:
-        return configured_url
+    return os.getenv("DATABASE_URL", "").strip().strip("'\"`")
 
-    password = os.getenv("SUPABASE_DB_PASSWORD", "").strip().strip("'\"`")
-    project_ref = get_supabase_url().removeprefix("https://").split(".", 1)[0]
-    if password and project_ref:
-        return f"postgresql://postgres:{quote(password, safe='')}@db.{project_ref}.supabase.co:5432/postgres"
-    return ""
 
-# Initialize on import
-SUPABASE_URL = get_supabase_url()
-SUPABASE_KEY = get_supabase_key()
+DATABASE_URL = get_database_url()
+DATABASE_READY = bool(DATABASE_URL)
+BASELINE_SCHEMA_VERSION = "20261029_initial_schema"
+MIGRATIONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "migrations")
+
+
+class LocalResponse:
+    def __init__(self, status_code: int, payload: Any = None, text: str = ""):
+        self.status_code = status_code
+        self._payload = payload if payload is not None else []
+        self.text = text or json.dumps(self._payload, default=str)
+
+    def json(self):
+        return self._payload
 
 def check_connection() -> Dict[str, Any]:
-    key = get_supabase_key()
-    url = get_supabase_url()
-    if not key:
+    if not get_database_url():
         return {
             "connected": False,
-            "error": "SUPABASE_SECRET_KEY не найдена в переменных окружения",
-            "url": url,
-            "has_key": False
+            "error": "DATABASE_URL не найдена в переменных окружения",
         }
     try:
-        with get_sb_client() as client:
-            r = client.get("/settings", params={"select": "key", "limit": "1"})
-            if r.status_code == 200:
-                return {
-                    "connected": True,
-                    "status_code": r.status_code,
-                    "url": url,
-                    "has_key": True
-                }
-            else:
-                return {
-                    "connected": False,
-                    "status_code": r.status_code,
-                    "error": f"Supabase HTTP {r.status_code}: {r.text[:200]}",
-                    "url": url,
-                    "has_key": True
-                }
+        with _database_connection() as connection:
+            connection.execute("SELECT 1")
+        return {"connected": True, "database": "PostgreSQL"}
     except Exception as e:
-        return {
-            "connected": False,
-            "error": str(e),
-            "url": url,
-            "has_key": True
-        }
+        return {"connected": False, "error": str(e), "database": "PostgreSQL"}
 
 DEFAULT_SETTINGS = {
     "company_name": "СТО Спецмаш",
@@ -124,57 +72,248 @@ DEFAULT_SETTINGS = {
     "auth_logo_url": "",
 }
 
-def get_sb_client() -> httpx.Client:
-    key = get_supabase_key()
-    url = get_supabase_url()
-    headers = {
-        "Content-Type": "application/json",
-        "Prefer": "return=representation",
-        "User-Agent": "SpecMash-CRM/FastAPI"
-    }
-    if key:
-        headers["apikey"] = key
-        headers["Authorization"] = "Bearer " + key
-    return httpx.Client(
-        base_url=f"{url}/rest/v1",
-        headers=headers,
-        timeout=20.0
-    )
+def _database_connection():
+    if psycopg is None:
+        raise RuntimeError("Package psycopg[binary] is not installed")
+    if not get_database_url():
+        raise RuntimeError("DATABASE_URL is not configured")
+    return psycopg.connect(get_database_url(), connect_timeout=15, row_factory=dict_row)
+
+
+def _parse_filters(params: Dict[str, Any]) -> tuple[list[str], list[Any]]:
+    clauses, values = [], []
+    for key, raw_value in params.items():
+        if key in {"select", "order", "limit"}:
+            continue
+        operator, _, value = str(raw_value).partition(".")
+        if operator == "eq":
+            clauses.append(f'"{key}" = %s')
+            values.append(value)
+        elif operator == "ilike":
+            clauses.append(f'"{key}" ILIKE %s')
+            values.append(value)
+        elif operator == "in":
+            items = value.strip("()").split(",") if value else []
+            if items:
+                clauses.append(f'"{key}" IN ({",".join(["%s"] * len(items))})')
+                values.extend(items)
+    return clauses, values
+
+
+class LocalDatabaseClient:
+    """Small database client preserving the existing repository data API."""
+
+    def __enter__(self):
+        self.connection = _database_connection()
+        return self
+
+    def __exit__(self, *_):
+        self.connection.close()
+
+    @staticmethod
+    def _row_dict(row: Any, columns: Any = None) -> Dict[str, Any]:
+        if isinstance(row, dict):
+            return row
+        return dict(zip([column.name for column in columns or []], row))
+
+    def get(self, path: str, params: Optional[Dict[str, Any]] = None):
+        table = path.strip("/").split("?", 1)[0]
+        params = params or {}
+        clauses, values = _parse_filters(params)
+        query = f"SELECT * FROM public.{psycopg_sql.Identifier(table).as_string(self.connection)}"
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        order = str(params.get("order", ""))
+        if order:
+            column, _, direction = order.partition(".")
+            query += f" ORDER BY {psycopg_sql.Identifier(column).as_string(self.connection)} {'DESC' if direction == 'desc' else 'ASC'}"
+        if params.get("limit"):
+            query += " LIMIT %s"
+            values.append(int(params["limit"]))
+        try:
+            cursor = self.connection.execute(query, values)
+            result = [self._row_dict(row, cursor.description) for row in cursor.fetchall()]
+            select = str(params.get("select", ""))
+            relation_map = {
+                ("deals", "clients"): ("client_id", "clients"),
+                ("deals", "equipment"): ("equipment_id", "equipment"),
+                ("deal_parts", "parts"): ("part_id", "parts"),
+                ("stock_movements", "parts"): ("part_id", "parts"),
+                ("equipment", "clients"): ("client_id", "clients"),
+            }
+            for (parent, relation), (foreign_key, related_table) in relation_map.items():
+                if parent != table or f"{relation}(" not in select:
+                    continue
+                ids = {row.get(foreign_key) for row in result if row.get(foreign_key) is not None}
+                related = {}
+                if ids:
+                    related_cursor = self.connection.execute(
+                        f"SELECT * FROM public.{related_table} WHERE id = ANY(%s)",
+                        (list(ids),),
+                    )
+                    related_rows = related_cursor.fetchall()
+                    related = {
+                        self._row_dict(row, related_cursor.description)["id"]:
+                        self._row_dict(row, related_cursor.description)
+                        for row in related_rows
+                    }
+                for row in result:
+                    row[relation] = related.get(row.get(foreign_key))
+            return LocalResponse(200, result)
+        except Exception as exc:
+            return LocalResponse(400, [], str(exc))
+
+    def post(self, path: str, json: Any = None, headers: Optional[Dict[str, str]] = None):
+        table = path.strip("/")
+        records = json if isinstance(json, list) else [json or {}]
+        try:
+            result = []
+            for record in records:
+                columns = list(record)
+                identifiers = ", ".join(psycopg_sql.Identifier(c).as_string(self.connection) for c in columns)
+                placeholders = ", ".join(["%s"] * len(columns))
+                conflict = ""
+                if headers and "resolution=merge-duplicates" in headers.get("Prefer", ""):
+                    conflict_target = '("key")' if table == "settings" else ""
+                    conflict = " ON CONFLICT DO UPDATE SET " + ", ".join(
+                        f"{psycopg_sql.Identifier(c).as_string(self.connection)} = EXCLUDED.{psycopg_sql.Identifier(c).as_string(self.connection)}"
+                        for c in columns if c != "id"
+                    )
+                    conflict = conflict.replace(
+                        " ON CONFLICT DO UPDATE SET",
+                        f" ON CONFLICT {conflict_target} DO UPDATE SET",
+                    )
+                query = f"INSERT INTO public.{psycopg_sql.Identifier(table).as_string(self.connection)} ({identifiers}) VALUES ({placeholders}){conflict} RETURNING *"
+                cursor = self.connection.execute(query, [record[c] for c in columns])
+                row = cursor.fetchone()
+                result.append(self._row_dict(row, cursor.description))
+            self.connection.commit()
+            return LocalResponse(201, result)
+        except Exception as exc:
+            self.connection.rollback()
+            return LocalResponse(400, [], str(exc))
+
+    def patch(self, path: str, json: Dict[str, Any] = None):
+        table, _, query_string = path.strip("/").partition("?")
+        params = dict(item.split("=", 1) for item in query_string.split("&") if "=" in item)
+        clauses, values = _parse_filters(params)
+        assignments = ", ".join(f"{psycopg_sql.Identifier(k).as_string(self.connection)} = %s" for k in json or {})
+        values = list((json or {}).values()) + values
+        query = f"UPDATE public.{psycopg_sql.Identifier(table).as_string(self.connection)} SET {assignments}"
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        try:
+            self.connection.execute(query, values)
+            self.connection.commit()
+            return LocalResponse(204, [])
+        except Exception as exc:
+            self.connection.rollback()
+            return LocalResponse(400, [], str(exc))
+
+    def delete(self, path: str):
+        table, _, query_string = path.strip("/").partition("?")
+        params = dict(item.split("=", 1) for item in query_string.split("&") if "=" in item)
+        clauses, values = _parse_filters(params)
+        query = f"DELETE FROM public.{psycopg_sql.Identifier(table).as_string(self.connection)}"
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        try:
+            self.connection.execute(query, values)
+            self.connection.commit()
+            return LocalResponse(204, [])
+        except Exception as exc:
+            self.connection.rollback()
+            return LocalResponse(400, [], str(exc))
+
+
+def get_database_client() -> LocalDatabaseClient:
+    return LocalDatabaseClient()
 
 def init_db():
-    """Creates the empty Supabase schema on first startup and bootstraps one admin."""
-    if not get_supabase_key():
-        raise RuntimeError(
-            "SUPABASE_SECRET_KEY is not configured. Add it to the environment before starting the server."
-        )
+    """Create the local PostgreSQL schema on startup and bootstrap one admin."""
     initialize_schema()
     ensure_bootstrap_admin()
 
 def initialize_schema() -> None:
-    """Apply the idempotent PostgreSQL schema when the database is empty."""
+    """Apply the baseline once, then apply each pending versioned migration."""
     if psycopg is None:
         raise RuntimeError("Package psycopg is not installed. Run: pip install -r requirements.txt")
 
     database_url = get_database_url()
     if not database_url:
         raise RuntimeError(
-            "SUPABASE_DB_URL is not configured. Add the PostgreSQL connection URI from "
-            "Supabase Project Settings -> Database -> Connection string."
+            "DATABASE_URL is not configured. Add the local PostgreSQL connection URI."
         )
-
-    schema_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schema.sql")
-    with open(schema_path, "r", encoding="utf-8") as schema_file:
-        schema_sql = schema_file.read()
-    if not schema_sql.strip():
-        raise RuntimeError("schema.sql is empty")
 
     with psycopg.connect(database_url, connect_timeout=15) as connection:
-        connection.execute(schema_sql)
-        connection.execute(
-            "INSERT INTO public.schema_migrations (version) VALUES (%s) "
-            "ON CONFLICT (version) DO NOTHING",
-            ("20261029_initial_schema",),
-        )
+        with connection.transaction():
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS public.schema_migrations (
+                    version text PRIMARY KEY,
+                    applied_at timestamptz NOT NULL DEFAULT now(),
+                    checksum text NOT NULL DEFAULT ''
+                )
+                """
+            )
+            connection.execute(
+                "ALTER TABLE public.schema_migrations "
+                "ADD COLUMN IF NOT EXISTS checksum text NOT NULL DEFAULT ''"
+            )
+            connection.execute("SELECT pg_advisory_xact_lock(738291)")
+
+            baseline = connection.execute(
+                "SELECT checksum FROM public.schema_migrations WHERE version = %s",
+                (BASELINE_SCHEMA_VERSION,),
+            ).fetchone()
+            schema_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schema.sql")
+            with open(schema_path, "r", encoding="utf-8") as schema_file:
+                schema_sql = schema_file.read()
+            schema_checksum = hashlib.sha256(schema_sql.encode("utf-8")).hexdigest()
+            if baseline is None:
+                if not schema_sql.strip():
+                    raise RuntimeError("schema.sql is empty")
+                connection.execute(schema_sql)
+                connection.execute(
+                    "INSERT INTO public.schema_migrations (version, checksum) "
+                    "VALUES (%s, %s) ON CONFLICT (version) DO NOTHING",
+                    (BASELINE_SCHEMA_VERSION, schema_checksum),
+                )
+            elif not baseline[0]:
+                connection.execute(
+                    "UPDATE public.schema_migrations SET checksum = %s WHERE version = %s",
+                    (schema_checksum, BASELINE_SCHEMA_VERSION),
+                )
+
+            migration_files = sorted(
+                name for name in os.listdir(MIGRATIONS_DIR)
+                if name.endswith(".sql") and os.path.isfile(os.path.join(MIGRATIONS_DIR, name))
+            ) if os.path.isdir(MIGRATIONS_DIR) else []
+
+            for filename in migration_files:
+                version = filename[:-4]
+                path = os.path.join(MIGRATIONS_DIR, filename)
+                with open(path, "r", encoding="utf-8") as migration_file:
+                    migration_sql = migration_file.read()
+                checksum = hashlib.sha256(migration_sql.encode("utf-8")).hexdigest()
+                applied = connection.execute(
+                    "SELECT checksum FROM public.schema_migrations WHERE version = %s",
+                    (version,),
+                ).fetchone()
+                if applied:
+                    if applied[0] and applied[0] != checksum:
+                        raise RuntimeError(
+                            f"Migration {filename} was changed after it was applied. "
+                            "Create a new migration instead of editing an old one."
+                        )
+                    continue
+                if not migration_sql.strip():
+                    raise RuntimeError(f"Migration {filename} is empty")
+                connection.execute(migration_sql)
+                connection.execute(
+                    "INSERT INTO public.schema_migrations (version, checksum) VALUES (%s, %s)",
+                    (version, checksum),
+                )
         connection.commit()
 
 def ensure_bootstrap_admin() -> None:
@@ -208,7 +347,7 @@ def verify_password(password: str, hashed: str, salt: str) -> bool:
     new_hash, _ = hash_password(password, salt)
     return secrets.compare_digest(new_hash, hashed)
 
-def get_next_id(client: httpx.Client, table: str) -> int:
+def get_next_id(client: LocalDatabaseClient, table: str) -> int:
     try:
         r = client.get(f"/{table}", params={"select": "id", "order": "id.desc", "limit": "1"})
         data = r.json()
@@ -221,9 +360,9 @@ def get_next_id(client: httpx.Client, table: str) -> int:
 # ==================== USERS & AUTH ====================
 
 def get_user_by_username(username: str) -> Optional[Dict[str, Any]]:
-    if not SUPABASE_KEY:
+    if not DATABASE_READY:
         return None
-    with get_sb_client() as client:
+    with get_database_client() as client:
         r = client.get("/users", params={"username": f"ilike.{username.strip()}", "limit": "1"})
         users = r.json()
         if users and isinstance(users, list) and len(users) > 0:
@@ -231,14 +370,14 @@ def get_user_by_username(username: str) -> Optional[Dict[str, Any]]:
     return None
 
 def list_users() -> List[Dict[str, Any]]:
-    if not SUPABASE_KEY:
+    if not DATABASE_READY:
         return []
-    with get_sb_client() as client:
+    with get_database_client() as client:
         r = client.get("/users", params={"select": "id,username,full_name,role,phone,created_at", "order": "id.asc"})
         return r.json() if r.status_code == 200 else []
 
 def create_user(data: Dict[str, Any]) -> Dict[str, Any]:
-    with get_sb_client() as client:
+    with get_database_client() as client:
         existing = get_user_by_username(data["username"])
         if existing:
             raise ValueError("Пользователь с таким логином уже существует!")
@@ -265,7 +404,7 @@ def create_user(data: Dict[str, Any]) -> Dict[str, Any]:
         return res[0] if isinstance(res, list) else res
 
 def update_user(user_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
-    with get_sb_client() as client:
+    with get_database_client() as client:
         payload = {}
         if "full_name" in data and data["full_name"]:
             payload["full_name"] = data["full_name"].strip()
@@ -285,16 +424,16 @@ def update_user(user_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
         return {"id": user_id, "message": "Сотрудник обновлен"}
 
 def delete_user(user_id: int) -> Dict[str, Any]:
-    with get_sb_client() as client:
+    with get_database_client() as client:
         r = client.delete(f"/users?id=eq.{user_id}")
         return {"id": user_id, "message": "Сотрудник удален"}
 
 # ==================== SETTINGS ====================
 
 def get_settings() -> Dict[str, Any]:
-    if not SUPABASE_KEY:
+    if not DATABASE_READY:
         return dict(DEFAULT_SETTINGS)
-    with get_sb_client() as client:
+    with get_database_client() as client:
         r = client.get("/settings", params={"select": "*"})
         settings_dict = dict(DEFAULT_SETTINGS)
         if r.status_code == 200:
@@ -303,35 +442,41 @@ def get_settings() -> Dict[str, Any]:
         return settings_dict
 
 def update_settings(payload: Dict[str, Any]) -> Dict[str, Any]:
-    if not SUPABASE_KEY:
-        return {"message": "SUPABASE_SECRET_KEY не настроен"}
-    with get_sb_client() as client:
+    if not DATABASE_READY:
+        return {"message": "DATABASE_SECRET_KEY не настроен"}
+    with get_database_client() as client:
         for key, value in payload.items():
             if value is not None:
-                client.post("/settings", json={"key": key, "value": str(value).strip()}, headers={"Prefer": "resolution=merge-duplicates"})
+                response = client.post(
+                    "/settings",
+                    json={"key": key, "value": str(value).strip()},
+                    headers={"Prefer": "resolution=merge-duplicates"},
+                )
+                if response.status_code >= 400:
+                    raise RuntimeError(f"Не удалось сохранить настройку {key}: {response.text}")
         return {"message": "Основные настройки программы успешно сохранены"}
 
 def save_setting(key: str, value: Any) -> Dict[str, Any]:
     return update_settings({key: value})
 
 def get_system_stats() -> Dict[str, Any]:
-    if not SUPABASE_KEY:
+    if not DATABASE_READY:
         return {
-            "version": "1.2.0 (Supabase PostgreSQL)",
-            "db_type": "PostgreSQL (Cloud Supabase)",
+            "version": "1.2.0 (PostgreSQL)",
+            "db_type": "PostgreSQL (Docker)",
             "configured": False,
-            "message": "Пожалуйста, добавьте SUPABASE_SECRET_KEY в переменные окружения",
+            "message": "Пожалуйста, добавьте DATABASE_SECRET_KEY в переменные окружения",
             "db_size_kb": 0.0,
             "counts": {"clients": 0, "equipment": 0, "parts": 0, "deals": 0, "users": 0, "tasks": 0}
         }
-    with get_sb_client() as client:
+    with get_database_client() as client:
         def count(table):
             r = client.get(f"/{table}", params={"select": "id"})
             return len(r.json()) if r.status_code == 200 else 0
 
         return {
-            "version": "1.2.0 (Supabase PostgreSQL)",
-            "db_type": "PostgreSQL (Cloud Supabase)",
+            "version": "1.2.0 (PostgreSQL)",
+            "db_type": "PostgreSQL (Docker)",
             "db_size_kb": 128.0,
             "counts": {
                 "clients": count("clients"),
@@ -389,9 +534,9 @@ def parse_client_notes(raw_notes: str) -> tuple[str, str, str, str]:
     return raw_notes.strip(), inn, bank_name, bank_account
 
 def list_clients(q: Optional[str] = None) -> List[Dict[str, Any]]:
-    if not get_supabase_key():
+    if not get_database_url():
         return []
-    with get_sb_client() as client:
+    with get_database_client() as client:
         params = {
             "select": "*,equipment(id),deals(id,amount,stage)",
             "order": "id.desc"
@@ -425,7 +570,7 @@ def list_clients(q: Optional[str] = None) -> List[Dict[str, Any]]:
         return clients
 
 def create_client(client_data: Dict[str, Any]) -> Dict[str, Any]:
-    with get_sb_client() as client:
+    with get_database_client() as client:
         next_id = get_next_id(client, "clients")
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         serialized_notes = serialize_client_notes(
@@ -457,7 +602,7 @@ def create_client(client_data: Dict[str, Any]) -> Dict[str, Any]:
         return item
 
 def get_crm_client(client_id: int) -> Dict[str, Any]:
-    with get_sb_client() as client:
+    with get_database_client() as client:
         r = client.get("/clients", params={"id": f"eq.{client_id}", "select": "*"})
         rows = r.json()
         if not rows:
@@ -490,7 +635,7 @@ def get_crm_client(client_id: int) -> Dict[str, Any]:
 get_client_by_id = get_crm_client
 
 def update_client(client_id: int, client_data: Dict[str, Any]) -> Dict[str, Any]:
-    with get_sb_client() as client:
+    with get_database_client() as client:
         existing_r = client.get("/clients", params={"id": f"eq.{client_id}", "select": "notes"})
         existing_notes = ""
         if existing_r.status_code == 200 and existing_r.json():
@@ -528,16 +673,16 @@ def update_client(client_id: int, client_data: Dict[str, Any]) -> Dict[str, Any]
         }
 
 def delete_client(client_id: int) -> Dict[str, Any]:
-    with get_sb_client() as client:
+    with get_database_client() as client:
         client.delete(f"/clients?id=eq.{client_id}")
         return {"id": client_id, "message": "Клиент удален"}
 
 # ==================== EQUIPMENT ====================
 
 def list_equipment(q: Optional[str] = None, category: Optional[str] = None) -> List[Dict[str, Any]]:
-    if not SUPABASE_KEY:
+    if not DATABASE_READY:
         return []
-    with get_sb_client() as client:
+    with get_database_client() as client:
         params = {
             "select": "*,clients(name,company,phone)",
             "order": "id.desc"
@@ -564,7 +709,7 @@ def list_equipment(q: Optional[str] = None, category: Optional[str] = None) -> L
         return items
 
 def create_equipment(eq_data: Dict[str, Any]) -> Dict[str, Any]:
-    with get_sb_client() as client:
+    with get_database_client() as client:
         next_id = get_next_id(client, "equipment")
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         payload = {
@@ -588,7 +733,7 @@ def create_equipment(eq_data: Dict[str, Any]) -> Dict[str, Any]:
         return item
 
 def get_equipment(eq_id: int) -> Dict[str, Any]:
-    with get_sb_client() as client:
+    with get_database_client() as client:
         r = client.get("/equipment", params={"id": f"eq.{eq_id}", "select": "*,clients(name,company,phone)"})
         rows = r.json()
         if not rows:
@@ -605,7 +750,7 @@ def get_equipment(eq_id: int) -> Dict[str, Any]:
         return eq
 
 def update_equipment(eq_id: int, eq_data: Dict[str, Any]) -> Dict[str, Any]:
-    with get_sb_client() as client:
+    with get_database_client() as client:
         payload = {
             "client_id": eq_data.get("client_id") if eq_data.get("client_id") and eq_data.get("client_id") > 0 else None,
             "name": eq_data["name"].strip(),
@@ -624,16 +769,16 @@ def update_equipment(eq_id: int, eq_data: Dict[str, Any]) -> Dict[str, Any]:
         return {"id": eq_id, **payload, "message": "Данные по технике обновлены"}
 
 def delete_equipment(eq_id: int) -> Dict[str, Any]:
-    with get_sb_client() as client:
+    with get_database_client() as client:
         client.delete(f"/equipment?id=eq.{eq_id}")
         return {"id": eq_id, "message": "Техника удалена"}
 
 # ==================== PARTS & WAREHOUSE ====================
 
 def list_parts(q: Optional[str] = None, low_stock: bool = False, category: Optional[str] = None) -> List[Dict[str, Any]]:
-    if not SUPABASE_KEY:
+    if not DATABASE_READY:
         return []
-    with get_sb_client() as client:
+    with get_database_client() as client:
         params = {"select": "*", "order": "id.desc"}
         if category and category != "all":
             params["category"] = f"eq.{category}"
@@ -650,7 +795,7 @@ def list_parts(q: Optional[str] = None, low_stock: bool = False, category: Optio
         return parts
 
 def create_part(part_data: Dict[str, Any]) -> Dict[str, Any]:
-    with get_sb_client() as client:
+    with get_database_client() as client:
         # Check SKU uniqueness
         sku = part_data["sku"].strip()
         chk = client.get("/parts", params={"sku": f"eq.{sku}"}).json()
@@ -693,7 +838,7 @@ def create_part(part_data: Dict[str, Any]) -> Dict[str, Any]:
         return item
 
 def get_part(part_id: int) -> Dict[str, Any]:
-    with get_sb_client() as client:
+    with get_database_client() as client:
         r = client.get("/parts", params={"id": f"eq.{part_id}"})
         rows = r.json()
         if not rows:
@@ -701,7 +846,7 @@ def get_part(part_id: int) -> Dict[str, Any]:
         return rows[0]
 
 def update_part(part_id: int, part_data: Dict[str, Any]) -> Dict[str, Any]:
-    with get_sb_client() as client:
+    with get_database_client() as client:
         payload = {
             "sku": part_data["sku"].strip(),
             "name": part_data["name"].strip(),
@@ -720,7 +865,7 @@ def update_part(part_id: int, part_data: Dict[str, Any]) -> Dict[str, Any]:
         return {"id": part_id, **payload, "message": "Карточка запчасти обновлена"}
 
 def adjust_part_stock(part_id: int, quantity_change: int, comment: str) -> Dict[str, Any]:
-    with get_sb_client() as client:
+    with get_database_client() as client:
         p = get_part(part_id)
         current_qty = p.get("quantity", 0)
         new_qty = current_qty + quantity_change
@@ -743,12 +888,12 @@ def adjust_part_stock(part_id: int, quantity_change: int, comment: str) -> Dict[
         return {"id": part_id, "new_quantity": new_qty, "message": "Остаток успешно изменен"}
 
 def delete_part(part_id: int) -> Dict[str, Any]:
-    with get_sb_client() as client:
+    with get_database_client() as client:
         client.delete(f"/parts?id=eq.{part_id}")
         return {"id": part_id, "message": "Запчасть удалена"}
 
 def get_stock_movements(limit: int = 50) -> List[Dict[str, Any]]:
-    with get_sb_client() as client:
+    with get_database_client() as client:
         r = client.get("/stock_movements", params={"select": "*,parts(sku,name)", "order": "id.desc", "limit": str(limit)})
         if r.status_code != 200:
             return []
@@ -819,11 +964,11 @@ def parse_deal_description(raw_description: str, title: str = "") -> tuple[str, 
     return clean_desc, deal_type, service_type, closing_outcome
 
 def list_deals(stage: Optional[str] = None, q: Optional[str] = None, deal_type: Optional[str] = None) -> List[Dict[str, Any]]:
-    if not SUPABASE_KEY:
+    if not DATABASE_READY:
         return []
-    with get_sb_client() as client:
+    with get_database_client() as client:
         params = {
-            "select": "*,clients(name,company,phone),equipment(name,serial_vin),deal_parts(quantity)",
+            "select": "*,clients(name,company,phone),equipment(name,serial_vin)",
             "order": "id.desc"
         }
         if stage and stage != "all":
@@ -836,15 +981,27 @@ def list_deals(stage: Optional[str] = None, q: Optional[str] = None, deal_type: 
         if r.status_code != 200:
             return []
 
+        parts_response = client.get("/deal_parts", params={"select": "deal_id,quantity"})
+        if parts_response.status_code != 200:
+            raise RuntimeError(f"Не удалось загрузить запчасти нарядов: {parts_response.text}")
+        parts_by_deal: Dict[int, int] = {}
+        for part_row in parts_response.json() or []:
+            deal_id = part_row.get("deal_id")
+            if deal_id is None:
+                continue
+            try:
+                quantity = int(part_row.get("quantity") or 0)
+            except (TypeError, ValueError):
+                quantity = 0
+            parts_by_deal[int(deal_id)] = parts_by_deal.get(int(deal_id), 0) + quantity
+
         deals = []
         for d in r.json():
             cl = d.get("clients") or {}
             eq = d.get("equipment") or {}
-            dp = d.get("deal_parts") or []
             item = dict(d)
             item.pop("clients", None)
             item.pop("equipment", None)
-            item.pop("deal_parts", None)
             clean_desc, dtype, stype, outcome = parse_deal_description(d.get("description") or "", d.get("title") or "")
             if deal_type and deal_type != "all" and dtype != deal_type:
                 continue
@@ -857,12 +1014,12 @@ def list_deals(stage: Optional[str] = None, q: Optional[str] = None, deal_type: 
             item["client_phone"] = cl.get("phone", "")
             item["equipment_name"] = eq.get("name", "")
             item["equipment_vin"] = eq.get("serial_vin", "")
-            item["parts_count"] = sum(p.get("quantity", 0) for p in dp)
+            item["parts_count"] = parts_by_deal.get(int(d["id"]), 0)
             deals.append(item)
         return deals
 
 def create_deal(deal_data: Dict[str, Any]) -> Dict[str, Any]:
-    with get_sb_client() as client:
+    with get_database_client() as client:
         next_id = get_next_id(client, "deals")
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         stage = deal_data.get("stage", "new")
@@ -929,7 +1086,7 @@ def create_deal(deal_data: Dict[str, Any]) -> Dict[str, Any]:
         }
 
 def get_deal(deal_id: int) -> Dict[str, Any]:
-    with get_sb_client() as client:
+    with get_database_client() as client:
         r = client.get("/deals", params={"id": f"eq.{deal_id}", "select": "*,clients(name,company,phone,email),equipment(name,serial_vin,operating_hours)"})
         rows = r.json()
         if not rows:
@@ -972,7 +1129,7 @@ def get_deal(deal_id: int) -> Dict[str, Any]:
         return d
 
 def update_deal_stage(deal_id: int, stage: str) -> Dict[str, Any]:
-    with get_sb_client() as client:
+    with get_database_client() as client:
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         patch_payload = {"stage": stage}
         if stage in ("ready", "completed"):
@@ -981,7 +1138,7 @@ def update_deal_stage(deal_id: int, stage: str) -> Dict[str, Any]:
         return {"id": deal_id, "stage": stage, "completed_at": patch_payload.get("completed_at"), "message": "Статус наряда успешно изменен"}
 
 def update_deal(deal_id: int, deal_data: Dict[str, Any]) -> Dict[str, Any]:
-    with get_sb_client() as client:
+    with get_database_client() as client:
         stage = deal_data.get("stage", "new")
         completed_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S") if stage in ("ready", "completed") else None
         client_id = deal_data.get("client_id") if deal_data.get("client_id") and deal_data.get("client_id") > 0 else None
@@ -1029,12 +1186,12 @@ def update_deal(deal_id: int, deal_data: Dict[str, Any]) -> Dict[str, Any]:
         return {"id": deal_id, **payload, "description": raw_desc, "deal_type": new_dtype, "service_type": new_stype, "closing_outcome": new_outcome, "message": "Сделка обновлена"}
 
 def delete_deal(deal_id: int) -> Dict[str, Any]:
-    with get_sb_client() as client:
+    with get_database_client() as client:
         client.delete(f"/deals?id=eq.{deal_id}")
         return {"id": deal_id, "message": "Сделка удалена"}
 
 def attach_part_to_deal(deal_id: int, part_id: int, quantity: int) -> Dict[str, Any]:
-    with get_sb_client() as client:
+    with get_database_client() as client:
         # Check part quantity
         p = get_part(part_id)
         if p.get("quantity", 0) < quantity:
@@ -1084,7 +1241,7 @@ def attach_part_to_deal(deal_id: int, part_id: int, quantity: int) -> Dict[str, 
         }
 
 def remove_part_from_deal(deal_id: int, deal_part_id: int) -> Dict[str, Any]:
-    with get_sb_client() as client:
+    with get_database_client() as client:
         dp = client.get("/deal_parts", params={"id": f"eq.{deal_part_id}"}).json()
         if not dp:
             raise KeyError("Прикрепленная запчасть не найдена")
@@ -1132,9 +1289,9 @@ def parse_task_notes(raw_notes: str) -> tuple[str, str]:
     return clean_notes, responsible
 
 def list_tasks(status: Optional[str] = None) -> List[Dict[str, Any]]:
-    if not SUPABASE_KEY:
+    if not DATABASE_READY:
         return []
-    with get_sb_client() as client:
+    with get_database_client() as client:
         params = {"select": "*,clients(name,company),deals(title)", "order": "due_date.asc"}
         if status and status != "all":
             params["status"] = f"eq.{status}"
@@ -1158,7 +1315,7 @@ def list_tasks(status: Optional[str] = None) -> List[Dict[str, Any]]:
         return items
 
 def create_task(task_data: Dict[str, Any]) -> Dict[str, Any]:
-    with get_sb_client() as client:
+    with get_database_client() as client:
         next_id = get_next_id(client, "tasks")
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         raw_notes = (task_data.get("notes") or "").strip()
@@ -1187,7 +1344,7 @@ def create_task(task_data: Dict[str, Any]) -> Dict[str, Any]:
         return item
 
 def toggle_task(task_id: int) -> Dict[str, Any]:
-    with get_sb_client() as client:
+    with get_database_client() as client:
         r = client.get("/tasks", params={"id": f"eq.{task_id}"})
         rows = r.json()
         if not rows:
@@ -1198,7 +1355,7 @@ def toggle_task(task_id: int) -> Dict[str, Any]:
         return {"id": task_id, "status": new_status, "message": "Статус задачи изменен"}
 
 def update_task(task_id: int, task_data: Dict[str, Any]) -> Dict[str, Any]:
-    with get_sb_client() as client:
+    with get_database_client() as client:
         r = client.get("/tasks", params={"id": f"eq.{task_id}"})
         rows = r.json()
         if not rows:
@@ -1235,7 +1392,7 @@ def update_task(task_id: int, task_data: Dict[str, Any]) -> Dict[str, Any]:
         }
 
 def delete_task(task_id: int) -> Dict[str, Any]:
-    with get_sb_client() as client:
+    with get_database_client() as client:
         client.delete(f"/tasks?id=eq.{task_id}")
         return {"id": task_id, "message": "Задача удалена"}
 
@@ -1250,7 +1407,7 @@ def _to_float(v: Any, default: float = 0.0) -> float:
         return default
 
 def get_dashboard_metrics() -> Dict[str, Any]:
-    if not SUPABASE_KEY:
+    if not DATABASE_READY:
         return {
             "total_revenue": 0,
             "net_profit": 0,
@@ -1269,7 +1426,7 @@ def get_dashboard_metrics() -> Dict[str, Any]:
             "critical_parts": [],
             "mechanics_revenue": []
         }
-    with get_sb_client() as client:
+    with get_database_client() as client:
         deals = client.get("/deals", params={"select": "*,clients(name,company),equipment(name)", "order": "id.desc"}).json() or []
         for d in deals:
             clean_desc, dtype, stype, outcome = parse_deal_description(d.get("description") or "", d.get("title") or "")
@@ -1422,7 +1579,8 @@ def get_dashboard_metrics() -> Dict[str, Any]:
 
         for d in deals:
             if d.get("stage") in closed_stages:
-                dt_str = d.get("completed_at") or d.get("created_at") or ""
+                dt_value = d.get("completed_at") or d.get("created_at") or ""
+                dt_str = dt_value.isoformat() if hasattr(dt_value, "isoformat") else str(dt_value)
                 amt = _to_float(d.get("amount"), 0.0)
                 c_cost = _to_float(d.get("cost"), 0.0)
                 if len(dt_str) >= 7:
@@ -1585,18 +1743,12 @@ BACKUP_TABLES = [
     "whatsapp_logs",
 ]
 
-BACKUP_ID_TABLES = {
-    "users", "clients", "equipment", "parts", "deals", "deal_parts",
-    "tasks", "stock_movements", "whatsapp_logs",
-}
-
-
 def _database_connection():
     if psycopg is None:
         raise RuntimeError("Для SQL-бэкапа требуется пакет psycopg[binary]")
     database_url = get_database_url()
     if not database_url:
-        raise RuntimeError("DATABASE_URL или SUPABASE_DB_URL не настроен")
+        raise RuntimeError("DATABASE_URL или DATABASE_DB_URL не настроен")
     return psycopg.connect(database_url)
 
 
@@ -1647,23 +1799,6 @@ def dump_postgres_sql() -> str:
                         f"({column_sql}) VALUES ({values_sql});"
                     )
 
-            for table in sorted(BACKUP_ID_TABLES):
-                cursor.execute(
-                    "SELECT pg_get_serial_sequence(%s, 'id')",
-                    (f"public.{table}",),
-                )
-                sequence = cursor.fetchone()[0]
-                if sequence:
-                    lines.append(
-                        "SELECT setval(%s, COALESCE((SELECT MAX(id) FROM public.%s), 1), "
-                        "EXISTS (SELECT 1 FROM public.%s));"
-                        % (
-                            psycopg_sql.Literal(sequence).as_string(connection),
-                            table,
-                            table,
-                        )
-                    )
-
     lines.append("COMMIT;")
     return "\n".join(lines) + "\n"
 
@@ -1675,13 +1810,29 @@ def restore_postgres_sql(sql_dump: str) -> Dict[str, Any]:
     if len(sql_dump) > 50 * 1024 * 1024:
         raise ValueError("SQL-бэкап слишком большой (максимум 50 МБ)")
 
+    # Older exports contained setval() statements for integer IDs that are
+    # assigned by the application and therefore have no PostgreSQL sequence.
+    # Data rows already include their IDs, so these statements are unnecessary.
+    sql_dump = re.sub(
+        r"(?m)^\s*SELECT\s+setval\s*\([^;]*\);\s*$",
+        "",
+        sql_dump,
+    )
+    # Supabase-only privilege statements reference roles that do not exist
+    # in a standalone PostgreSQL installation.
+    sql_dump = re.sub(
+        r"(?ms)^\s*(?:REVOKE|GRANT)\b.*?;\s*$",
+        "",
+        sql_dump,
+    )
+
     with _database_connection() as connection:
         with connection.cursor() as cursor:
             cursor.execute(sql_dump)
     return {"format": "postgresql", "restored": True}
 
 def dump_all_data() -> Dict[str, Any]:
-    with get_sb_client() as client:
+    with get_database_client() as client:
         data = {}
         for table in ["settings", "users", "clients", "equipment", "parts", "deals", "deal_parts", "tasks", "stock_movements"]:
             r = client.get(f"/{table}", params={"select": "*"})
@@ -1689,7 +1840,7 @@ def dump_all_data() -> Dict[str, Any]:
         return data
 
 def restore_all_data(data: Dict[str, Any]) -> Dict[str, Any]:
-    with get_sb_client() as client:
+    with get_database_client() as client:
         counts = {}
         headers = {"Prefer": "resolution=merge-duplicates"}
         for table in ["settings", "users", "clients", "equipment", "parts", "deals", "deal_parts", "tasks", "stock_movements"]:
@@ -1702,9 +1853,9 @@ def restore_all_data(data: Dict[str, Any]) -> Dict[str, Any]:
 # ==================== TOP SOLD PARTS & EQUIPMENT HISTORY & PERMISSIONS & WHATSAPP ====================
 
 def get_top_sold_parts(limit: int = 10) -> List[Dict[str, Any]]:
-    if not SUPABASE_KEY:
+    if not DATABASE_READY:
         return []
-    with get_sb_client() as client:
+    with get_database_client() as client:
         dpr = client.get("/deal_parts", params={"select": "part_id,quantity,selling_price"})
         parts_r = client.get("/parts", params={"select": "id,sku,name,category,quantity,selling_price,min_threshold"})
         if parts_r.status_code != 200:
@@ -1741,9 +1892,9 @@ def get_top_sold_parts(limit: int = 10) -> List[Dict[str, Any]]:
         return results[:limit]
 
 def get_equipment_history(eq_id: int) -> Dict[str, Any]:
-    if not SUPABASE_KEY:
+    if not DATABASE_READY:
         return {"equipment_id": eq_id, "deals": [], "parts": [], "total_deals": 0, "total_spent": 0.0, "total_parts_count": 0}
-    with get_sb_client() as client:
+    with get_database_client() as client:
         r = client.get("/deals", params={"equipment_id": f"eq.{eq_id}", "select": "*,clients(name,company,phone)", "order": "created_at.desc"})
         deals_raw = r.json() if r.status_code == 200 else []
         deals = []
@@ -1837,9 +1988,9 @@ DEFAULT_ROLE_PERMISSIONS = {
 
 def get_user_permissions(user_id: int, role: str = "mechanic") -> Dict[str, Any]:
     base_perms = dict(DEFAULT_ROLE_PERMISSIONS.get(role, DEFAULT_ROLE_PERMISSIONS["mechanic"]))
-    if not SUPABASE_KEY:
+    if not DATABASE_READY:
         return base_perms
-    with get_sb_client() as client:
+    with get_database_client() as client:
         r = client.get("/settings", params={"key": f"eq.user_perms_{user_id}"})
         if r.status_code == 200 and r.json():
             val = r.json()[0].get("value")

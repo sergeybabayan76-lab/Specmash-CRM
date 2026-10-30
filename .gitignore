@@ -56,3 +56,5 @@ scratch/
 crm.db
 database_dump*.json
 *.dump.json
+backup.json
+specmash_crm_postgres_*.sql

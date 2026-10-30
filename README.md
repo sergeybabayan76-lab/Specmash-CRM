@@ -18,26 +18,21 @@
 
 Вход выполняется только по учетной записи, созданной администратором.
 
-### Первичный запуск новой базы Supabase
+### Первичный запуск локальной PostgreSQL-базы
 
-При запуске сервер проверяет наличие схемы и автоматически применяет идемпотентный
-`schema.sql`, если база пустая или в ней не хватает таблиц. Для этого нужны:
+PostgreSQL запускается в Docker. При старте сервер автоматически применяет
+идемпотентный `schema.sql` и создаёт только настроенного администратора:
 
-* `SUPABASE_URL` и серверный `SUPABASE_SECRET_KEY` (старое имя `SUPABASE_KEY` тоже поддерживается);
-* `SUPABASE_PUBLISHABLE_KEY` — только если используется Realtime в браузере;
-* `SUPABASE_DB_URL` из Supabase **Project Settings → Database → Connection string**
-  (либо `SUPABASE_DB_PASSWORD`, чтобы URL был собран автоматически).
+* `DATABASE_URL` — строка подключения к локальному PostgreSQL;
+* `BOOTSTRAP_ADMIN_USERNAME` и `BOOTSTRAP_ADMIN_PASSWORD` — первый администратор.
 
-`SUPABASE_URL` и `SUPABASE_SECRET_KEY` нужны для обычной работы CRM через REST API.
-`SUPABASE_DB_URL` нужен только для SQL-схемы и миграций. `SUPABASE_PUBLISHABLE_KEY`
-нужен только для Realtime-конфигурации браузера. `SUPABASE_JWKS_URL` и
-`APP_SESSION_SECRET` текущим backend-кодом не используются.
+Запуск базы и приложения:
 
-После создания схемы сервер создаёт только администратора, явно заданного через
-`BOOTSTRAP_ADMIN_USERNAME` и `BOOTSTRAP_ADMIN_PASSWORD`; демо-аккаунты и демо-данные
-не создаются.
+```powershell
+docker compose up -d --build
+```
 
-Для ручной инициализации без запуска сайта выполните в PowerShell:
+Для ручной инициализации без запуска сайта:
 
 ```powershell
 .\.venv\Scripts\python.exe init_database.py
@@ -45,6 +40,22 @@
 
 Или запустите `init_database.bat`. Команда идемпотентна: повторный запуск не удаляет
 данные и не создаёт дубликат администратора.
+
+### Архитектура миграций базы данных
+
+Структура базы разделена на два уровня:
+
+* `schema.sql` — неизменяемый baseline для новой PostgreSQL-базы;
+* `migrations/*.sql` — последовательные изменения после baseline.
+
+При запуске приложение создаёт `public.schema_migrations`, ставит advisory lock,
+применяет baseline только один раз, затем выполняет только новые SQL-файлы в
+сортированном порядке. Имя и SHA-256 checksum каждой миграции сохраняются в базе.
+
+Старые базы с записью `20261029_initial_schema` поддерживаются автоматически.
+Уже применённые миграции нельзя редактировать: при изменении checksum запуск
+останавливается. Для исправления всегда создавайте новую миграцию. Полные правила
+описаны в [migrations/README.md](./migrations/README.md).
 
 ---
 
@@ -75,7 +86,7 @@
   - **Реквизиты организации:** редактирование названия СТО Спецмаш, слогана/специализации, телефона (`+374...`), email, фактического адреса, ИНН и ответственного лица по умолчанию.
   - **Фирменный стиль и логотип:** предпросмотр логотипа в левом верхнем углу, загрузка файлов, ввод ссылок и сброс.
   - **Финансовые параметры и гарантия:** фиксированная валюта **AMD**, выбор гарантийного срока (3, 6, 12, 24 месяца).
-  - **Резервное копирование и база данных:** экспорт и импорт полного PostgreSQL SQL-бэкапа Supabase (схема, данные и последовательности) прямо из панели администратора.
+  - **Резервное копирование и база данных:** экспорт и импорт полного PostgreSQL SQL-бэкапа (схема, данные и последовательности) прямо из панели администратора.
 
 ---
 
@@ -126,26 +137,60 @@ cd C:\dev\crm-specmash\Specmash-CRM
 python -m uvicorn server:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-Перед запуском скопируйте `.env.example` в `.env` и заполните значения. Файл `.env`
-игнорируется Git и не должен добавляться в репозиторий. `SUPABASE_SECRET_KEY` используется
-только сервером; для браузерного Realtime задайте отдельный публичный
-`SUPABASE_PUBLISHABLE_KEY`.
+Перед запуском скопируйте `.env.example` в `.env` и заполните значения. Файл `.env` игнорируется Git и не должен добавляться в репозиторий.
+Подключение к базе задаётся только через `DATABASE_URL`.
 
 ---
 
-## 🚀 Развертывание в Vercel (One-Click Deployment из GitHub)
+## 🚀 Развертывание в Coolify
 
-Проект полностью сконфигурирован для серверлесс-развертывания в **Vercel** (`@vercel/python` Serverless Functions) напрямую из репозитория GitHub:
+Создайте приложение из репозитория и выберите **Docker Compose**. Укажите
+`docker-compose.yml`, домен направьте на сервис `app` и внутренний порт `8000`.
+Если внешний порт `8000` уже занят на сервере, задайте в Coolify переменную
+`APP_PORT` со свободным значением, например `8001`. Внутренний порт приложения
+при этом остаётся `8000`.
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fsergeybabayan76-lab%2FSpecmash-CRM)
+В переменных окружения Coolify задайте:
 
-* **Файлы конфигурации:**
-  - `vercel.json` — конфигурация маршрутизации и Serverless билдера.
-  - `api/index.py` — серверлесс-точка входа FastAPI для Vercel.
-  - `database.py` — работа с облачной базой Supabase через серверный API.
+```env
+POSTGRES_DB=specmash
+POSTGRES_USER=specmash
+POSTGRES_PASSWORD=<сильный пароль базы>
+BOOTSTRAP_ADMIN_USERNAME=admin
+BOOTSTRAP_ADMIN_PASSWORD=<сильный пароль администратора>
+APP_PORT=8001
+```
 
-### Как развернуть проект в Vercel в 1 клик:
-1. Нажмите на кнопку выше **[Deploy with Vercel](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fsergeybabayan76-lab%2FSpecmash-CRM)** (или перейдите в [Vercel New Project](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fsergeybabayan76-lab%2FSpecmash-CRM)).
-2. Выберите репозиторий `sergeybabayan76-lab/Specmash-CRM` и нажмите **Import**.
-3. Нажмите **Deploy** — Vercel автоматически установит зависимости из `requirements.txt` и запустит приложение.
-4. **Автоматический CD (Continuous Deployment):** Каждый `git push` в ветку `main` на GitHub будет автоматически запускать новую сборку и обновлять работающее приложение в Vercel без простоев.
+Для PostgreSQL включите persistent storage для `/var/lib/postgresql/data`.
+Для загружаемых файлов и документов включите отдельный persistent storage:
+
+```text
+/app/static/uploads
+```
+
+В Docker Compose это volumes `specmash_postgres_data` и `specmash_uploads`.
+Они переживают перезапуск и обновление контейнера. В Coolify также настройте
+резервное копирование обоих volumes: база хранит данные PostgreSQL, а uploads —
+файлы и документы. Порт 5432 наружу публиковать не требуется.
+
+## Архитектура frontend
+
+Приложение использует модульный SPA без npm/Vite и без отдельной сборки
+frontend. Общий layout и разметка разделов пока находятся в
+`static/index.html`, а основной legacy-контроллер — в `static/app.js`.
+Новая инфраструктура постепенно выносится в обычные браузерные модули:
+
+```text
+static/app/
+├── core/
+│   ├── api.js       # общий HTTP-клиент
+│   ├── router.js    # hash-навигация и список разделов
+│   └── state.js     # общее состояние приложения
+└── pages/
+    └── index.js     # диспетчер загрузчиков разделов
+```
+
+Это намеренно не отдельные HTML-страницы: сохраняются быстрые переходы,
+текущие ссылки `/#dashboard`, `/#clients` и совместимость с Python/FastAPI.
+Новые разделы следует добавлять отдельным page-модулем, а общую логику —
+в `core/`, не увеличивая `app.js`.
