@@ -14,7 +14,8 @@ SET client_min_messages = warning;
 -- Версии применённых миграций схемы
 CREATE TABLE IF NOT EXISTS public.schema_migrations (
     version text PRIMARY KEY,
-    applied_at timestamptz NOT NULL DEFAULT now()
+    applied_at timestamptz NOT NULL DEFAULT now(),
+    checksum text NOT NULL DEFAULT ''
 );
 
 -- =====================================================================

@@ -31,6 +31,8 @@ def get_database_url() -> str:
 
 DATABASE_URL = get_database_url()
 DATABASE_READY = bool(DATABASE_URL)
+BASELINE_SCHEMA_VERSION = "20261029_initial_schema"
+MIGRATIONS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "migrations")
 
 
 class LocalResponse:
@@ -228,7 +230,7 @@ def init_db():
     ensure_bootstrap_admin()
 
 def initialize_schema() -> None:
-    """Apply the idempotent PostgreSQL schema when the database is empty."""
+    """Apply the baseline once, then apply each pending versioned migration."""
     if psycopg is None:
         raise RuntimeError("Package psycopg is not installed. Run: pip install -r requirements.txt")
 
@@ -238,19 +240,75 @@ def initialize_schema() -> None:
             "DATABASE_URL is not configured. Add the local PostgreSQL connection URI."
         )
 
-    schema_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schema.sql")
-    with open(schema_path, "r", encoding="utf-8") as schema_file:
-        schema_sql = schema_file.read()
-    if not schema_sql.strip():
-        raise RuntimeError("schema.sql is empty")
-
     with psycopg.connect(database_url, connect_timeout=15) as connection:
-        connection.execute(schema_sql)
-        connection.execute(
-            "INSERT INTO public.schema_migrations (version) VALUES (%s) "
-            "ON CONFLICT (version) DO NOTHING",
-            ("20261029_initial_schema",),
-        )
+        with connection.transaction():
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS public.schema_migrations (
+                    version text PRIMARY KEY,
+                    applied_at timestamptz NOT NULL DEFAULT now(),
+                    checksum text NOT NULL DEFAULT ''
+                )
+                """
+            )
+            connection.execute(
+                "ALTER TABLE public.schema_migrations "
+                "ADD COLUMN IF NOT EXISTS checksum text NOT NULL DEFAULT ''"
+            )
+            connection.execute("SELECT pg_advisory_xact_lock(738291)")
+
+            baseline = connection.execute(
+                "SELECT checksum FROM public.schema_migrations WHERE version = %s",
+                (BASELINE_SCHEMA_VERSION,),
+            ).fetchone()
+            schema_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "schema.sql")
+            with open(schema_path, "r", encoding="utf-8") as schema_file:
+                schema_sql = schema_file.read()
+            schema_checksum = hashlib.sha256(schema_sql.encode("utf-8")).hexdigest()
+            if baseline is None:
+                if not schema_sql.strip():
+                    raise RuntimeError("schema.sql is empty")
+                connection.execute(schema_sql)
+                connection.execute(
+                    "INSERT INTO public.schema_migrations (version, checksum) "
+                    "VALUES (%s, %s) ON CONFLICT (version) DO NOTHING",
+                    (BASELINE_SCHEMA_VERSION, schema_checksum),
+                )
+            elif not baseline[0]:
+                connection.execute(
+                    "UPDATE public.schema_migrations SET checksum = %s WHERE version = %s",
+                    (schema_checksum, BASELINE_SCHEMA_VERSION),
+                )
+
+            migration_files = sorted(
+                name for name in os.listdir(MIGRATIONS_DIR)
+                if name.endswith(".sql") and os.path.isfile(os.path.join(MIGRATIONS_DIR, name))
+            ) if os.path.isdir(MIGRATIONS_DIR) else []
+
+            for filename in migration_files:
+                version = filename[:-4]
+                path = os.path.join(MIGRATIONS_DIR, filename)
+                with open(path, "r", encoding="utf-8") as migration_file:
+                    migration_sql = migration_file.read()
+                checksum = hashlib.sha256(migration_sql.encode("utf-8")).hexdigest()
+                applied = connection.execute(
+                    "SELECT checksum FROM public.schema_migrations WHERE version = %s",
+                    (version,),
+                ).fetchone()
+                if applied:
+                    if applied[0] and applied[0] != checksum:
+                        raise RuntimeError(
+                            f"Migration {filename} was changed after it was applied. "
+                            "Create a new migration instead of editing an old one."
+                        )
+                    continue
+                if not migration_sql.strip():
+                    raise RuntimeError(f"Migration {filename} is empty")
+                connection.execute(migration_sql)
+                connection.execute(
+                    "INSERT INTO public.schema_migrations (version, checksum) VALUES (%s, %s)",
+                    (version, checksum),
+                )
         connection.commit()
 
 def ensure_bootstrap_admin() -> None:
@@ -1661,12 +1719,6 @@ BACKUP_TABLES = [
     "whatsapp_logs",
 ]
 
-BACKUP_ID_TABLES = {
-    "users", "clients", "equipment", "parts", "deals", "deal_parts",
-    "tasks", "stock_movements", "whatsapp_logs",
-}
-
-
 def _database_connection():
     if psycopg is None:
         raise RuntimeError("Для SQL-бэкапа требуется пакет psycopg[binary]")
@@ -1723,23 +1775,6 @@ def dump_postgres_sql() -> str:
                         f"({column_sql}) VALUES ({values_sql});"
                     )
 
-            for table in sorted(BACKUP_ID_TABLES):
-                cursor.execute(
-                    "SELECT pg_get_serial_sequence(%s, 'id')",
-                    (f"public.{table}",),
-                )
-                sequence = cursor.fetchone()[0]
-                if sequence:
-                    lines.append(
-                        "SELECT setval(%s, COALESCE((SELECT MAX(id) FROM public.%s), 1), "
-                        "EXISTS (SELECT 1 FROM public.%s));"
-                        % (
-                            psycopg_sql.Literal(sequence).as_string(connection),
-                            table,
-                            table,
-                        )
-                    )
-
     lines.append("COMMIT;")
     return "\n".join(lines) + "\n"
 
@@ -1750,6 +1785,22 @@ def restore_postgres_sql(sql_dump: str) -> Dict[str, Any]:
         raise ValueError("Неверный формат: нужен SQL-бэкап Specmash CRM")
     if len(sql_dump) > 50 * 1024 * 1024:
         raise ValueError("SQL-бэкап слишком большой (максимум 50 МБ)")
+
+    # Older exports contained setval() statements for integer IDs that are
+    # assigned by the application and therefore have no PostgreSQL sequence.
+    # Data rows already include their IDs, so these statements are unnecessary.
+    sql_dump = re.sub(
+        r"(?m)^\s*SELECT\s+setval\s*\([^;]*\);\s*$",
+        "",
+        sql_dump,
+    )
+    # Supabase-only privilege statements reference roles that do not exist
+    # in a standalone PostgreSQL installation.
+    sql_dump = re.sub(
+        r"(?ms)^\s*(?:REVOKE|GRANT)\b.*?;\s*$",
+        "",
+        sql_dump,
+    )
 
     with _database_connection() as connection:
         with connection.cursor() as cursor:
