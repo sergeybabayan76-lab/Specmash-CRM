@@ -7,8 +7,8 @@ import os
 import csv
 import io
 import json
-import base64
 import time
+import uuid
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 
@@ -491,19 +491,35 @@ async def upload_logo(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Поддерживаются только форматы PNG, JPG, JPEG, SVG, WebP")
 
     contents = await file.read()
+    if len(contents) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Размер логотипа не должен превышать 5 МБ")
     mime_types = {
         ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
         ".svg": "image/svg+xml", ".webp": "image/webp"
     }
     mime = mime_types.get(ext, "image/png")
-    b64 = base64.b64encode(contents).decode("utf-8")
-    logo_url = f"data:{mime};base64,{b64}"
+    old_logo = database.get_settings().get("logo_url", "")
+    if old_logo.startswith("/static/uploads/logo-"):
+        old_path = os.path.join(BASE_DIR, old_logo.removeprefix("/static/"))
+        if os.path.isfile(old_path):
+            os.remove(old_path)
+
+    filename = f"logo-{uuid.uuid4().hex}{ext}"
+    logo_path = os.path.join(UPLOADS_DIR, filename)
+    with open(logo_path, "wb") as logo_file:
+        logo_file.write(contents)
+    logo_url = f"/static/uploads/{filename}"
 
     database.update_settings({"logo_url": logo_url})
     return {"logo_url": logo_url, "message": "Логотип успешно обновлен"}
 
 @app.delete("/api/settings/logo")
 def delete_logo():
+    old_logo = database.get_settings().get("logo_url", "")
+    if old_logo.startswith("/static/uploads/logo-"):
+        old_path = os.path.join(BASE_DIR, old_logo.removeprefix("/static/"))
+        if os.path.isfile(old_path):
+            os.remove(old_path)
     database.update_settings({"logo_url": ""})
     return {"message": "Логотип сброшен к стандартному"}
 

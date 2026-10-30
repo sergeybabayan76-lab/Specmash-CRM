@@ -475,7 +475,14 @@ function stopHeartbeat() {
 }
 
 function initAuth() {
-  state.currentUser = null;
+  try {
+    const savedUser = localStorage.getItem('specmash_current_user');
+    state.currentUser = savedUser ? JSON.parse(savedUser) : null;
+  } catch (err) {
+    console.warn('Saved session is invalid and will be cleared');
+    localStorage.removeItem('specmash_current_user');
+    state.currentUser = null;
+  }
 
   // Enforce auth: if no logged-in user, strictly show auth screen and block all views
   if (!state.currentUser || !state.currentUser.id) {
@@ -572,6 +579,7 @@ async function handleAuthScreenLogin(e) {
     if (!res.ok) throw new Error(data.detail || data.message || 'Неверный логин или пароль');
 
     state.currentUser = data;
+    localStorage.setItem('specmash_current_user', JSON.stringify(data));
     showAppLayout();
     applyUserPermissions();
     startHeartbeat();
@@ -594,6 +602,7 @@ async function handleAuthScreenLogin(e) {
 function handleLogout() {
   stopHeartbeat();
   state.currentUser = null;
+  localStorage.removeItem('specmash_current_user');
   crmStore.cache = {};
   closeUserDropdown();
   showAuthScreen();
@@ -754,6 +763,7 @@ async function handleManualLogin(e) {
     if (!res.ok) throw new Error(data.detail || data.message || 'Неверный логин или пароль');
 
     state.currentUser = data;
+    localStorage.setItem('specmash_current_user', JSON.stringify(data));
     applyUserPermissions();
     startHeartbeat();
     closeModal('modal-login');
@@ -908,6 +918,10 @@ function openLogoModal() {
 
 async function uploadLogoFile(file) {
   if (!file) return;
+  if (file.size > 5 * 1024 * 1024) {
+    showToast('Размер логотипа не должен превышать 5 МБ', 'error');
+    return;
+  }
 
   const formData = new FormData();
   formData.append('file', file);
