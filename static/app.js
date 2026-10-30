@@ -1862,7 +1862,6 @@ function renderDealsList() {
             <span>${deal.deal_type === 'parts_sale' ? 'Продажа со склада' : (deal.equipment_name || (state.equipment && state.equipment.find(eq => eq.id === deal.equipment_id)?.name) || 'Не привязана')}</span>
           </div>
           <div class="text-[11px] text-slate-400 font-mono">${deal.equipment_vin ? `VIN: ${deal.equipment_vin}` : 'VIN: —'}</div>
-          <div class="text-[11px] text-amber-700 font-mono">Запчасти: ${Number(deal.parts_count || 0)}</div>
         </td>
 
         <td class="p-3.5">

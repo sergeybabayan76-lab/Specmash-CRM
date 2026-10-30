@@ -968,7 +968,7 @@ def list_deals(stage: Optional[str] = None, q: Optional[str] = None, deal_type: 
         return []
     with get_database_client() as client:
         params = {
-            "select": "*,clients(name,company,phone),equipment(name,serial_vin),deal_parts(quantity)",
+            "select": "*,clients(name,company,phone),equipment(name,serial_vin)",
             "order": "id.desc"
         }
         if stage and stage != "all":
@@ -981,15 +981,27 @@ def list_deals(stage: Optional[str] = None, q: Optional[str] = None, deal_type: 
         if r.status_code != 200:
             return []
 
+        parts_response = client.get("/deal_parts", params={"select": "deal_id,quantity"})
+        if parts_response.status_code != 200:
+            raise RuntimeError(f"Не удалось загрузить запчасти нарядов: {parts_response.text}")
+        parts_by_deal: Dict[int, int] = {}
+        for part_row in parts_response.json() or []:
+            deal_id = part_row.get("deal_id")
+            if deal_id is None:
+                continue
+            try:
+                quantity = int(part_row.get("quantity") or 0)
+            except (TypeError, ValueError):
+                quantity = 0
+            parts_by_deal[int(deal_id)] = parts_by_deal.get(int(deal_id), 0) + quantity
+
         deals = []
         for d in r.json():
             cl = d.get("clients") or {}
             eq = d.get("equipment") or {}
-            dp = d.get("deal_parts") or []
             item = dict(d)
             item.pop("clients", None)
             item.pop("equipment", None)
-            item.pop("deal_parts", None)
             clean_desc, dtype, stype, outcome = parse_deal_description(d.get("description") or "", d.get("title") or "")
             if deal_type and deal_type != "all" and dtype != deal_type:
                 continue
@@ -1002,7 +1014,7 @@ def list_deals(stage: Optional[str] = None, q: Optional[str] = None, deal_type: 
             item["client_phone"] = cl.get("phone", "")
             item["equipment_name"] = eq.get("name", "")
             item["equipment_vin"] = eq.get("serial_vin", "")
-            item["parts_count"] = sum(p.get("quantity", 0) for p in dp)
+            item["parts_count"] = parts_by_deal.get(int(d["id"]), 0)
             deals.append(item)
         return deals
 
