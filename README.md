@@ -145,7 +145,10 @@ python -m uvicorn server:app --host 127.0.0.1 --port 8000 --reload
 ## 🚀 Развертывание в Coolify
 
 Создайте приложение из репозитория и выберите **Docker Compose**. Укажите
-`docker-compose.yml`, домен направьте на сервис `app` и порт `8000`.
+`docker-compose.yml`, домен направьте на сервис `app` и внутренний порт `8000`.
+Если внешний порт `8000` уже занят на сервере, задайте в Coolify переменную
+`APP_PORT` со свободным значением, например `8001`. Внутренний порт приложения
+при этом остаётся `8000`.
 
 В переменных окружения Coolify задайте:
 
@@ -155,6 +158,7 @@ POSTGRES_USER=specmash
 POSTGRES_PASSWORD=<сильный пароль базы>
 BOOTSTRAP_ADMIN_USERNAME=admin
 BOOTSTRAP_ADMIN_PASSWORD=<сильный пароль администратора>
+APP_PORT=8001
 ```
 
 Для PostgreSQL включите persistent storage для `/var/lib/postgresql/data`.

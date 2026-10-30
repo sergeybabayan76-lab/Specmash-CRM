@@ -23,8 +23,10 @@ services:
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:?Set BOOTSTRAP_ADMIN_PASSWORD in Coolify or .env}
       HOST: 0.0.0.0
       PORT: 8000
+    expose:
+      - "8000"
     ports:
-      - "8000:8000"
+      - "${APP_PORT:-8000}:8000"
     volumes:
       - specmash_uploads:/app/static/uploads
     healthcheck:
