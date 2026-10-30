@@ -174,9 +174,14 @@ class LocalDatabaseClient:
                 placeholders = ", ".join(["%s"] * len(columns))
                 conflict = ""
                 if headers and "resolution=merge-duplicates" in headers.get("Prefer", ""):
+                    conflict_target = '("key")' if table == "settings" else ""
                     conflict = " ON CONFLICT DO UPDATE SET " + ", ".join(
                         f"{psycopg_sql.Identifier(c).as_string(self.connection)} = EXCLUDED.{psycopg_sql.Identifier(c).as_string(self.connection)}"
                         for c in columns if c != "id"
+                    )
+                    conflict = conflict.replace(
+                        " ON CONFLICT DO UPDATE SET",
+                        f" ON CONFLICT {conflict_target} DO UPDATE SET",
                     )
                 query = f"INSERT INTO public.{psycopg_sql.Identifier(table).as_string(self.connection)} ({identifiers}) VALUES ({placeholders}){conflict} RETURNING *"
                 cursor = self.connection.execute(query, [record[c] for c in columns])
@@ -442,7 +447,13 @@ def update_settings(payload: Dict[str, Any]) -> Dict[str, Any]:
     with get_database_client() as client:
         for key, value in payload.items():
             if value is not None:
-                client.post("/settings", json={"key": key, "value": str(value).strip()}, headers={"Prefer": "resolution=merge-duplicates"})
+                response = client.post(
+                    "/settings",
+                    json={"key": key, "value": str(value).strip()},
+                    headers={"Prefer": "resolution=merge-duplicates"},
+                )
+                if response.status_code >= 400:
+                    raise RuntimeError(f"Не удалось сохранить настройку {key}: {response.text}")
         return {"message": "Основные настройки программы успешно сохранены"}
 
 def save_setting(key: str, value: Any) -> Dict[str, Any]:

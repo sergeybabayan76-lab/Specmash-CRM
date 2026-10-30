@@ -499,8 +499,8 @@ async def upload_logo(file: UploadFile = File(...)):
     }
     mime = mime_types.get(ext, "image/png")
     old_logo = database.get_settings().get("logo_url", "")
-    if old_logo.startswith("/static/uploads/logo-"):
-        old_path = os.path.join(BASE_DIR, old_logo.removeprefix("/static/"))
+    if old_logo.startswith("/static/uploads/"):
+        old_path = os.path.join(UPLOADS_DIR, os.path.basename(old_logo.split("?", 1)[0]))
         if os.path.isfile(old_path):
             os.remove(old_path)
 
@@ -516,8 +516,8 @@ async def upload_logo(file: UploadFile = File(...)):
 @app.delete("/api/settings/logo")
 def delete_logo():
     old_logo = database.get_settings().get("logo_url", "")
-    if old_logo.startswith("/static/uploads/logo-"):
-        old_path = os.path.join(BASE_DIR, old_logo.removeprefix("/static/"))
+    if old_logo.startswith("/static/uploads/"):
+        old_path = os.path.join(UPLOADS_DIR, os.path.basename(old_logo.split("?", 1)[0]))
         if os.path.isfile(old_path):
             os.remove(old_path)
     database.update_settings({"logo_url": ""})
