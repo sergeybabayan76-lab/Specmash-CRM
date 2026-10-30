@@ -2404,35 +2404,69 @@ function renderEquipmentTable() {
 
 // ================= 5. WAREHOUSE & PARTS =================
 
-async function loadParts(searchQuery = '') {
+async function loadParts(searchQuery = null) {
   if (!state.currentUser || !state.currentUser.id) return;
+  const searchInput = document.getElementById('warehouse-search');
+  const effectiveQuery = (typeof searchQuery === 'string')
+    ? searchQuery.trim()
+    : (searchInput ? searchInput.value.trim() : '');
+
+  if (Array.isArray(state.allParts) && state.allParts.length > 0) {
+    renderPartsTable(effectiveQuery);
+  }
+
   try {
     const lowStock = document.getElementById('warehouse-filter-low')?.checked || false;
     let url = `/api/parts?low_stock=${lowStock}`;
-    if (searchQuery) url += `&q=${encodeURIComponent(searchQuery)}`;
+    if (effectiveQuery) url += `&q=${encodeURIComponent(effectiveQuery)}`;
 
     const res = await fetch(url);
     const serverParts = await res.json();
-    state.parts = crmStore.mergeWithServer('parts', serverParts);
-    renderPartsTable();
+    if (!effectiveQuery && !lowStock && Array.isArray(serverParts)) {
+      state.allParts = crmStore.mergeWithServer('parts', serverParts);
+      state.parts = state.allParts;
+    } else if (Array.isArray(serverParts)) {
+      state.parts = serverParts.sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0));
+    }
+    renderPartsTable(effectiveQuery);
     updateSidebarCounters();
   } catch (err) {
     console.error('Error loading warehouse:', err);
     state.parts = crmStore.getList('parts');
-    renderPartsTable();
+    renderPartsTable(effectiveQuery);
   }
 }
 
-function renderPartsTable() {
+function renderPartsTable(searchQuery = null) {
   const tbody = document.getElementById('parts-table-body');
   if (!tbody) return;
 
-  if (state.parts.length === 0) {
+  const searchInput = document.getElementById('warehouse-search');
+  const q = (typeof searchQuery === 'string' ? searchQuery : (searchInput?.value || '')).trim().toLowerCase();
+  const lowStockOnly = document.getElementById('warehouse-filter-low')?.checked || false;
+
+  const baseParts = (Array.isArray(state.parts) && state.parts.length > 0)
+    ? state.parts
+    : (state.allParts || []);
+
+  const filteredParts = baseParts.filter(p => {
+    if (lowStockOnly && Number(p.quantity || 0) > Number(p.min_threshold ?? 2)) {
+      return false;
+    }
+    if (!q) return true;
+    const sku = String(p.sku || '').toLowerCase();
+    const name = String(p.name || '').toLowerCase();
+    const category = String(p.category || '').toLowerCase();
+    const location = String(p.location || '').toLowerCase();
+    return sku.includes(q) || name.includes(q) || category.includes(q) || location.includes(q);
+  });
+
+  if (filteredParts.length === 0) {
     tbody.innerHTML = `<tr><td colspan="8" class="p-8 text-center text-slate-400 text-xs">Запчасти не найдены</td></tr>`;
     return;
   }
 
-  tbody.innerHTML = state.parts.map(p => {
+  tbody.innerHTML = filteredParts.map(p => {
     const isLow = p.quantity <= p.min_threshold;
     return `
       <tr class="hover:bg-slate-50/80 transition-colors ${isLow ? 'bg-rose-50/30' : ''}">

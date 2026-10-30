@@ -85,13 +85,36 @@ def _parse_filters(params: Dict[str, Any]) -> tuple[list[str], list[Any]]:
     for key, raw_value in params.items():
         if key in {"select", "order", "limit"}:
             continue
+        if key == "or":
+            inner = str(raw_value).strip()
+            if inner.startswith("(") and inner.endswith(")"):
+                inner = inner[1:-1]
+            or_clauses = []
+            for part in re.split(r",(?=[a-zA-Z_][a-zA-Z0-9_]*\.)", inner):
+                col, _, rest = part.strip().partition(".")
+                op, _, val = rest.partition(".")
+                if not col or not op:
+                    continue
+                if op == "eq":
+                    or_clauses.append(f'"{col}" = %s')
+                    values.append(val)
+                elif op == "ilike":
+                    sql_val = val.replace("*", "%")
+                    if "%" not in sql_val:
+                        sql_val = f"%{sql_val}%"
+                    or_clauses.append(f'"{col}" ILIKE %s')
+                    values.append(sql_val)
+            if or_clauses:
+                clauses.append("(" + " OR ".join(or_clauses) + ")")
+            continue
         operator, _, value = str(raw_value).partition(".")
         if operator == "eq":
             clauses.append(f'"{key}" = %s')
             values.append(value)
         elif operator == "ilike":
+            sql_value = value.replace("*", "%")
             clauses.append(f'"{key}" ILIKE %s')
-            values.append(value)
+            values.append(sql_value)
         elif operator == "in":
             items = value.strip("()").split(",") if value else []
             if items:
