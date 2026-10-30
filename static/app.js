@@ -332,29 +332,6 @@ function startKanbanBackgroundPolling() {
   }, 3500);
 }
 
-// Global State Cache
-const state = {
-  currentTab: 'dashboard',
-  currentUser: null,
-  dealsViewMode: 'list', // Requirement #12: List view by default
-  dealsDepartment: 'service', // 'service' | 'parts_sale' | 'sales'
-  dealModalType: 'service',
-  activeEqModalTab: 'info',
-  topPartsLimit: 10,
-  settings: {
-    company_name: 'СТО Спецмаш',
-    logo_url: ''
-  },
-  clients: [],
-  equipment: [],
-  parts: [],
-  deals: [],
-  tasks: [],
-  users: [],
-  dashboard: {},
-  draggedDealId: null,
-};
-
 // Kanban Stage Definitions (СТО: Service & Repairs)
 const SERVICE_KANBAN_STAGES = [
   { id: 'new', label: 'Новые заявки', short: 'Новая', icon: 'inbox', color: 'border-blue-500' },
@@ -475,6 +452,7 @@ function stopHeartbeat() {
 }
 
 function initAuth() {
+  state.currentTab = window.SpecmashApp.router.fromHash();
   try {
     const savedUser = localStorage.getItem('specmash_current_user');
     state.currentUser = savedUser ? JSON.parse(savedUser) : null;
@@ -1167,7 +1145,7 @@ function switchTab(tabName) {
   toggleMobileSidebar(false);
 
   state.currentTab = tabName;
-  const tabs = ['dashboard', 'kanban', 'clients', 'equipment', 'warehouse', 'tasks', 'users', 'export', 'settings', 'marketing'];
+  const tabs = window.SpecmashApp.router.tabs;
 
   tabs.forEach(t => {
     const section = document.getElementById(`tab-${t}`);
@@ -1179,6 +1157,13 @@ function switchTab(tabName) {
       } else {
         navItem.className = 'nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800';
       }
+
+      window.addEventListener('hashchange', () => {
+        const tabName = window.SpecmashApp.router.fromHash();
+        if (state.currentUser && state.currentTab !== tabName) {
+          switchTab(tabName);
+        }
+      });
     }
   });
 
@@ -1207,18 +1192,7 @@ function switchTab(tabName) {
     if (navSales) navSales.className = navInactive;
   }
 
-  if (tabName === 'dashboard') loadDashboard();
-  else if (tabName === 'kanban') loadDeals();
-  else if (tabName === 'clients') loadClients();
-  else if (tabName === 'equipment') loadEquipment();
-  else if (tabName === 'warehouse') loadParts();
-  else if (tabName === 'tasks') loadTasks();
-  else if (tabName === 'users') loadUsers();
-  else if (tabName === 'settings') loadAdminSettings();
-  else if (tabName === 'marketing') {
-    loadWhatsAppConfig();
-    loadWhatsAppLogs();
-  }
+  window.SpecmashApp.pages.load(tabName);
 
   if (window.lucide) lucide.createIcons();
 }
@@ -1247,7 +1221,7 @@ function handleGlobalSearch(query) {
 async function loadDashboard() {
   if (!state.currentUser || !state.currentUser.id) return;
   try {
-    const res = await fetch('/api/dashboard');
+    const res = await window.SpecmashApp.api.get('/api/dashboard');
     const data = await res.json();
     state.dashboard = data;
 
