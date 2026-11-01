@@ -567,8 +567,8 @@ def serve_favicon():
 
 @app.get("/api/dashboard")
 @app.get("/api/dashboard/metrics")
-def get_dashboard():
-    return database.get_dashboard_metrics()
+def get_dashboard(year: Optional[str] = None, month: Optional[str] = None):
+    return database.get_dashboard_metrics(year=year, month=month)
 
 # ----------------- Clients -----------------
 
@@ -1137,8 +1137,8 @@ if __name__ == "__main__":
 # ----------------- v1.2.3 Endpoints: Top Parts, Equipment History, Permissions, WhatsApp -----------------
 
 @app.get("/api/dashboard/top-parts")
-def get_top_parts(limit: int = 10):
-    return database.get_top_sold_parts(limit=limit)
+def get_top_parts(limit: int = 10, year: Optional[str] = None, month: Optional[str] = None):
+    return database.get_top_sold_parts(limit=limit, year=year, month=month)
 
 @app.get("/api/equipment/{eq_id}/history")
 def get_equipment_history_endpoint(eq_id: int):

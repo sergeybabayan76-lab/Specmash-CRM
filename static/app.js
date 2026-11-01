@@ -1243,12 +1243,135 @@ function handleGlobalSearch(query) {
 
 // ================= 1. DASHBOARD & ANALYTICS =================
 
+const DASHBOARD_MONTH_LABELS = {
+  '01': 'Январь', '02': 'Февраль', '03': 'Март', '04': 'Апрель',
+  '05': 'Май', '06': 'Июнь', '07': 'Июль', '08': 'Август',
+  '09': 'Сентябрь', '10': 'Октябрь', '11': 'Ноябрь', '12': 'Декабрь'
+};
+
+function getDashboardPeriodParams() {
+  const yearEl = document.getElementById('dash-filter-year');
+  const monthEl = document.getElementById('dash-filter-month');
+  const year = yearEl ? yearEl.value : (state.dashboardYear || 'all');
+  const month = monthEl ? monthEl.value : (state.dashboardMonth || 'all');
+  state.dashboardYear = year;
+  state.dashboardMonth = month;
+  return { year, month };
+}
+
+function updateDashboardPeriodUI(availableYears = null) {
+  const yearEl = document.getElementById('dash-filter-year');
+  const monthEl = document.getElementById('dash-filter-month');
+  const badgeEl = document.getElementById('dash-period-badge');
+
+  const curYear = state.dashboardYear || 'all';
+  const curMonth = state.dashboardMonth || 'all';
+
+  if (yearEl && Array.isArray(availableYears) && availableYears.length > 0) {
+    const yearsSet = new Set(availableYears.map(y => String(y)));
+    ['2026', '2025', '2024'].forEach(y => yearsSet.add(y));
+    const sortedYears = Array.from(yearsSet).sort((a, b) => Number(b) - Number(a));
+    yearEl.innerHTML = `<option value="all">Все годы</option>` + sortedYears.map(y => `
+      <option value="${y}" ${String(curYear) === String(y) ? 'selected' : ''}>${y}</option>
+    `).join('');
+    yearEl.value = yearsSet.has(String(curYear)) ? String(curYear) : 'all';
+  }
+
+  if (monthEl) {
+    monthEl.value = curMonth;
+  }
+
+  if (badgeEl) {
+    if (curYear === 'all' && curMonth === 'all') {
+      badgeEl.textContent = 'За всё время';
+      badgeEl.className = 'px-2 py-0.5 rounded-full text-[11px] font-bold bg-blue-100 text-blue-800 font-mono';
+    } else if (curYear !== 'all' && curMonth !== 'all') {
+      badgeEl.textContent = `${DASHBOARD_MONTH_LABELS[curMonth] || curMonth} ${curYear}`;
+      badgeEl.className = 'px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 font-mono';
+    } else if (curYear !== 'all') {
+      badgeEl.textContent = `${curYear} год`;
+      badgeEl.className = 'px-2 py-0.5 rounded-full text-[11px] font-bold bg-indigo-100 text-indigo-800 font-mono';
+    } else {
+      badgeEl.textContent = `${DASHBOARD_MONTH_LABELS[curMonth] || curMonth} (все годы)`;
+      badgeEl.className = 'px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800 font-mono';
+    }
+  }
+}
+
+function handleDashboardPeriodChange() {
+  getDashboardPeriodParams();
+  updateDashboardPeriodUI();
+  loadDashboard();
+}
+
+function setDashboardPeriodCurrentMonth() {
+  const now = new Date();
+  const yr = String(now.getFullYear());
+  const mo = String(now.getMonth() + 1).padStart(2, '0');
+  state.dashboardYear = yr;
+  state.dashboardMonth = mo;
+  const yearEl = document.getElementById('dash-filter-year');
+  const monthEl = document.getElementById('dash-filter-month');
+  if (yearEl) {
+    if (!Array.from(yearEl.options).some(o => o.value === yr)) {
+      const opt = document.createElement('option');
+      opt.value = yr;
+      opt.textContent = yr;
+      yearEl.appendChild(opt);
+    }
+    yearEl.value = yr;
+  }
+  if (monthEl) monthEl.value = mo;
+  updateDashboardPeriodUI();
+  loadDashboard();
+}
+
+function setDashboardPeriodCurrentYear() {
+  const now = new Date();
+  const yr = String(now.getFullYear());
+  state.dashboardYear = yr;
+  state.dashboardMonth = 'all';
+  const yearEl = document.getElementById('dash-filter-year');
+  const monthEl = document.getElementById('dash-filter-month');
+  if (yearEl) {
+    if (!Array.from(yearEl.options).some(o => o.value === yr)) {
+      const opt = document.createElement('option');
+      opt.value = yr;
+      opt.textContent = yr;
+      yearEl.appendChild(opt);
+    }
+    yearEl.value = yr;
+  }
+  if (monthEl) monthEl.value = 'all';
+  updateDashboardPeriodUI();
+  loadDashboard();
+}
+
+function resetDashboardPeriodFilter() {
+  state.dashboardYear = 'all';
+  state.dashboardMonth = 'all';
+  const yearEl = document.getElementById('dash-filter-year');
+  const monthEl = document.getElementById('dash-filter-month');
+  if (yearEl) yearEl.value = 'all';
+  if (monthEl) monthEl.value = 'all';
+  updateDashboardPeriodUI();
+  loadDashboard();
+}
+
 async function loadDashboard() {
   if (!state.currentUser || !state.currentUser.id) return;
   try {
-    const res = await window.SpecmashApp.api.get('/api/dashboard');
+    const { year, month } = getDashboardPeriodParams();
+    const qs = new URLSearchParams();
+    if (year && year !== 'all') qs.set('year', year);
+    if (month && month !== 'all') qs.set('month', month);
+    const url = qs.toString() ? `/api/dashboard?${qs.toString()}` : '/api/dashboard';
+
+    const res = await window.SpecmashApp.api.get(url);
     const data = await res.json();
     state.dashboard = data;
+
+    updateDashboardPeriodUI(data.available_years);
 
     // Header stats (AMD)
     document.getElementById('header-revenue').textContent = formatMoney(data.total_revenue);
@@ -1294,8 +1417,15 @@ async function loadDashboard() {
 
     renderRevenueChart(data.monthly_data, data.total_revenue, data.total_cost, data.net_profit);
     renderTopClients(data.top_clients);
-    renderCriticalParts(data.critical_parts);
-    renderRecentDeals(data.recent_deals);
+
+    // Align row counts between Critical Parts and Recent Deals
+    const alignedRowTarget = Math.max(
+      Math.min((data.critical_parts || []).length, 6),
+      Math.min((data.recent_deals || []).length, 6),
+      5
+    );
+    renderCriticalParts(data.critical_parts, alignedRowTarget);
+    renderRecentDeals(data.recent_deals, alignedRowTarget);
 
     // Requirement #8: Mechanics Revenue Breakdown (Strictly for Administrators)
     const mechSection = document.getElementById('dash-mechanics-revenue-section');
@@ -1309,7 +1439,7 @@ async function loadDashboard() {
     }
 
     // Requirement #7: Load Top Sold Parts widget
-    await loadTopSoldParts();
+    await loadTopSoldParts(state.topPartsLimit || 10);
 
     if (window.lucide) lucide.createIcons();
   } catch (err) {
@@ -1394,31 +1524,49 @@ function renderTopClients(topClients) {
   `).join('');
 }
 
-function renderCriticalParts(parts) {
+function renderCriticalParts(parts, targetRows = 6) {
   const container = document.getElementById('critical-parts-table');
   if (!container) return;
-  if (!parts || parts.length === 0) {
-    container.innerHTML = '<div class="text-xs text-emerald-600 bg-emerald-50 p-3 rounded-lg flex items-center gap-2"><i data-lucide="check" class="w-4 h-4"></i> Дефицитных позиций нет! Все запчасти в достаточном количестве.</div>';
-    return;
-  }
+  const rowsLimit = Math.max(1, targetRows || 6);
+  const items = (parts || []).slice(0, rowsLimit);
 
-  container.innerHTML = parts.map(p => `
-    <div class="flex items-center justify-between p-2.5 rounded-lg border border-rose-100 bg-rose-50/40 text-xs">
-      <div>
-        <div class="font-bold text-slate-800 flex items-center gap-2">
-          <span>${p.name}</span>
-          <span class="font-mono text-[10px] text-slate-500 bg-white px-1.5 py-0.5 rounded border">${p.sku}</span>
+  const renderedRows = items.map(p => `
+    <div class="h-[58px] px-3 py-2 rounded-lg border border-rose-100 bg-rose-50/40 flex items-center justify-between text-xs gap-2">
+      <div class="min-w-0 flex-1">
+        <div class="font-bold text-slate-800 flex items-center gap-2 truncate">
+          <span class="truncate">${escapeHtml(p.name)}</span>
+          <span class="font-mono text-[10px] text-slate-500 bg-white px-1.5 py-0.5 rounded border shrink-0">${escapeHtml(p.sku)}</span>
         </div>
-        <div class="text-[11px] text-slate-500 mt-0.5">Локация: ${p.location || 'Склад'} • Мин. остаток: ${p.min_threshold} шт</div>
+        <div class="text-[11px] text-slate-500 mt-0.5 truncate">Локация: ${escapeHtml(p.location || 'Склад')} • Мин. остаток: ${p.min_threshold} шт</div>
       </div>
-      <div class="flex items-center gap-3">
-        <span class="font-bold text-rose-600 font-mono text-sm">${p.quantity} шт</span>
-        <button onclick="openStockAdjustModal(${p.id}, '${p.name.replace(/'/g, "\\'")}')" class="bg-rose-600 hover:bg-rose-700 text-white px-2 py-1 rounded text-[11px] font-medium shadow-sm">
+      <div class="flex items-center gap-2.5 shrink-0">
+        <span class="font-bold text-rose-600 font-mono text-sm whitespace-nowrap">${p.quantity} шт</span>
+        <button onclick="openStockAdjustModal(${p.id}, '${String(p.name || '').replace(/'/g, "\\'") }')" class="bg-rose-600 hover:bg-rose-700 text-white px-2.5 py-1 rounded text-[11px] font-medium shadow-sm whitespace-nowrap">
           + Приход
         </button>
       </div>
     </div>
-  `).join('');
+  `);
+
+  if (renderedRows.length === 0) {
+    renderedRows.push(`
+      <div class="h-[58px] px-3 py-2 rounded-lg border border-emerald-200 bg-emerald-50/70 text-emerald-700 flex items-center gap-2 text-xs font-medium">
+        <i data-lucide="check-circle-2" class="w-4 h-4 shrink-0"></i>
+        <span>Дефицитных позиций нет! Все запчасти на складе в достаточном количестве.</span>
+      </div>
+    `);
+  }
+
+  while (renderedRows.length < rowsLimit) {
+    renderedRows.push(`
+      <div class="h-[58px] px-3 py-2 rounded-lg border border-dashed border-slate-100 bg-slate-50/40 flex items-center justify-between text-[11px] text-slate-300 select-none">
+        <span>Дефицитная позиция отсутствует</span>
+        <span class="font-mono">Норма</span>
+      </div>
+    `);
+  }
+
+  container.innerHTML = renderedRows.join('');
 }
 
 function renderMechanicsRevenue(mechanics) {
@@ -1468,40 +1616,60 @@ function renderMechanicsRevenue(mechanics) {
   }).join('');
 }
 
-function renderRecentDeals(deals) {
+function renderRecentDeals(deals, targetRows = 6) {
   const container = document.getElementById('recent-deals-list');
   if (!container) return;
-  if (!deals || deals.length === 0) {
-    container.innerHTML = '<div class="text-xs text-slate-400 py-3">Сделки отсутствуют</div>';
-    return;
-  }
+  const rowsLimit = Math.max(1, targetRows || 6);
+  const items = (deals || []).slice(0, rowsLimit);
 
-  container.innerHTML = deals.map(d => {
+  const renderedRows = items.map(d => {
     const isParts = d.deal_type === 'parts_sale';
-    const stageList = isParts ? PARTS_KANBAN_STAGES : SERVICE_KANBAN_STAGES;
+    const isSales = d.deal_type === 'sales';
+    const stageList = isParts ? PARTS_KANBAN_STAGES : (isSales ? SALES_KANBAN_STAGES : SERVICE_KANBAN_STAGES);
     const stageObj = stageList.find(s => s.id === d.stage) || { label: d.stage };
     const deptBadge = isParts
-      ? '<span class="text-[9px] font-bold px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800 border border-emerald-200">📦 Продажа з/ч</span>'
-      : '<span class="text-[9px] font-bold px-1.5 py-0.2 rounded bg-blue-100 text-blue-800 border border-blue-200">🔧 Наряд СТО</span>';
+      ? '<span class="text-[9px] font-bold px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800 border border-emerald-200 shrink-0">📦 Продажа з/ч</span>'
+      : (isSales
+        ? '<span class="text-[9px] font-bold px-1.5 py-0.2 rounded bg-indigo-100 text-indigo-800 border border-indigo-200 shrink-0">🚜 Продажа</span>'
+        : '<span class="text-[9px] font-bold px-1.5 py-0.2 rounded bg-blue-100 text-blue-800 border border-blue-200 shrink-0">🔧 Наряд СТО</span>');
 
     return `
-      <div onclick="openDealModal(${d.id})" class="p-2.5 rounded-lg border border-slate-100 hover:border-blue-300 hover:bg-blue-50/30 transition-all cursor-pointer flex items-center justify-between text-xs">
-        <div>
-          <div class="font-bold text-slate-800 flex items-center gap-1.5">
-            <span>${d.title}</span>
+      <div onclick="openDealModal(${d.id})" class="h-[58px] px-3 py-2 rounded-lg border border-slate-100 hover:border-blue-300 hover:bg-blue-50/30 transition-all cursor-pointer flex items-center justify-between text-xs gap-2">
+        <div class="min-w-0 flex-1">
+          <div class="font-bold text-slate-800 flex items-center gap-1.5 truncate">
+            <span class="truncate">${escapeHtml(d.title)}</span>
             ${deptBadge}
           </div>
-          <div class="text-[11px] text-slate-500 mt-0.5">
-            ${d.client_name || 'Без клиента'} • ${d.equipment_name || 'Техника не выбрана'}
+          <div class="text-[11px] text-slate-500 mt-0.5 truncate">
+            ${escapeHtml(d.client_name || 'Без клиента')} • ${escapeHtml(d.equipment_name || 'Техника не выбрана')}
           </div>
         </div>
-        <div class="text-right">
-          <div class="font-bold text-blue-600 font-mono">${formatMoney(d.amount)}</div>
-          <span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-medium">${stageObj.label}</span>
+        <div class="text-right shrink-0">
+          <div class="font-bold text-blue-600 font-mono whitespace-nowrap">${formatMoney(d.amount)}</div>
+          <span class="inline-block text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-medium whitespace-nowrap">${escapeHtml(stageObj.label)}</span>
         </div>
       </div>
     `;
-  }).join('');
+  });
+
+  if (renderedRows.length === 0) {
+    renderedRows.push(`
+      <div class="h-[58px] px-3 py-2 rounded-lg border border-slate-100 bg-slate-50 text-slate-400 flex items-center justify-center text-xs">
+        Сделки и заказ-наряды за выбранный период отсутствуют
+      </div>
+    `);
+  }
+
+  while (renderedRows.length < rowsLimit) {
+    renderedRows.push(`
+      <div class="h-[58px] px-3 py-2 rounded-lg border border-dashed border-slate-100 bg-slate-50/40 flex items-center justify-between text-[11px] text-slate-300 select-none">
+        <span>Свободная строка заказ-наряда</span>
+        <span class="font-mono">—</span>
+      </div>
+    `);
+  }
+
+  container.innerHTML = renderedRows.join('');
 }
 
 // ================= 2. DEALS (KANBAN & BITRIX24 LIST) =================
@@ -1891,7 +2059,7 @@ function renderDealsList() {
         </td>
 
         <td class="p-3.5 text-xs text-slate-700 font-medium">
-          ${deal.responsible || '—'}
+          ${formatResponsibleBadges(deal.responsible)}
         </td>
 
         <td class="p-3.5 text-xs font-mono text-slate-500">
@@ -2113,9 +2281,9 @@ function renderKanbanCard(deal) {
 
       <div class="flex items-center justify-between pt-1 text-xs">
         <span class="font-bold text-blue-600 font-mono">${formatMoney(deal.amount)}</span>
-        <div class="flex items-center gap-1.5">
-          <span class="bg-amber-50 text-amber-700 border border-amber-200 text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold" title="Использовано запчастей">${Number(deal.parts_count || 0)} з/ч</span>
-          <span class="text-[10px] text-slate-500 font-medium">${deal.responsible || ''}</span>
+        <div class="flex items-center gap-1.5 flex-wrap justify-end">
+          <span class="bg-amber-50 text-amber-700 border border-amber-200 text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold shrink-0" title="Использовано запчастей">${Number(deal.parts_count || 0)} з/ч</span>
+          <span class="text-[10px] text-slate-600 font-medium truncate max-w-[150px]" title="${escapeHtml(deal.responsible || '')}">${escapeHtml(deal.responsible || '')}</span>
         </div>
       </div>
 
@@ -2923,12 +3091,19 @@ async function deleteUser(directId = null) {
 
 function openModal(id) {
   const modal = document.getElementById(id);
-  if (modal) modal.classList.remove('hidden');
+  if (modal) {
+    modal.classList.remove('hidden');
+    modal.scrollTop = 0;
+    const box = modal.querySelector('.modal-box');
+    if (box) box.scrollTop = 0;
+  }
 }
 
 function closeModal(id) {
   const modal = document.getElementById(id);
   if (modal) modal.classList.add('hidden');
+  const respDd = document.getElementById('deal-responsible-dropdown');
+  if (respDd) respDd.classList.add('hidden');
 }
 
 // DEAL CLIENT SEARCH & AUTO-FILL (Requirement #8)
@@ -3110,27 +3285,158 @@ function setDealModalType(type) {
   if (window.lucide) lucide.createIcons();
 }
 
+function formatResponsibleBadges(respStr) {
+  if (!respStr || !String(respStr).trim()) return '—';
+  const names = String(respStr).split(',').map(s => s.trim()).filter(Boolean);
+  if (names.length === 0) return '—';
+  if (names.length === 1) return escapeHtml(names[0]);
+  return `<div class="flex flex-wrap gap-1">${names.map(n => `<span class="inline-flex items-center px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200 text-[11px] font-medium">${escapeHtml(n)}</span>`).join('')}</div>`;
+}
+
+let selectedDealResponsibles = [];
+
+function getDealResponsibles() {
+  return selectedDealResponsibles.join(', ');
+}
+
+function setDealResponsibles(rawVal) {
+  const names = String(rawVal || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+  selectedDealResponsibles = Array.from(new Set(names));
+  const hiddenInput = document.getElementById('deal-responsible');
+  if (hiddenInput) hiddenInput.value = getDealResponsibles();
+  renderDealResponsibleSelector();
+}
+
+function renderDealResponsibleSelector() {
+  const hiddenInput = document.getElementById('deal-responsible');
+  const labelEl = document.getElementById('deal-responsible-label');
+  const dropdownEl = document.getElementById('deal-responsible-dropdown');
+  const chipsEl = document.getElementById('deal-responsible-chips');
+
+  if (hiddenInput) hiddenInput.value = getDealResponsibles();
+
+  if (labelEl) {
+    if (selectedDealResponsibles.length === 0) {
+      labelEl.textContent = 'Выберите сотрудников...';
+      labelEl.className = 'truncate text-slate-400';
+    } else if (selectedDealResponsibles.length === 1) {
+      labelEl.textContent = selectedDealResponsibles[0];
+      labelEl.className = 'truncate text-slate-800 font-semibold';
+    } else {
+      labelEl.textContent = `Выбрано сотрудников: ${selectedDealResponsibles.length}`;
+      labelEl.className = 'truncate text-blue-700 font-bold';
+    }
+  }
+
+  if (chipsEl) {
+    chipsEl.innerHTML = selectedDealResponsibles.map(name => `
+      <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-blue-50 text-blue-800 border border-blue-200 text-[11px] font-semibold">
+        <span>${escapeHtml(name)}</span>
+        <button type="button" onclick="removeDealResponsibleChip('${escapeHtml(name).replace(/'/g, "\\'")}', event)" class="text-blue-500 hover:text-rose-600 font-bold leading-none">&times;</button>
+      </span>
+    `).join('');
+  }
+
+  if (dropdownEl) {
+    const knownNames = new Set((state.users || []).map(u => u.full_name));
+    const extraSelected = selectedDealResponsibles.filter(n => !knownNames.has(n));
+    const allOptions = [
+      ...(state.users || []).map(u => ({
+        name: u.full_name,
+        roleLabel: ROLE_DEFINITIONS[u.role]?.label || u.role
+      })),
+      ...extraSelected.map(n => ({ name: n, roleLabel: 'Сотрудник' }))
+    ];
+
+    dropdownEl.innerHTML = allOptions.map(opt => {
+      const isChecked = selectedDealResponsibles.includes(opt.name);
+      const safeName = escapeHtml(opt.name).replace(/'/g, "\\'");
+      return `
+        <div onclick="toggleDealResponsibleOption('${safeName}', event)" class="flex items-center justify-between px-2.5 py-1.5 rounded-lg cursor-pointer transition-colors text-xs ${isChecked ? 'bg-blue-50 text-blue-900 font-bold' : 'hover:bg-slate-50 text-slate-700'}">
+          <div class="flex items-center gap-2 min-w-0">
+            <input type="checkbox" ${isChecked ? 'checked' : ''} class="rounded text-blue-600 pointer-events-none">
+            <span class="truncate">${escapeHtml(opt.name)}</span>
+          </div>
+          <span class="text-[10px] text-slate-400 ml-2 shrink-0">${escapeHtml(opt.roleLabel)}</span>
+        </div>
+      `;
+    }).join('');
+  }
+}
+
+function toggleDealResponsibleDropdown(event) {
+  if (event) event.stopPropagation();
+  const btn = document.getElementById('deal-responsible-btn');
+  if (btn && btn.disabled) return;
+  const dropdownEl = document.getElementById('deal-responsible-dropdown');
+  if (dropdownEl) {
+    dropdownEl.classList.toggle('hidden');
+  }
+}
+
+function toggleDealResponsibleOption(empName, event) {
+  if (event) event.stopPropagation();
+  const idx = selectedDealResponsibles.indexOf(empName);
+  if (idx >= 0) {
+    selectedDealResponsibles.splice(idx, 1);
+  } else {
+    selectedDealResponsibles.push(empName);
+  }
+  renderDealResponsibleSelector();
+}
+
+function removeDealResponsibleChip(empName, event) {
+  if (event) event.stopPropagation();
+  const btn = document.getElementById('deal-responsible-btn');
+  if (btn && btn.disabled) return;
+  selectedDealResponsibles = selectedDealResponsibles.filter(n => n !== empName);
+  renderDealResponsibleSelector();
+}
+
+document.addEventListener('click', (e) => {
+  const wrapper = document.getElementById('deal-responsible-wrapper');
+  const dropdown = document.getElementById('deal-responsible-dropdown');
+  if (dropdown && !dropdown.classList.contains('hidden')) {
+    if (wrapper && !wrapper.contains(e.target)) {
+      dropdown.classList.add('hidden');
+    }
+  }
+});
+
 async function openDealModal(dealId = null, defaultStage = 'new', defaultType = null) {
   await Promise.all([loadClientsListOptions(), loadWarehousePartsOptions(), loadEmployeesSelectOptions(), loadEquipment()]);
 
   const form = document.getElementById('form-deal');
   form.reset();
   document.getElementById('deal-id').value = '';
-  document.getElementById('deal-parts-section').classList.add('hidden');
+  document.getElementById('deal-parts-section').classList.remove('hidden');
+  hideAttachPartRow();
   document.getElementById('btn-delete-deal').classList.add('hidden');
   const datesBanner = document.getElementById('deal-dates-banner');
   if (datesBanner) datesBanner.classList.add('hidden');
+  const lockedBanner = document.getElementById('deal-locked-banner');
+  if (lockedBanner) lockedBanner.classList.add('hidden');
+
+  const fieldsToUnlock = ['deal-title', 'deal-client', 'deal-equipment', 'deal-stage', 'deal-amount', 'deal-cost', 'deal-priority', 'deal-responsible', 'deal-responsible-btn', 'deal-deadline', 'deal-description', 'deal-service-type', 'deal-closing-outcome'];
+  fieldsToUnlock.forEach(fId => {
+    const el = document.getElementById(fId);
+    if (el) el.disabled = false;
+  });
+  const saveBtn = document.getElementById('btn-save-deal');
+  if (saveBtn) saveBtn.classList.remove('hidden');
 
   // Reset search & auto-fill
   clearDealClientSearch();
 
-  let targetType = defaultType || (state.dealsDepartment === 'parts_sale' ? 'parts_sale' : 'service');
+  let targetType = defaultType || (state.dealsDepartment === 'parts_sale' ? 'parts_sale' : (state.dealsDepartment === 'sales' ? 'sales' : 'service'));
 
   if (dealId) {
-    document.getElementById('deal-parts-section').classList.remove('hidden');
-
     try {
       const res = await fetch(`/api/deals/${dealId}`);
+      if (!res.ok) throw new Error('Сделка не найдена');
       const deal = await res.json();
       targetType = deal.deal_type || 'service';
       setDealModalType(targetType);
@@ -3164,7 +3470,7 @@ async function openDealModal(dealId = null, defaultStage = 'new', defaultType = 
       document.getElementById('deal-amount').value = deal.amount;
       document.getElementById('deal-cost').value = deal.cost;
       document.getElementById('deal-priority').value = deal.priority;
-      document.getElementById('deal-responsible').value = deal.responsible;
+      setDealResponsibles(deal.responsible || '');
       document.getElementById('deal-deadline').value = deal.deadline || '';
       document.getElementById('deal-description').value = deal.description || '';
 
@@ -3176,19 +3482,17 @@ async function openDealModal(dealId = null, defaultStage = 'new', defaultType = 
 
       // Requirement #5: Lockdown of closed/paid deals for non-admins
       const isLocked = isDealLockedForUser(deal);
-      const lockedBanner = document.getElementById('deal-locked-banner');
       if (lockedBanner) {
         if (isLocked) lockedBanner.classList.remove('hidden');
         else lockedBanner.classList.add('hidden');
       }
 
-      const fieldsToLock = ['deal-title', 'deal-client', 'deal-equipment', 'deal-stage', 'deal-amount', 'deal-cost', 'deal-priority', 'deal-responsible', 'deal-deadline', 'deal-description', 'deal-service-type', 'deal-closing-outcome'];
+      const fieldsToLock = ['deal-title', 'deal-client', 'deal-equipment', 'deal-stage', 'deal-amount', 'deal-cost', 'deal-priority', 'deal-responsible', 'deal-responsible-btn', 'deal-deadline', 'deal-description', 'deal-service-type', 'deal-closing-outcome'];
       fieldsToLock.forEach(fId => {
         const el = document.getElementById(fId);
         if (el) el.disabled = isLocked;
       });
 
-      const saveBtn = document.getElementById('btn-save-deal');
       if (saveBtn) {
         if (isLocked) saveBtn.classList.add('hidden');
         else saveBtn.classList.remove('hidden');
@@ -3217,6 +3521,9 @@ async function openDealModal(dealId = null, defaultStage = 'new', defaultType = 
   } else {
     setDealModalType(targetType);
     document.getElementById('deal-stage').value = defaultStage || 'new';
+    const defaultResp = state.currentUser?.full_name || (state.users && state.users[0] ? state.users[0].full_name : '');
+    setDealResponsibles(defaultResp);
+    renderDealAttachedParts([]);
     await handleDealClientChange(document.getElementById('deal-client').value);
   }
 
@@ -3226,12 +3533,7 @@ async function openDealModal(dealId = null, defaultStage = 'new', defaultType = 
 
 async function loadEmployeesSelectOptions() {
   if (state.users.length === 0) await loadUsers();
-  const select = document.getElementById('deal-responsible');
-  if (!select) return;
-
-  select.innerHTML = state.users.map(u => `
-    <option value="${u.full_name}">${u.full_name} (${ROLE_DEFINITIONS[u.role]?.label || u.role})</option>
-  `).join('');
+  renderDealResponsibleSelector();
 }
 
 async function loadClientsListOptions() {
@@ -3349,22 +3651,48 @@ function escapeHtml(str) {
     .replace(/'/g, '&#039;');
 }
 
+function getWarehousePartsCatalog() {
+  if (state.allParts && Array.isArray(state.allParts) && state.allParts.length > 0) {
+    return state.allParts;
+  }
+  return Array.isArray(state.parts) ? state.parts : [];
+}
+
 async function loadWarehousePartsOptions(filteredParts = null) {
-  if (state.parts.length === 0) await loadParts();
+  if (getWarehousePartsCatalog().length === 0) await loadParts('');
   const select = document.getElementById('attach-part-select');
   if (!select) return;
 
-  const partsToRender = filteredParts || state.parts;
-  if (partsToRender.length === 0) {
+  const baseList = filteredParts || getWarehousePartsCatalog();
+  if (baseList.length === 0) {
     select.innerHTML = '<option value="" disabled selected>Запчасти не найдены</option>';
     return;
   }
 
-  select.innerHTML = partsToRender.map(p => `
-    <option value="${p.id}" ${p.quantity <= 0 ? 'disabled' : ''}>
-      ${escapeHtml(p.name)} [${escapeHtml(p.sku)}] — ост: ${p.quantity} шт (${formatMoney(p.selling_price)})
-    </option>
-  `).join('');
+  // Sort in-stock parts first so the first option is available for immediate write-off
+  const partsToRender = [...baseList].sort((a, b) => {
+    const aStock = Number(a.quantity || 0) > 0 ? 1 : 0;
+    const bStock = Number(b.quantity || 0) > 0 ? 1 : 0;
+    if (aStock !== bStock) return bStock - aStock;
+    return Number(b.id || 0) - Number(a.id || 0);
+  });
+
+  const firstInStock = partsToRender.find(p => Number(p.quantity || 0) > 0);
+  const selectedId = firstInStock ? firstInStock.id : partsToRender[0].id;
+
+  select.innerHTML = partsToRender.map(p => {
+    const qty = Number(p.quantity || 0);
+    const isSel = String(p.id) === String(selectedId);
+    return `
+      <option value="${p.id}" ${qty <= 0 ? 'disabled' : ''} ${isSel ? 'selected' : ''}>
+        ${escapeHtml(p.name)} [${escapeHtml(p.sku)}] — ост: ${qty} шт (${formatMoney(p.selling_price)})
+      </option>
+    `;
+  }).join('');
+
+  if (firstInStock) {
+    select.value = String(firstInStock.id);
+  }
 }
 
 // Requirement #6: Search parts by SKU or Name in write-off modal
@@ -3384,18 +3712,15 @@ function handleAttachPartSearch(query) {
     return;
   }
 
-  const matches = state.parts.filter(p => {
-    const nameMatch = p.name && p.name.toLowerCase().includes(q);
-    const skuMatch = p.sku && p.sku.toLowerCase().includes(q);
-    const catMatch = p.category && p.category.toLowerCase().includes(q);
+  const catalog = getWarehousePartsCatalog();
+  const matches = catalog.filter(p => {
+    const nameMatch = p.name && String(p.name).toLowerCase().includes(q);
+    const skuMatch = p.sku && String(p.sku).toLowerCase().includes(q);
+    const catMatch = p.category && String(p.category).toLowerCase().includes(q);
     return nameMatch || skuMatch || catMatch;
   });
 
   loadWarehousePartsOptions(matches);
-  if (matches.length > 0) {
-    const sel = document.getElementById('attach-part-select');
-    if (sel && sel.options.length > 0) sel.selectedIndex = 0;
-  }
 
   if (!suggestionsBox) return;
 
@@ -3406,7 +3731,8 @@ function handleAttachPartSearch(query) {
   }
 
   suggestionsBox.innerHTML = matches.slice(0, 15).map(p => {
-    const isOut = p.quantity <= 0;
+    const qty = Number(p.quantity || 0);
+    const isOut = qty <= 0;
     return `
       <div onclick="selectAttachPartSuggestion(${p.id})" class="p-2.5 hover:bg-amber-50 cursor-pointer flex items-center justify-between text-xs transition-colors">
         <div class="min-w-0 pr-2">
@@ -3417,7 +3743,7 @@ function handleAttachPartSearch(query) {
           <div class="text-[11px] text-slate-400 mt-0.5">${p.location ? 'Локация: ' + escapeHtml(p.location) + ' • ' : ''}Категория: ${escapeHtml(p.category || 'Общая')}</div>
         </div>
         <div class="text-right shrink-0">
-          <div class="font-bold ${isOut ? 'text-rose-500' : 'text-emerald-700'} font-mono">${p.quantity} шт</div>
+          <div class="font-bold ${isOut ? 'text-rose-500' : 'text-emerald-700'} font-mono">${qty} шт</div>
           <div class="text-[10px] text-slate-500 font-mono">${formatMoney(p.selling_price)}</div>
         </div>
       </div>
@@ -3427,15 +3753,20 @@ function handleAttachPartSearch(query) {
   if (window.lucide) lucide.createIcons();
 }
 
-function selectAttachPartSuggestion(partId) {
-  const part = state.parts.find(p => p.id === partId);
+async function selectAttachPartSuggestion(partId) {
+  const catalog = getWarehousePartsCatalog();
+  const part = catalog.find(p => Number(p.id) === Number(partId));
   const searchInput = document.getElementById('attach-part-search');
   const suggestionsBox = document.getElementById('attach-part-suggestions');
   const select = document.getElementById('attach-part-select');
 
   if (part) {
+    if (Number(part.quantity || 0) <= 0) {
+      showToast(`Запчасть «${part.name}» отсутствует на складе (остаток 0 шт)`, 'error');
+      return;
+    }
     if (searchInput) searchInput.value = `[${part.sku}] ${part.name}`;
-    loadWarehousePartsOptions([part, ...state.parts.filter(p => p.id !== partId)]);
+    await loadWarehousePartsOptions([part, ...catalog.filter(p => Number(p.id) !== Number(partId))]);
     if (select) select.value = String(part.id);
   }
   if (suggestionsBox) suggestionsBox.classList.add('hidden');
@@ -3454,7 +3785,7 @@ function clearAttachPartSearch() {
 }
 
 function handleAttachPartSelectChange(partId) {
-  const part = state.parts.find(p => String(p.id) === String(partId));
+  const part = getWarehousePartsCatalog().find(p => String(p.id) === String(partId));
   if (part) {
     const searchInput = document.getElementById('attach-part-search');
     if (searchInput && !searchInput.value) {
@@ -3471,48 +3802,146 @@ function showAttachPartRow() {
 }
 
 function hideAttachPartRow() {
-  document.getElementById('attach-part-row').classList.add('hidden');
-  clearAttachPartSearch();
+  const row = document.getElementById('attach-part-row');
+  if (row) row.classList.add('hidden');
+  const suggestionsBox = document.getElementById('attach-part-suggestions');
+  if (suggestionsBox) suggestionsBox.classList.add('hidden');
+}
+
+async function ensureDealSavedForPartWriteOff() {
+  let dealId = document.getElementById('deal-id').value;
+  if (dealId) return dealId;
+
+  const titleInput = document.getElementById('deal-title');
+  const dealType = document.getElementById('deal-type')?.value || 'service';
+  let title = (titleInput?.value || '').trim();
+  if (!title) {
+    title = dealType === 'parts_sale' ? 'Заказ на продажу запчастей' : 'Заказ-наряд СТО';
+    if (titleInput) titleInput.value = title;
+  }
+
+  const eqSelect = document.getElementById('deal-equipment');
+  const eqId = parseInt(eqSelect?.value) || null;
+  const clientId = parseInt(document.getElementById('deal-client')?.value) || null;
+  const respValue = getDealResponsibles() || state.currentUser?.full_name || 'Мастер-приемщик';
+
+  const payload = {
+    title,
+    deal_type: dealType,
+    client_id: clientId,
+    equipment_id: eqId,
+    stage: document.getElementById('deal-stage')?.value || 'new',
+    amount: parseFloat(document.getElementById('deal-amount')?.value) || 0.0,
+    cost: parseFloat(document.getElementById('deal-cost')?.value) || 0.0,
+    priority: document.getElementById('deal-priority')?.value || 'normal',
+    responsible: respValue,
+    deadline: document.getElementById('deal-deadline')?.value || null,
+    description: (document.getElementById('deal-description')?.value || '').trim(),
+    service_type: document.getElementById('deal-service-type')?.value || 'service',
+    closing_outcome: document.getElementById('deal-closing-outcome')?.value || 'success',
+  };
+
+  const res = await fetch('/api/deals', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-User-Role': state.currentUser?.role || ''
+    },
+    body: JSON.stringify(payload)
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.id) {
+    throw new Error(data.detail || data.message || 'Не удалось создать наряд перед списанием запчасти');
+  }
+
+  document.getElementById('deal-id').value = data.id;
+  crmStore.saveItem('deals', {
+    ...payload,
+    id: data.id,
+    parts_count: 0,
+    _updated_at: Date.now()
+  });
+  if (!Array.isArray(state.deals)) state.deals = [];
+  if (!state.deals.some(d => Number(d.id) === Number(data.id))) {
+    state.deals.unshift({ ...payload, id: data.id, parts_count: 0 });
+  }
+  return String(data.id);
 }
 
 async function submitAttachPart() {
-  const dealId = document.getElementById('deal-id').value;
   const partSelect = document.getElementById('attach-part-select');
-  const partId = parseInt(partSelect.value);
-  const qty = parseInt(document.getElementById('attach-part-qty').value) || 1;
+  const partId = parseInt(partSelect?.value);
+  const qty = Math.max(1, parseInt(document.getElementById('attach-part-qty')?.value) || 1);
 
-  if (!dealId || !partId) return;
+  if (!partId || isNaN(partId)) {
+    showToast('Выберите запчасть в наличии из списка склада', 'error');
+    return;
+  }
+
+  const catalog = getWarehousePartsCatalog();
+  const selectedPart = catalog.find(p => Number(p.id) === Number(partId));
+  if (selectedPart && Number(selectedPart.quantity || 0) < qty) {
+    showToast(`Недостаточно на складе! Доступно: ${selectedPart.quantity} шт.`, 'error');
+    return;
+  }
 
   try {
+    const dealId = await ensureDealSavedForPartWriteOff();
     const res = await fetch(`/api/deals/${dealId}/parts`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-User-Role': state.currentUser?.role || ''
+      },
       body: JSON.stringify({ part_id: partId, quantity: qty })
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка списания запчасти');
 
-    // Update warehouse stock in state and crmStore immediately!
-    const partObj = state.parts.find(p => p.id === partId);
-    if (partObj) {
-      partObj.quantity = typeof data.new_quantity === 'number' ? data.new_quantity : Math.max(0, partObj.quantity - qty);
-      partObj._updated_at = Date.now();
-      crmStore.saveItem('parts', partObj);
+    // Update warehouse stock in state.parts, state.allParts, and crmStore immediately
+    const updatePartStock = (list) => {
+      if (!Array.isArray(list)) return;
+      const pObj = list.find(p => Number(p.id) === Number(partId));
+      if (pObj) {
+        pObj.quantity = typeof data.new_quantity === 'number' ? data.new_quantity : Math.max(0, Number(pObj.quantity || 0) - qty);
+        pObj._updated_at = Date.now();
+        crmStore.saveItem('parts', pObj);
+      }
+    };
+    updatePartStock(state.parts);
+    updatePartStock(state.allParts);
+
+    // Update deal cost & parts_count in modal and state without losing unsaved form fields
+    const costInput = document.getElementById('deal-cost');
+    if (costInput && typeof data.parts_cost === 'number') {
+      costInput.value = data.parts_cost;
     }
 
-    // Update deal cost & parts_count in state and crmStore
-    const dealObj = state.deals.find(d => d.id == dealId);
+    const dealObj = (state.deals || []).find(d => Number(d.id) === Number(dealId));
     if (dealObj) {
       if (typeof data.parts_cost === 'number') dealObj.cost = data.parts_cost;
       if (typeof data.parts_count === 'number') dealObj.parts_count = data.parts_count;
-      else dealObj.parts_count = (dealObj.parts_count || 0) + qty;
+      else dealObj.parts_count = Number(dealObj.parts_count || 0) + qty;
       dealObj._updated_at = Date.now();
       crmStore.saveItem('deals', dealObj);
     }
 
-    showToast(data.message || 'Запчасть успешно списана');
+    if (Array.isArray(data.parts)) {
+      renderDealAttachedParts(data.parts);
+    } else {
+      const dRes = await fetch(`/api/deals/${dealId}`);
+      if (dRes.ok) {
+        const dJson = await dRes.json();
+        renderDealAttachedParts(dJson.parts || []);
+      }
+    }
+
+    const qtyInput = document.getElementById('attach-part-qty');
+    if (qtyInput) qtyInput.value = '1';
+    await loadWarehousePartsOptions();
     hideAttachPartRow();
-    await openDealModal(dealId);
+
+    showToast(data.message || 'Запчасть успешно списана со склада');
     renderPartsTable();
     renderDeals();
     loadDashboard();
@@ -3523,23 +3952,42 @@ async function submitAttachPart() {
 
 async function removeAttachedPart(dealId, dealPartId) {
   try {
-    let res = await fetch(`/api/deals/${dealId}/parts/${dealPartId}`, { method: 'DELETE' });
+    const reqHeaders = {
+      'X-User-Role': state.currentUser?.role || ''
+    };
+    let res = await fetch(`/api/deals/${dealId}/parts/${dealPartId}`, {
+      method: 'DELETE',
+      headers: reqHeaders
+    });
     if (!res.ok) {
-      res = await fetch(`/api/deals/${dealId}/parts/${dealPartId}/delete`, { method: 'POST' });
+      res = await fetch(`/api/deals/${dealId}/parts/${dealPartId}/delete`, {
+        method: 'POST',
+        headers: reqHeaders
+      });
     }
     const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка при возврате запчасти');
 
     if (data.part_id && typeof data.new_quantity === 'number') {
-      const partObj = state.parts.find(p => p.id === data.part_id);
-      if (partObj) {
-        partObj.quantity = data.new_quantity;
-        partObj._updated_at = Date.now();
-        crmStore.saveItem('parts', partObj);
-      }
+      const updatePartStock = (list) => {
+        if (!Array.isArray(list)) return;
+        const pObj = list.find(p => Number(p.id) === Number(data.part_id));
+        if (pObj) {
+          pObj.quantity = data.new_quantity;
+          pObj._updated_at = Date.now();
+          crmStore.saveItem('parts', pObj);
+        }
+      };
+      updatePartStock(state.parts);
+      updatePartStock(state.allParts);
     }
 
-    // Update deal cost & parts_count in state and crmStore
-    const dealObj = state.deals.find(d => d.id == dealId);
+    const costInput = document.getElementById('deal-cost');
+    if (costInput && typeof data.parts_cost === 'number') {
+      costInput.value = data.parts_cost;
+    }
+
+    const dealObj = (state.deals || []).find(d => Number(d.id) === Number(dealId));
     if (dealObj) {
       if (typeof data.parts_cost === 'number') dealObj.cost = data.parts_cost;
       if (typeof data.parts_count === 'number') dealObj.parts_count = data.parts_count;
@@ -3547,13 +3995,23 @@ async function removeAttachedPart(dealId, dealPartId) {
       crmStore.saveItem('deals', dealObj);
     }
 
+    if (Array.isArray(data.parts)) {
+      renderDealAttachedParts(data.parts);
+    } else {
+      const dRes = await fetch(`/api/deals/${dealId}`);
+      if (dRes.ok) {
+        const dJson = await dRes.json();
+        renderDealAttachedParts(dJson.parts || []);
+      }
+    }
+
+    await loadWarehousePartsOptions();
     showToast('Запчасть возвращена на склад');
-    await openDealModal(dealId);
     renderPartsTable();
     renderDeals();
     loadDashboard();
   } catch (err) {
-    showToast('Ошибка при возврате запчасти', 'error');
+    showToast(err.message || 'Ошибка при возврате запчасти', 'error');
   }
 }
 
@@ -3564,6 +4022,7 @@ async function saveDeal(e) {
   const eqId = parseInt(eqSelect.value) || null;
   const clientId = parseInt(document.getElementById('deal-client').value) || null;
   const dealType = document.getElementById('deal-type')?.value || 'service';
+  const responsibleVal = getDealResponsibles() || document.getElementById('deal-responsible')?.value || 'Мастер-приемщик';
 
   const payload = {
     title: document.getElementById('deal-title').value.trim(),
@@ -3574,7 +4033,7 @@ async function saveDeal(e) {
     amount: parseFloat(document.getElementById('deal-amount').value) || 0.0,
     cost: parseFloat(document.getElementById('deal-cost').value) || 0.0,
     priority: document.getElementById('deal-priority').value,
-    responsible: document.getElementById('deal-responsible').value,
+    responsible: responsibleVal,
     deadline: document.getElementById('deal-deadline').value || null,
     description: document.getElementById('deal-description').value.trim(),
     service_type: document.getElementById('deal-service-type')?.value || 'service',
@@ -4495,15 +4954,24 @@ function setTopPartsLimit(limit) {
   loadTopSoldParts(limit);
 }
 
-async function loadTopSoldParts(limit = 10) {
+async function loadTopSoldParts(limit = null) {
   const tbody = document.getElementById('top-parts-table-body');
   if (!tbody) return;
+  const effectiveLimit = limit || state.topPartsLimit || 10;
   try {
-    const res = await fetch(`/api/dashboard/top-parts?limit=${limit}`);
-    if (!res.ok) return;
+    const { year, month } = getDashboardPeriodParams();
+    const qs = new URLSearchParams({ limit: String(effectiveLimit) });
+    if (year && year !== 'all') qs.set('year', year);
+    if (month && month !== 'all') qs.set('month', month);
+
+    const res = await fetch(`/api/dashboard/top-parts?${qs.toString()}`);
+    if (!res.ok) {
+      tbody.innerHTML = '<tr><td colspan="7" class="p-6 text-center text-slate-400">Не удалось загрузить статистику запчастей</td></tr>';
+      return;
+    }
     const parts = await res.json();
     if (!parts || parts.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" class="p-6 text-center text-slate-400">Данные по продажам запчастей отсутствуют</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" class="p-6 text-center text-slate-400">Данные по продажам запчастей за выбранный период отсутствуют</td></tr>';
       return;
     }
     tbody.innerHTML = parts.map((p, idx) => {

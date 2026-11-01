@@ -100,12 +100,20 @@ body {
   border: 1px solid #e2e8f0;
 }
 
-/* Modal animation */
+/* Modal animation & 100% zoom scroll positioning fix */
 .modal-overlay {
   animation: fadeIn 0.15s ease-out;
+  align-items: flex-start !important;
+  overflow-y: auto !important;
+  padding-top: 1.25rem !important;
+  padding-bottom: 1.25rem !important;
 }
 .modal-box {
   animation: scaleIn 0.15s ease-out;
+  margin-top: auto !important;
+  margin-bottom: auto !important;
+  max-height: calc(100vh - 2.5rem);
+  overflow-y: auto;
 }
 
 @keyframes fadeIn {

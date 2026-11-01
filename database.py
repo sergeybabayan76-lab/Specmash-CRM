@@ -1140,12 +1140,12 @@ def get_deal(deal_id: int) -> Dict[str, Any]:
                 parts_list.append({
                     "deal_part_id": dp.get("id"),
                     "part_id": dp.get("part_id"),
-                    "quantity": dp.get("quantity", 1),
-                    "purchase_price": dp.get("purchase_price", 0.0),
-                    "selling_price": dp.get("selling_price", 0.0),
-                    "sku": p.get("sku", f"P-{dp.get('part_id')}"),
-                    "part_name": p.get("name", f"Запчасть #{dp.get('part_id')}"),
-                    "part_category": p.get("category", "Запчасти")
+                    "quantity": int(_to_float(dp.get("quantity"), 1)),
+                    "purchase_price": round(_to_float(dp.get("purchase_price"), 0.0), 2),
+                    "selling_price": round(_to_float(dp.get("selling_price"), 0.0), 2),
+                    "sku": p.get("sku") or f"P-{dp.get('part_id')}",
+                    "part_name": p.get("name") or f"Запчасть #{dp.get('part_id')}",
+                    "part_category": p.get("category") or "Запчасти"
                 })
         d["parts"] = parts_list
         d["parts_count"] = sum(p["quantity"] for p in parts_list)
@@ -1188,15 +1188,21 @@ def update_deal(deal_id: int, deal_data: Dict[str, Any]) -> Dict[str, Any]:
         else:
             completed_at = None
 
+        attached_parts = _get_deal_attached_parts(client, int(deal_id))
+        parts_cost_sum = round(float(sum(item["quantity"] * item["purchase_price"] for item in attached_parts)), 2)
+        parts_qty_sum = int(sum(item["quantity"] for item in attached_parts))
+        req_cost = float(deal_data.get("cost") or 0.0)
+        final_cost = req_cost if req_cost > 0 else parts_cost_sum
+
         payload = {
             "title": deal_data["title"].strip(),
             "client_id": client_id,
             "equipment_id": eq_id,
             "stage": stage,
             "amount": float(deal_data.get("amount") or 0.0),
-            "cost": float(deal_data.get("cost") or 0.0),
+            "cost": final_cost,
             "priority": deal_data.get("priority", "normal"),
-            "responsible": deal_data.get("responsible", "Мастер-приемщик"),
+            "responsible": (deal_data.get("responsible") or "Мастер-приемщик").strip(),
             "description": serialized_desc,
             "deadline": deal_data.get("deadline") or None,
             "completed_at": completed_at
@@ -1206,61 +1212,86 @@ def update_deal(deal_id: int, deal_data: Dict[str, Any]) -> Dict[str, Any]:
             payload["id"] = deal_id
             payload["created_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             client.post("/deals", json=payload, headers={"Prefer": "resolution=merge-duplicates"})
-        return {"id": deal_id, **payload, "description": raw_desc, "deal_type": new_dtype, "service_type": new_stype, "closing_outcome": new_outcome, "message": "Сделка обновлена"}
+        return {"id": deal_id, **payload, "parts_count": parts_qty_sum, "description": raw_desc, "deal_type": new_dtype, "service_type": new_stype, "closing_outcome": new_outcome, "message": "Сделка обновлена"}
 
 def delete_deal(deal_id: int) -> Dict[str, Any]:
     with get_database_client() as client:
         client.delete(f"/deals?id=eq.{deal_id}")
         return {"id": deal_id, "message": "Сделка удалена"}
 
+def _get_deal_attached_parts(client: LocalDatabaseClient, deal_id: int) -> List[Dict[str, Any]]:
+    dpr = client.get("/deal_parts", params={"deal_id": f"eq.{deal_id}", "select": "*,parts(sku,name,category)"})
+    parts_list = []
+    if dpr.status_code == 200:
+        for dp in dpr.json() or []:
+            p = dp.get("parts") or {}
+            parts_list.append({
+                "deal_part_id": dp.get("id"),
+                "part_id": dp.get("part_id"),
+                "quantity": int(_to_float(dp.get("quantity"), 1)),
+                "purchase_price": round(_to_float(dp.get("purchase_price"), 0.0), 2),
+                "selling_price": round(_to_float(dp.get("selling_price"), 0.0), 2),
+                "sku": p.get("sku") or f"P-{dp.get('part_id')}",
+                "part_name": p.get("name") or f"Запчасть #{dp.get('part_id')}",
+                "part_category": p.get("category") or "Запчасти"
+            })
+    return parts_list
+
 def attach_part_to_deal(deal_id: int, part_id: int, quantity: int) -> Dict[str, Any]:
     with get_database_client() as client:
-        # Check part quantity
+        qty_to_deduct = max(1, int(_to_float(quantity, 1)))
         p = get_part(part_id)
-        if p.get("quantity", 0) < quantity:
-            raise ValueError(f"Недостаточно остатка на складе! В наличии: {p.get('quantity', 0)} шт.")
+        cur_qty = int(_to_float(p.get("quantity"), 0))
+        if cur_qty < qty_to_deduct:
+            raise ValueError(f"Недостаточно остатка на складе! В наличии: {cur_qty} шт.")
 
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         dp_id = get_next_id(client, "deal_parts")
+        p_price = round(_to_float(p.get("purchase_price"), 0.0), 2)
+        s_price = round(_to_float(p.get("selling_price"), 0.0), 2)
 
         # Insert deal_parts
-        client.post("/deal_parts", json={
+        post_res = client.post("/deal_parts", json={
             "id": dp_id,
-            "deal_id": deal_id,
-            "part_id": part_id,
-            "quantity": quantity,
-            "purchase_price": p.get("purchase_price", 0.0),
-            "selling_price": p.get("selling_price", 0.0)
+            "deal_id": int(deal_id),
+            "part_id": int(part_id),
+            "quantity": qty_to_deduct,
+            "purchase_price": p_price,
+            "selling_price": s_price
         })
+        if post_res.status_code not in (200, 201):
+            raise RuntimeError(f"Не удалось списать запчасть в наряд: {post_res.text}")
 
         # Deduct part quantity
-        new_qty = max(0, p.get("quantity", 0) - quantity)
+        new_qty = max(0, cur_qty - qty_to_deduct)
         client.patch(f"/parts?id=eq.{part_id}", json={"quantity": new_qty})
 
         # Record stock movement
         sm_id = get_next_id(client, "stock_movements")
         client.post("/stock_movements", json={
             "id": sm_id,
-            "part_id": part_id,
+            "part_id": int(part_id),
             "type": "outgoing",
-            "quantity": quantity,
-            "deal_id": deal_id,
+            "quantity": qty_to_deduct,
+            "deal_id": int(deal_id),
             "comment": f"Списание на сделку/наряд №{deal_id}",
             "created_at": now_str
         })
 
-        # Recalculate cost
-        dp_list = client.get("/deal_parts", params={"deal_id": f"eq.{deal_id}"}).json()
-        total_cost = sum(item.get("quantity", 0) * item.get("purchase_price", 0.0) for item in dp_list)
-        client.patch(f"/deals?id=eq.{deal_id}", json={"cost": round(total_cost, 2)})
+        # Recalculate cost & attached parts
+        attached_parts = _get_deal_attached_parts(client, int(deal_id))
+        total_cost = round(float(sum(item["quantity"] * item["purchase_price"] for item in attached_parts)), 2)
+        total_parts_qty = int(sum(item["quantity"] for item in attached_parts))
+        client.patch(f"/deals?id=eq.{deal_id}", json={"cost": total_cost})
 
         return {
             "deal_part_id": dp_id,
-            "part_id": part_id,
-            "new_quantity": new_qty,
-            "parts_cost": round(total_cost, 2),
-            "parts_count": len(dp_list),
-            "message": f"Запчасть «{p.get('name')}» ({quantity} шт.) списана со склада"
+            "part_id": int(part_id),
+            "new_quantity": int(new_qty),
+            "parts_cost": total_cost,
+            "parts_count": total_parts_qty,
+            "parts": attached_parts,
+            "message": f"Запчасть «{p.get('name')}» ({qty_to_deduct} шт.) списана со склада"
         }
 
 def remove_part_from_deal(deal_id: int, deal_part_id: int) -> Dict[str, Any]:
@@ -1269,27 +1300,43 @@ def remove_part_from_deal(deal_id: int, deal_part_id: int) -> Dict[str, Any]:
         if not dp:
             raise KeyError("Прикрепленная запчасть не найдена")
         row = dp[0]
-        part_id = row.get("part_id")
-        qty = row.get("quantity", 0)
+        part_id = int(row.get("part_id"))
+        qty = max(1, int(_to_float(row.get("quantity"), 1)))
 
         # Delete deal_part
         client.delete(f"/deal_parts?id=eq.{deal_part_id}")
 
         # Return stock
         p = get_part(part_id)
-        new_qty = p.get("quantity", 0) + qty
+        cur_qty = int(_to_float(p.get("quantity"), 0))
+        new_qty = cur_qty + qty
         client.patch(f"/parts?id=eq.{part_id}", json={"quantity": new_qty})
 
-        # Recalculate cost
-        dp_list = client.get("/deal_parts", params={"deal_id": f"eq.{deal_id}"}).json()
-        total_cost = sum(item.get("quantity", 0) * item.get("purchase_price", 0.0) for item in dp_list)
-        client.patch(f"/deals?id=eq.{deal_id}", json={"cost": round(total_cost, 2)})
+        # Record stock movement return
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        sm_id = get_next_id(client, "stock_movements")
+        client.post("/stock_movements", json={
+            "id": sm_id,
+            "part_id": part_id,
+            "type": "incoming",
+            "quantity": qty,
+            "deal_id": int(deal_id),
+            "comment": f"Возврат запчасти со сделки/наряда №{deal_id}",
+            "created_at": now_str
+        })
+
+        # Recalculate cost & attached parts
+        attached_parts = _get_deal_attached_parts(client, int(deal_id))
+        total_cost = round(float(sum(item["quantity"] * item["purchase_price"] for item in attached_parts)), 2)
+        total_parts_qty = int(sum(item["quantity"] for item in attached_parts))
+        client.patch(f"/deals?id=eq.{deal_id}", json={"cost": total_cost})
 
         return {
             "part_id": part_id,
-            "new_quantity": new_qty,
-            "parts_cost": round(total_cost, 2),
-            "parts_count": len(dp_list),
+            "new_quantity": int(new_qty),
+            "parts_cost": total_cost,
+            "parts_count": total_parts_qty,
+            "parts": attached_parts,
             "message": "Запчасть возвращена на склад"
         }
 
@@ -1429,7 +1476,16 @@ def _to_float(v: Any, default: float = 0.0) -> float:
     except (ValueError, TypeError):
         return default
 
-def get_dashboard_metrics() -> Dict[str, Any]:
+def _extract_deal_year_month(d: Dict[str, Any], closed_stages: tuple) -> tuple[Optional[int], Optional[int]]:
+    dt_value = (d.get("completed_at") or d.get("created_at")) if d.get("stage") in closed_stages else (d.get("created_at") or d.get("completed_at"))
+    if not dt_value:
+        return None, None
+    dt_str = dt_value.isoformat() if hasattr(dt_value, "isoformat") else str(dt_value).strip()
+    if len(dt_str) >= 7 and dt_str[:4].isdigit() and dt_str[5:7].isdigit():
+        return int(dt_str[:4]), int(dt_str[5:7])
+    return None, None
+
+def get_dashboard_metrics(year: Optional[str] = None, month: Optional[str] = None) -> Dict[str, Any]:
     if not DATABASE_READY:
         return {
             "total_revenue": 0,
@@ -1447,17 +1503,41 @@ def get_dashboard_metrics() -> Dict[str, Any]:
             "monthly_data": [],
             "top_clients": [],
             "critical_parts": [],
-            "mechanics_revenue": []
+            "mechanics_revenue": [],
+            "available_years": [datetime.now().year],
+            "selected_year": "all",
+            "selected_month": "all"
         }
     with get_database_client() as client:
-        deals = client.get("/deals", params={"select": "*,clients(name,company),equipment(name)", "order": "id.desc"}).json() or []
-        for d in deals:
+        all_deals = client.get("/deals", params={"select": "*,clients(name,company),equipment(name)", "order": "id.desc"}).json() or []
+        closed_stages = ("completed", "ready", "paid", "issued", "parts_paid", "parts_shipped", "sales_delivered")
+
+        years_set = {datetime.now().year, datetime.now().year - 1, datetime.now().year - 2}
+        for d in all_deals:
             clean_desc, dtype, stype, outcome = parse_deal_description(d.get("description") or "", d.get("title") or "")
             d["deal_type"] = dtype
             d["service_type"] = stype
             d["closing_outcome"] = outcome
+            yr, _ = _extract_deal_year_month(d, closed_stages)
+            if yr:
+                years_set.add(yr)
 
-        closed_stages = ("completed", "ready", "paid", "issued", "parts_paid", "parts_shipped", "sales_delivered")
+        available_years = sorted(years_set, reverse=True)
+        filter_year: Optional[int] = int(year) if (year and str(year).strip().isdigit()) else None
+        filter_month: Optional[int] = int(month) if (month and str(month).strip().isdigit() and 1 <= int(month) <= 12) else None
+
+        if filter_year is not None or filter_month is not None:
+            deals = []
+            for d in all_deals:
+                yr, mo = _extract_deal_year_month(d, closed_stages)
+                if filter_year is not None and yr != filter_year:
+                    continue
+                if filter_month is not None and mo != filter_month:
+                    continue
+                deals.append(d)
+        else:
+            deals = all_deals
+
         completed = [d for d in deals if d.get("stage") in closed_stages]
         active = [d for d in deals if d.get("stage") not in closed_stages and d.get("stage") != "cancelled"]
 
@@ -1582,49 +1662,70 @@ def get_dashboard_metrics() -> Dict[str, Any]:
         top_clients.sort(key=lambda x: (x["total_spent"], x["completed_deals"]), reverse=True)
         top_clients = top_clients[:5]
 
-        # Monthly chart data (last 6 months)
+        # Monthly chart data (dynamic based on selected period)
         month_names = {
             1: "Янв", 2: "Фев", 3: "Мар", 4: "Апр", 5: "Май", 6: "Июн",
             7: "Июл", 8: "Авг", 9: "Сен", 10: "Окт", 11: "Ноя", 12: "Дек"
         }
         monthly_map = {}
         now = datetime.now()
-        for i in range(5, -1, -1):
-            m_idx = (now.month - i - 1) % 12 + 1
-            y_offset = (now.month - i - 1) // 12
-            yr = now.year + y_offset
-            k = f"{yr}-{m_idx:02d}"
-            monthly_map[k] = {
-                "month": f"{month_names.get(m_idx, str(m_idx))} {str(yr)[2:]}",
-                "revenue": 0.0,
-                "cost": 0.0
-            }
+        if filter_year is not None and filter_month is None:
+            for m_idx in range(1, 13):
+                k = f"{filter_year}-{m_idx:02d}"
+                monthly_map[k] = {
+                    "month": f"{month_names.get(m_idx, str(m_idx))} {str(filter_year)[2:]}",
+                    "revenue": 0.0,
+                    "cost": 0.0
+                }
+        elif filter_month is not None:
+            ref_year = filter_year or now.year
+            for i in range(5, -1, -1):
+                m_idx = (filter_month - i - 1) % 12 + 1
+                y_offset = (filter_month - i - 1) // 12
+                yr = ref_year + y_offset
+                k = f"{yr}-{m_idx:02d}"
+                monthly_map[k] = {
+                    "month": f"{month_names.get(m_idx, str(m_idx))} {str(yr)[2:]}",
+                    "revenue": 0.0,
+                    "cost": 0.0
+                }
+        else:
+            for i in range(5, -1, -1):
+                m_idx = (now.month - i - 1) % 12 + 1
+                y_offset = (now.month - i - 1) // 12
+                yr = now.year + y_offset
+                k = f"{yr}-{m_idx:02d}"
+                monthly_map[k] = {
+                    "month": f"{month_names.get(m_idx, str(m_idx))} {str(yr)[2:]}",
+                    "revenue": 0.0,
+                    "cost": 0.0
+                }
 
-        for d in deals:
+        chart_source_deals = deals if (filter_year is not None or filter_month is not None) else all_deals
+        for d in chart_source_deals:
             if d.get("stage") in closed_stages:
-                dt_value = d.get("completed_at") or d.get("created_at") or ""
-                dt_str = dt_value.isoformat() if hasattr(dt_value, "isoformat") else str(dt_value)
+                yr, mo = _extract_deal_year_month(d, closed_stages)
                 amt = _to_float(d.get("amount"), 0.0)
                 c_cost = _to_float(d.get("cost"), 0.0)
-                if len(dt_str) >= 7:
-                    k = dt_str[:7]
+                if yr and mo:
+                    k = f"{yr}-{mo:02d}"
                     if k in monthly_map:
                         monthly_map[k]["revenue"] += amt
                         monthly_map[k]["cost"] += c_cost
-                    else:
+                    elif filter_year is None and filter_month is None:
                         cur_k = f"{now.year}-{now.month:02d}"
                         if cur_k in monthly_map:
                             monthly_map[cur_k]["revenue"] += amt
                             monthly_map[cur_k]["cost"] += c_cost
 
-        cur_k = f"{now.year}-{now.month:02d}"
+        cur_k = f"{filter_year or now.year}-{(filter_month or now.month):02d}"
         if sum(m["revenue"] for m in monthly_map.values()) == 0 and total_rev > 0 and cur_k in monthly_map:
             monthly_map[cur_k]["revenue"] = total_rev
             monthly_map[cur_k]["cost"] = total_cost
 
         monthly_data = list(monthly_map.values())
 
-        # Mechanics Revenue Breakdown (strictly for Administrators)
+        # Mechanics Revenue Breakdown (supports multiple comma-separated responsible employees)
         mechanics_map: Dict[str, Dict[str, Any]] = {}
         for u in users:
             if u.get("role") == "mechanic":
@@ -1644,44 +1745,51 @@ def get_dashboard_metrics() -> Dict[str, Any]:
         for d in deals:
             if d.get("deal_type") == "parts_sale":
                 continue
-            resp = (d.get("responsible") or "").strip()
-            if not resp:
+            resp_raw = (d.get("responsible") or "").strip()
+            if not resp_raw:
                 continue
 
-            matched_key = None
-            resp_lower = resp.lower()
-            for mid, mdata in mechanics_map.items():
-                m_name = mdata["name"].lower()
-                m_user = mdata["username"].lower()
-                if resp_lower == m_name or resp_lower == m_user or resp_lower in m_name or m_name in resp_lower:
-                    matched_key = mid
-                    break
-
-            if not matched_key:
-                matched_key = f"resp_{resp}"
-                if matched_key not in mechanics_map:
-                    mechanics_map[matched_key] = {
-                        "user_id": None,
-                        "name": resp,
-                        "username": resp,
-                        "completed_deals_count": 0,
-                        "active_deals_count": 0,
-                        "total_revenue": 0.0,
-                        "total_cost": 0.0,
-                        "net_profit": 0.0,
-                        "avg_deal": 0.0
-                    }
-
-            entry = mechanics_map[matched_key]
+            resp_list = [r.strip() for r in resp_raw.split(",") if r.strip()]
             d_amt = _to_float(d.get("amount"), 0.0)
             d_cost = _to_float(d.get("cost"), 0.0)
+            seen_keys = set()
 
-            if d.get("stage") in closed_stages:
-                entry["completed_deals_count"] += 1
-                entry["total_revenue"] += d_amt
-                entry["total_cost"] += d_cost
-            elif d.get("stage") not in closed_stages and d.get("stage") != "cancelled":
-                entry["active_deals_count"] += 1
+            for resp in resp_list:
+                matched_key = None
+                resp_lower = resp.lower()
+                for mid, mdata in mechanics_map.items():
+                    m_name = mdata["name"].lower()
+                    m_user = mdata["username"].lower()
+                    if resp_lower == m_name or resp_lower == m_user or resp_lower in m_name or m_name in resp_lower:
+                        matched_key = mid
+                        break
+
+                if not matched_key:
+                    matched_key = f"resp_{resp}"
+                    if matched_key not in mechanics_map:
+                        mechanics_map[matched_key] = {
+                            "user_id": None,
+                            "name": resp,
+                            "username": resp,
+                            "completed_deals_count": 0,
+                            "active_deals_count": 0,
+                            "total_revenue": 0.0,
+                            "total_cost": 0.0,
+                            "net_profit": 0.0,
+                            "avg_deal": 0.0
+                        }
+
+                if matched_key in seen_keys:
+                    continue
+                seen_keys.add(matched_key)
+
+                entry = mechanics_map[matched_key]
+                if d.get("stage") in closed_stages:
+                    entry["completed_deals_count"] += 1
+                    entry["total_revenue"] += d_amt
+                    entry["total_cost"] += d_cost
+                elif d.get("stage") not in closed_stages and d.get("stage") != "cancelled":
+                    entry["active_deals_count"] += 1
 
         mechanics_revenue = list(mechanics_map.values())
         for m in mechanics_revenue:
@@ -1747,7 +1855,10 @@ def get_dashboard_metrics() -> Dict[str, Any]:
             "deals_by_stage": stages,
             "recent_deals": recent,
             "top_clients": top_clients,
-            "monthly_data": monthly_data
+            "monthly_data": monthly_data,
+            "available_years": available_years,
+            "selected_year": str(filter_year) if filter_year is not None else "all",
+            "selected_month": f"{filter_month:02d}" if filter_month is not None else "all"
         }
 
 # ==================== DUMP & RESTORE ====================
@@ -1875,44 +1986,73 @@ def restore_all_data(data: Dict[str, Any]) -> Dict[str, Any]:
 
 # ==================== TOP SOLD PARTS & EQUIPMENT HISTORY & PERMISSIONS & WHATSAPP ====================
 
-def get_top_sold_parts(limit: int = 10) -> List[Dict[str, Any]]:
+def get_top_sold_parts(limit: int = 10, year: Optional[str] = None, month: Optional[str] = None) -> List[Dict[str, Any]]:
     if not DATABASE_READY:
         return []
     with get_database_client() as client:
-        dpr = client.get("/deal_parts", params={"select": "part_id,quantity,selling_price"})
+        dpr = client.get("/deal_parts", params={"select": "deal_id,part_id,quantity,selling_price"})
         parts_r = client.get("/parts", params={"select": "id,sku,name,category,quantity,selling_price,min_threshold"})
         if parts_r.status_code != 200:
             return []
 
-        parts_map = {p["id"]: p for p in parts_r.json()}
+        filter_year: Optional[int] = int(year) if (year and str(year).strip().isdigit()) else None
+        filter_month: Optional[int] = int(month) if (month and str(month).strip().isdigit() and 1 <= int(month) <= 12) else None
+
+        allowed_deal_ids: Optional[set] = None
+        if filter_year is not None or filter_month is not None:
+            deals_r = client.get("/deals", params={"select": "id,stage,created_at,completed_at"})
+            closed_stages = ("completed", "ready", "paid", "issued", "parts_paid", "parts_shipped", "sales_delivered")
+            allowed_deal_ids = set()
+            if deals_r.status_code == 200:
+                for d in deals_r.json() or []:
+                    yr, mo = _extract_deal_year_month(d, closed_stages)
+                    if filter_year is not None and yr != filter_year:
+                        continue
+                    if filter_month is not None and mo != filter_month:
+                        continue
+                    if d.get("id") is not None:
+                        allowed_deal_ids.add(int(d["id"]))
+
+        parts_map = {int(p["id"]): p for p in (parts_r.json() or []) if p.get("id") is not None}
         sales_agg: Dict[int, Dict[str, Any]] = {}
 
         if dpr.status_code == 200:
-            for dp in dpr.json():
-                pid = dp.get("part_id")
-                qty = dp.get("quantity") or 0
-                price = dp.get("selling_price") or 0.0
+            for dp in dpr.json() or []:
+                pid_raw = dp.get("part_id")
+                if pid_raw is None:
+                    continue
+                if allowed_deal_ids is not None:
+                    did = dp.get("deal_id")
+                    if did is None or int(did) not in allowed_deal_ids:
+                        continue
+                pid = int(pid_raw)
+                qty = int(_to_float(dp.get("quantity"), 0))
+                price = _to_float(dp.get("selling_price"), 0.0)
+                if price <= 0 and pid in parts_map:
+                    price = _to_float(parts_map[pid].get("selling_price"), 0.0)
                 if pid not in sales_agg:
                     sales_agg[pid] = {"sold_count": 0, "total_revenue": 0.0}
                 sales_agg[pid]["sold_count"] += qty
-                sales_agg[pid]["total_revenue"] += qty * price
+                sales_agg[pid]["total_revenue"] += float(qty) * price
 
         results = []
         for pid, p in parts_map.items():
             agg = sales_agg.get(pid, {"sold_count": 0, "total_revenue": 0.0})
+            unit_price = round(_to_float(p.get("selling_price"), 0.0), 2)
+            cur_stock = int(_to_float(p.get("quantity"), 0))
             results.append({
                 "part_id": pid,
                 "sku": p.get("sku") or f"P-{pid}",
                 "name": p.get("name") or f"Запчасть #{pid}",
                 "category": p.get("category") or "Запчасти",
-                "current_stock": p.get("quantity") or 0,
-                "sold_count": agg["sold_count"],
-                "total_revenue": agg["total_revenue"],
-                "unit_price": p.get("selling_price") or 0.0
+                "current_stock": cur_stock,
+                "sold_count": int(agg["sold_count"]),
+                "total_revenue": round(float(agg["total_revenue"]), 2),
+                "unit_price": unit_price
             })
 
         results.sort(key=lambda x: (x["sold_count"], x["total_revenue"], x["unit_price"]), reverse=True)
-        return results[:limit]
+        return results[:max(1, int(limit or 10))]
 
 def get_equipment_history(eq_id: int) -> Dict[str, Any]:
     if not DATABASE_READY:
