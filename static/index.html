@@ -11,7 +11,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Lucide Icons CDN -->
   <script src="https://unpkg.com/lucide@latest"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=1.2.3.8">
+  <link rel="stylesheet" href="/static/styles.css?v=1.2.3.9">
   <script>
     tailwind.config = {
       theme: {
@@ -732,7 +732,7 @@
                   <th class="p-3.5">Техника / VIN</th>
                   <th class="p-3.5 min-w-[360px]">Стадия наряда (Воронка Bitrix24)</th>
                   <th class="p-3.5 text-right font-mono">Сумма (AMD)</th>
-                  <th class="p-3.5 text-right font-mono text-slate-400 col-deal-cost">Себест. (AMD)</th>
+                  <th id="deals-table-col-cost-header" class="p-3.5 text-right font-mono text-slate-500 col-deal-cost">Сумма з/ч (AMD)</th>
                   <th class="p-3.5">Ответственный</th>
                   <th class="p-3.5">Дедлайн</th>
                   <th class="p-3.5 whitespace-nowrap">Дата регистрации</th>
@@ -1959,8 +1959,9 @@
           </div>
 
           <div id="deal-cost-group">
-            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Себестоимость (AMD)</label>
-            <input type="number" id="deal-cost" step="any" min="0" placeholder="0" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-mono">
+            <label id="deal-cost-label" class="block text-xs font-bold text-slate-700 uppercase mb-1">Сумма продажи з/ч (AMD)</label>
+            <input type="number" id="deal-parts-selling-total" readonly value="0" class="w-full border border-slate-200 bg-slate-50 rounded-lg px-3 py-2 text-sm outline-none font-mono font-bold text-emerald-700" title="Сумма продажи списанных на этот заказ-наряд запчастей">
+            <input type="number" id="deal-cost" step="any" min="0" placeholder="0" class="hidden w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-mono">
           </div>
         </div>
 
@@ -2001,12 +2002,13 @@
 
         <!-- Attached Parts Section -->
         <div id="deal-parts-section" class="pt-3 border-t border-slate-100">
-          <div class="flex items-center justify-between mb-2">
+          <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
             <span class="text-xs font-bold text-slate-700 uppercase flex items-center gap-1.5">
               <i data-lucide="package" class="w-4 h-4 text-amber-600"></i>
-              Списанные запчасти под этот наряд
+              <span>Списанные запчасти под этот наряд</span>
+              <span id="deal-parts-total-badge" class="ml-1 px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 font-mono text-[11px] font-bold">0 AMD</span>
             </span>
-            <button type="button" onclick="showAttachPartRow()" class="text-xs text-blue-600 hover:underline font-semibold">+ Списать запчасть со склада</button>
+            <button type="button" id="btn-show-attach-part" onclick="showAttachPartRow()" class="text-xs text-blue-600 hover:underline font-semibold">+ Списать запчасть со склада</button>
           </div>
 
           <!-- Requirement #6: Searchable parts write-off with SKU & Name autocomplete -->
@@ -2687,6 +2689,6 @@
   <script src="/static/app/core/router.js?v=1.0.0"></script>
   <script src="/static/app/core/api.js?v=1.0.0"></script>
   <script src="/static/app/pages/index.js?v=1.0.0"></script>
-  <script src="/static/app.js?v=1.2.3.8"></script>
+  <script src="/static/app.js?v=1.2.3.9"></script>
 </body>
 </html>

@@ -335,9 +335,8 @@ html, body {
 /* ==========================================================================
    Role-Based Permissions (Mechanic Visibility Restrictions)
    ========================================================================== */
-body.role-mechanic .col-deal-cost,
 body.role-mechanic .col-purchase-price,
-body.role-mechanic #deal-cost-group,
+body.role-mechanic #deal-cost,
 body.role-mechanic #part-purchase-price-group,
 body.role-mechanic #header-finance-block,
 body.role-mechanic #dash-card-revenue,

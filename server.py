@@ -297,6 +297,9 @@ class DealAttachPart(BaseModel):
     part_id: int
     quantity: int = 1
 
+class DealUpdatePartQty(BaseModel):
+    quantity: int
+
 class TaskCreate(BaseModel):
     title: str
     deal_id: Optional[int] = None
@@ -760,6 +763,38 @@ async def attach_part_to_deal(
         return res
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.patch("/api/deals/{deal_id}/parts/{deal_part_id}")
+@app.put("/api/deals/{deal_id}/parts/{deal_part_id}")
+@app.post("/api/deals/{deal_id}/parts/{deal_part_id}/quantity")
+async def update_deal_part_quantity(
+    deal_id: int,
+    deal_part_id: int,
+    item: DealUpdatePartQty,
+    x_user_role: Optional[str] = Header(None, alias="X-User-Role"),
+    role: Optional[str] = None
+):
+    effective_role = check_effective_role(x_user_role, role)
+    try:
+        existing = database.get_deal(deal_id)
+        if existing.get("stage") in ("ready", "completed", "paid", "issued") and effective_role != "admin":
+            raise HTTPException(status_code=403, detail="Изменение запчастей в закрытых/оплаченных сделках разрешено только Администратору")
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Сделка не найдена")
+    try:
+        res = database.update_deal_part_quantity(deal_id, deal_part_id, item.quantity)
+        await manager.broadcast({
+            "type": "deal_parts_updated",
+            "deal_id": deal_id,
+            "data": res
+        })
+        return res
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

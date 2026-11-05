@@ -1004,19 +1004,24 @@ def list_deals(stage: Optional[str] = None, q: Optional[str] = None, deal_type: 
         if r.status_code != 200:
             return []
 
-        parts_response = client.get("/deal_parts", params={"select": "deal_id,quantity"})
+        parts_response = client.get("/deal_parts", params={"select": "deal_id,quantity,selling_price"})
         if parts_response.status_code != 200:
             raise RuntimeError(f"Не удалось загрузить запчасти нарядов: {parts_response.text}")
         parts_by_deal: Dict[int, int] = {}
+        parts_selling_by_deal: Dict[int, float] = {}
         for part_row in parts_response.json() or []:
             deal_id = part_row.get("deal_id")
             if deal_id is None:
                 continue
             try:
-                quantity = int(part_row.get("quantity") or 0)
+                quantity = int(_to_float(part_row.get("quantity"), 0))
             except (TypeError, ValueError):
                 quantity = 0
+            selling_price = round(_to_float(part_row.get("selling_price"), 0.0), 2)
             parts_by_deal[int(deal_id)] = parts_by_deal.get(int(deal_id), 0) + quantity
+            parts_selling_by_deal[int(deal_id)] = round(
+                parts_selling_by_deal.get(int(deal_id), 0.0) + quantity * selling_price, 2
+            )
 
         deals = []
         for d in r.json():
@@ -1038,6 +1043,7 @@ def list_deals(stage: Optional[str] = None, q: Optional[str] = None, deal_type: 
             item["equipment_name"] = eq.get("name", "")
             item["equipment_vin"] = eq.get("serial_vin", "")
             item["parts_count"] = parts_by_deal.get(int(d["id"]), 0)
+            item["parts_selling_total"] = parts_selling_by_deal.get(int(d["id"]), 0.0)
             deals.append(item)
         return deals
 
@@ -1105,6 +1111,7 @@ def create_deal(deal_data: Dict[str, Any]) -> Dict[str, Any]:
             "equipment_name": eq_name,
             "equipment_vin": eq_vin,
             "parts_count": 0,
+            "parts_selling_total": 0.0,
             "message": "Сделка/наряд успешно создан"
         }
 
@@ -1149,6 +1156,7 @@ def get_deal(deal_id: int) -> Dict[str, Any]:
                 })
         d["parts"] = parts_list
         d["parts_count"] = sum(p["quantity"] for p in parts_list)
+        d["parts_selling_total"] = round(float(sum(p["quantity"] * p["selling_price"] for p in parts_list)), 2)
         return d
 
 def update_deal_stage(deal_id: int, stage: str) -> Dict[str, Any]:
@@ -1190,9 +1198,10 @@ def update_deal(deal_id: int, deal_data: Dict[str, Any]) -> Dict[str, Any]:
 
         attached_parts = _get_deal_attached_parts(client, int(deal_id))
         parts_cost_sum = round(float(sum(item["quantity"] * item["purchase_price"] for item in attached_parts)), 2)
+        parts_selling_sum = round(float(sum(item["quantity"] * item["selling_price"] for item in attached_parts)), 2)
         parts_qty_sum = int(sum(item["quantity"] for item in attached_parts))
         req_cost = float(deal_data.get("cost") or 0.0)
-        final_cost = req_cost if req_cost > 0 else parts_cost_sum
+        final_cost = parts_cost_sum if attached_parts else req_cost
 
         payload = {
             "title": deal_data["title"].strip(),
@@ -1212,7 +1221,7 @@ def update_deal(deal_id: int, deal_data: Dict[str, Any]) -> Dict[str, Any]:
             payload["id"] = deal_id
             payload["created_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             client.post("/deals", json=payload, headers={"Prefer": "resolution=merge-duplicates"})
-        return {"id": deal_id, **payload, "parts_count": parts_qty_sum, "description": raw_desc, "deal_type": new_dtype, "service_type": new_stype, "closing_outcome": new_outcome, "message": "Сделка обновлена"}
+        return {"id": deal_id, **payload, "parts_count": parts_qty_sum, "parts_selling_total": parts_selling_sum, "description": raw_desc, "deal_type": new_dtype, "service_type": new_stype, "closing_outcome": new_outcome, "message": "Сделка обновлена"}
 
 def delete_deal(deal_id: int) -> Dict[str, Any]:
     with get_database_client() as client:
@@ -1281,6 +1290,7 @@ def attach_part_to_deal(deal_id: int, part_id: int, quantity: int) -> Dict[str, 
         # Recalculate cost & attached parts
         attached_parts = _get_deal_attached_parts(client, int(deal_id))
         total_cost = round(float(sum(item["quantity"] * item["purchase_price"] for item in attached_parts)), 2)
+        total_selling = round(float(sum(item["quantity"] * item["selling_price"] for item in attached_parts)), 2)
         total_parts_qty = int(sum(item["quantity"] for item in attached_parts))
         client.patch(f"/deals?id=eq.{deal_id}", json={"cost": total_cost})
 
@@ -1289,9 +1299,80 @@ def attach_part_to_deal(deal_id: int, part_id: int, quantity: int) -> Dict[str, 
             "part_id": int(part_id),
             "new_quantity": int(new_qty),
             "parts_cost": total_cost,
+            "parts_selling_total": total_selling,
             "parts_count": total_parts_qty,
             "parts": attached_parts,
             "message": f"Запчасть «{p.get('name')}» ({qty_to_deduct} шт.) списана со склада"
+        }
+
+def update_deal_part_quantity(deal_id: int, deal_part_id: int, new_quantity: int) -> Dict[str, Any]:
+    target_qty = int(_to_float(new_quantity, 0))
+    if target_qty <= 0:
+        return remove_part_from_deal(deal_id, deal_part_id)
+
+    with get_database_client() as client:
+        dp = client.get("/deal_parts", params={"id": f"eq.{deal_part_id}"}).json()
+        if not dp:
+            raise KeyError("Прикрепленная запчасть не найдена")
+        row = dp[0]
+        part_id = int(row.get("part_id"))
+        old_qty = max(1, int(_to_float(row.get("quantity"), 1)))
+        delta = target_qty - old_qty
+
+        p = get_part(part_id)
+        cur_stock = int(_to_float(p.get("quantity"), 0))
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        if delta > 0:
+            if cur_stock < delta:
+                raise ValueError(f"Недостаточно остатка на складе! Доступно для добавления: {cur_stock} шт.")
+            new_stock = cur_stock - delta
+            client.patch(f"/parts?id=eq.{part_id}", json={"quantity": new_stock})
+            client.patch(f"/deal_parts?id=eq.{deal_part_id}", json={"quantity": target_qty})
+            sm_id = get_next_id(client, "stock_movements")
+            client.post("/stock_movements", json={
+                "id": sm_id,
+                "part_id": part_id,
+                "type": "outgoing",
+                "quantity": delta,
+                "deal_id": int(deal_id),
+                "comment": f"Увеличение кол-ва запчасти (+{delta} шт.) в наряде №{deal_id}",
+                "created_at": now_str
+            })
+        elif delta < 0:
+            ret_qty = abs(delta)
+            new_stock = cur_stock + ret_qty
+            client.patch(f"/parts?id=eq.{part_id}", json={"quantity": new_stock})
+            client.patch(f"/deal_parts?id=eq.{deal_part_id}", json={"quantity": target_qty})
+            sm_id = get_next_id(client, "stock_movements")
+            client.post("/stock_movements", json={
+                "id": sm_id,
+                "part_id": part_id,
+                "type": "incoming",
+                "quantity": ret_qty,
+                "deal_id": int(deal_id),
+                "comment": f"Частичный возврат запчасти (-{ret_qty} шт.) из наряда №{deal_id}",
+                "created_at": now_str
+            })
+        else:
+            new_stock = cur_stock
+
+        attached_parts = _get_deal_attached_parts(client, int(deal_id))
+        total_cost = round(float(sum(item["quantity"] * item["purchase_price"] for item in attached_parts)), 2)
+        total_selling = round(float(sum(item["quantity"] * item["selling_price"] for item in attached_parts)), 2)
+        total_parts_qty = int(sum(item["quantity"] for item in attached_parts))
+        client.patch(f"/deals?id=eq.{deal_id}", json={"cost": total_cost})
+
+        return {
+            "deal_part_id": int(deal_part_id),
+            "part_id": part_id,
+            "quantity": target_qty,
+            "new_quantity": int(new_stock),
+            "parts_cost": total_cost,
+            "parts_selling_total": total_selling,
+            "parts_count": total_parts_qty,
+            "parts": attached_parts,
+            "message": f"Количество запчасти «{p.get('name')}» изменено на {target_qty} шт."
         }
 
 def remove_part_from_deal(deal_id: int, deal_part_id: int) -> Dict[str, Any]:
@@ -1328,6 +1409,7 @@ def remove_part_from_deal(deal_id: int, deal_part_id: int) -> Dict[str, Any]:
         # Recalculate cost & attached parts
         attached_parts = _get_deal_attached_parts(client, int(deal_id))
         total_cost = round(float(sum(item["quantity"] * item["purchase_price"] for item in attached_parts)), 2)
+        total_selling = round(float(sum(item["quantity"] * item["selling_price"] for item in attached_parts)), 2)
         total_parts_qty = int(sum(item["quantity"] for item in attached_parts))
         client.patch(f"/deals?id=eq.{deal_id}", json={"cost": total_cost})
 
@@ -1335,6 +1417,7 @@ def remove_part_from_deal(deal_id: int, deal_part_id: int) -> Dict[str, Any]:
             "part_id": part_id,
             "new_quantity": int(new_qty),
             "parts_cost": total_cost,
+            "parts_selling_total": total_selling,
             "parts_count": total_parts_qty,
             "parts": attached_parts,
             "message": "Запчасть возвращена на склад"

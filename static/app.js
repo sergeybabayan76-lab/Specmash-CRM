@@ -129,6 +129,7 @@ const crmStore = {
         items = items.map(d => ({
           ...d,
           parts_count: Number(d.parts_count || 0),
+          parts_selling_total: Number(d.parts_selling_total || 0),
           amount: Number(d.amount || 0),
           cost: Number(d.cost || 0),
         })).sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0));
@@ -1930,6 +1931,11 @@ function renderDealsList() {
     );
   });
 
+  const colCostHeader = document.getElementById('deals-table-col-cost-header');
+  if (colCostHeader) {
+    colCostHeader.textContent = isSalesDept ? 'Себест. (AMD)' : 'Сумма з/ч (AMD)';
+  }
+
   const totalAmount = filteredDeals.reduce((sum, d) => sum + (d.amount || 0), 0);
   const totalCountEl = document.getElementById('deals-list-total-count');
   const totalAmountEl = document.getElementById('deals-list-total-amount');
@@ -2007,7 +2013,7 @@ function renderDealsList() {
                 ${isFailed ? '<span class="bg-rose-600 text-white font-bold text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1 shadow-xs"><i data-lucide="x-circle" class="w-3 h-3"></i> ❌ Не удачно</span>' : ''}
                 ${isOverdue ? '<span class="bg-rose-600 text-white font-bold text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1 w-fit shadow-xs"><i data-lucide="clock" class="w-3 h-3"></i> Ожидает выдачи &gt; 30 дней</span>' : ''}
                 ${isLocked ? '<span class="bg-amber-100 text-amber-800 text-[10px] font-bold px-1.5 py-0.2 rounded flex items-center gap-1 border border-amber-300"><i data-lucide="lock" class="w-3 h-3"></i> Закрыто</span>' : ''}
-                <span class="bg-amber-50 text-amber-700 border border-amber-200 text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold" title="Использовано запчастей">${Number(deal.parts_count || 0)} з/ч</span>
+                ${deal.deal_type === 'sales' ? '' : `<span class="bg-amber-50 text-amber-700 border border-amber-200 text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold" title="Списано запчастей на сумму ${formatMoney(deal.parts_selling_total || 0)}">${Number(deal.parts_count || 0)} з/ч</span>`}
               </div>
             </div>
           </div>
@@ -2054,8 +2060,8 @@ function renderDealsList() {
           ${formatMoney(deal.amount)}
         </td>
 
-        <td class="p-3.5 text-xs font-mono text-slate-500 text-right col-deal-cost">
-          ${formatMoney(deal.cost)}
+        <td class="p-3.5 text-xs font-mono ${deal.deal_type === 'sales' ? 'text-slate-500' : 'text-emerald-700 font-bold'} text-right col-deal-cost">
+          ${formatMoney(deal.deal_type === 'sales' ? (deal.cost || 0) : (deal.parts_selling_total || 0))}
         </td>
 
         <td class="p-3.5 text-xs text-slate-700 font-medium">
@@ -2282,7 +2288,7 @@ function renderKanbanCard(deal) {
       <div class="flex items-center justify-between pt-1 text-xs">
         <span class="font-bold text-blue-600 font-mono">${formatMoney(deal.amount)}</span>
         <div class="flex items-center gap-1.5 flex-wrap justify-end">
-          <span class="bg-amber-50 text-amber-700 border border-amber-200 text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold shrink-0" title="Использовано запчастей">${Number(deal.parts_count || 0)} з/ч</span>
+          ${deal.deal_type === 'sales' ? '' : `<span class="bg-amber-50 text-amber-700 border border-amber-200 text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold shrink-0" title="Сумма продажи списанных запчастей: ${formatMoney(deal.parts_selling_total || 0)}">${Number(deal.parts_count || 0)} з/ч • ${formatMoney(deal.parts_selling_total || 0)}</span>`}
           <span class="text-[10px] text-slate-600 font-medium truncate max-w-[150px]" title="${escapeHtml(deal.responsible || '')}">${escapeHtml(deal.responsible || '')}</span>
         </div>
       </div>
@@ -3272,6 +3278,32 @@ function setDealModalType(type) {
     }
   }
 
+  // Hide warehouse spare parts write-off in Sales Department ("Отдел продаж"),
+  // and toggle between parts selling sum ("Заказ-наряды") vs cost ("Отдел продаж")
+  const partsSection = document.getElementById('deal-parts-section');
+  const costLabel = document.getElementById('deal-cost-label');
+  const costInput = document.getElementById('deal-cost');
+  const partsSellingInput = document.getElementById('deal-parts-selling-total');
+
+  if (partsSection) {
+    if (isSales) {
+      partsSection.classList.add('hidden');
+      hideAttachPartRow();
+    } else {
+      partsSection.classList.remove('hidden');
+    }
+  }
+
+  if (isSales) {
+    if (costLabel) costLabel.textContent = 'Себестоимость (AMD)';
+    if (partsSellingInput) partsSellingInput.classList.add('hidden');
+    if (costInput) costInput.classList.remove('hidden');
+  } else {
+    if (costLabel) costLabel.textContent = 'Сумма продажи з/ч (AMD)';
+    if (partsSellingInput) partsSellingInput.classList.remove('hidden');
+    if (costInput) costInput.classList.add('hidden');
+  }
+
   const dealId = document.getElementById('deal-id')?.value;
   const modalTitle = document.getElementById('modal-deal-title');
   if (modalTitle) {
@@ -3615,28 +3647,57 @@ async function handleDealClientChange(clientId, selectedEqId = null) {
 }
 
 function renderDealAttachedParts(parts) {
+  const list = Array.isArray(parts) ? parts : [];
+  const totalSelling = list.reduce((sum, p) => sum + Number(p.selling_price || 0) * Number(p.quantity || 0), 0);
+
+  const sellingInput = document.getElementById('deal-parts-selling-total');
+  if (sellingInput) {
+    sellingInput.value = Math.round(totalSelling);
+  }
+  const totalBadge = document.getElementById('deal-parts-total-badge');
+  if (totalBadge) {
+    totalBadge.textContent = formatMoney(totalSelling);
+  }
+
+  const isLocked = Boolean(document.getElementById('deal-title')?.disabled);
+  const attachBtn = document.getElementById('btn-show-attach-part');
+  if (attachBtn) {
+    attachBtn.classList.toggle('hidden', isLocked);
+  }
+
   const container = document.getElementById('deal-attached-parts-list');
   if (!container) return;
-  if (!parts || parts.length === 0) {
+  if (list.length === 0) {
     container.innerHTML = '<div class="text-xs text-slate-400 py-1">Запчасти со склада еще не списывались</div>';
     return;
   }
   const dealId = document.getElementById('deal-id').value;
 
-  container.innerHTML = parts.map(p => `
-    <div class="flex items-center justify-between p-2 rounded bg-slate-50 border border-slate-200 text-xs">
-      <div>
-        <span class="font-bold text-slate-800">${p.part_name}</span>
-        <span class="font-mono text-slate-500">(${p.sku}) × ${p.quantity} шт</span>
+  container.innerHTML = list.map(p => {
+    const qty = Math.max(1, Number(p.quantity || 1));
+    const unitPrice = Number(p.selling_price || 0);
+    const lineTotal = unitPrice * qty;
+    return `
+    <div class="flex items-center justify-between gap-2 p-2 rounded-lg bg-slate-50 border border-slate-200 text-xs">
+      <div class="min-w-0 flex-1">
+        <div class="font-bold text-slate-800 truncate" title="${escapeHtml(p.part_name)}">${escapeHtml(p.part_name)}</div>
+        <div class="text-[11px] font-mono text-slate-500">${escapeHtml(p.sku)} • ${formatMoney(unitPrice)} / шт</div>
       </div>
-      <div class="flex items-center gap-2">
-        <span class="font-mono font-bold text-emerald-600">${formatMoney(p.selling_price * p.quantity)}</span>
-        <button type="button" onclick="removeAttachedPart(${dealId}, ${p.deal_part_id})" class="text-rose-500 hover:text-rose-700 p-1" title="Вернуть на склад">
+      <div class="flex items-center gap-2 shrink-0">
+        <div class="inline-flex items-center border border-slate-300 rounded-lg bg-white overflow-hidden shadow-2xs">
+          <button type="button" ${isLocked ? 'disabled' : ''} onclick="changeAttachedPartQty(${dealId}, ${p.deal_part_id}, ${qty - 1})" class="px-2 py-1 text-slate-600 hover:bg-slate-100 font-bold leading-none ${isLocked ? 'opacity-40 cursor-not-allowed' : ''}" title="Уменьшить количество">−</button>
+          <input type="number" min="1" value="${qty}" ${isLocked ? 'disabled' : ''} onchange="changeAttachedPartQty(${dealId}, ${p.deal_part_id}, this.value)" class="w-12 text-center font-mono font-bold text-xs py-1 outline-none border-x border-slate-200 bg-white">
+          <button type="button" ${isLocked ? 'disabled' : ''} onclick="changeAttachedPartQty(${dealId}, ${p.deal_part_id}, ${qty + 1})" class="px-2 py-1 text-slate-600 hover:bg-slate-100 font-bold leading-none ${isLocked ? 'opacity-40 cursor-not-allowed' : ''}" title="Увеличить количество">+</button>
+        </div>
+        <span class="font-mono font-bold text-emerald-700 min-w-[85px] text-right">${formatMoney(lineTotal)}</span>
+        ${isLocked ? '' : `
+        <button type="button" onclick="removeAttachedPart(${dealId}, ${p.deal_part_id})" class="text-rose-500 hover:text-rose-700 p-1 rounded hover:bg-rose-50" title="Вернуть запчасть на склад">
           <i data-lucide="trash" class="w-3.5 h-3.5"></i>
-        </button>
+        </button>`}
       </div>
     </div>
-  `).join('');
+  `;
+  }).join('');
 
   if (window.lucide) lucide.createIcons();
 }
@@ -3920,6 +3981,7 @@ async function submitAttachPart() {
     const dealObj = (state.deals || []).find(d => Number(d.id) === Number(dealId));
     if (dealObj) {
       if (typeof data.parts_cost === 'number') dealObj.cost = data.parts_cost;
+      if (typeof data.parts_selling_total === 'number') dealObj.parts_selling_total = data.parts_selling_total;
       if (typeof data.parts_count === 'number') dealObj.parts_count = data.parts_count;
       else dealObj.parts_count = Number(dealObj.parts_count || 0) + qty;
       dealObj._updated_at = Date.now();
@@ -3947,6 +4009,89 @@ async function submitAttachPart() {
     loadDashboard();
   } catch (err) {
     showToast(err.message || 'Ошибка при списании запчасти', 'error');
+  }
+}
+
+async function changeAttachedPartQty(dealId, dealPartId, newQty) {
+  const parsedQty = parseInt(newQty, 10);
+  if (isNaN(parsedQty)) return;
+  if (parsedQty <= 0) {
+    return removeAttachedPart(dealId, dealPartId);
+  }
+
+  try {
+    const reqHeaders = {
+      'Content-Type': 'application/json',
+      'X-User-Role': state.currentUser?.role || ''
+    };
+    let res = await fetch(`/api/deals/${dealId}/parts/${dealPartId}`, {
+      method: 'PATCH',
+      headers: reqHeaders,
+      body: JSON.stringify({ quantity: parsedQty })
+    });
+    if (!res.ok && res.status === 405) {
+      res = await fetch(`/api/deals/${dealId}/parts/${dealPartId}/quantity`, {
+        method: 'POST',
+        headers: reqHeaders,
+        body: JSON.stringify({ quantity: parsedQty })
+      });
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка изменения количества запчасти');
+
+    if (data.part_id && typeof data.new_quantity === 'number') {
+      const updatePartStock = (list) => {
+        if (!Array.isArray(list)) return;
+        const pObj = list.find(p => Number(p.id) === Number(data.part_id));
+        if (pObj) {
+          pObj.quantity = data.new_quantity;
+          pObj._updated_at = Date.now();
+          crmStore.saveItem('parts', pObj);
+        }
+      };
+      updatePartStock(state.parts);
+      updatePartStock(state.allParts);
+    }
+
+    const costInput = document.getElementById('deal-cost');
+    if (costInput && typeof data.parts_cost === 'number') {
+      costInput.value = data.parts_cost;
+    }
+
+    const dealObj = (state.deals || []).find(d => Number(d.id) === Number(dealId));
+    if (dealObj) {
+      if (typeof data.parts_cost === 'number') dealObj.cost = data.parts_cost;
+      if (typeof data.parts_selling_total === 'number') dealObj.parts_selling_total = data.parts_selling_total;
+      if (typeof data.parts_count === 'number') dealObj.parts_count = data.parts_count;
+      dealObj._updated_at = Date.now();
+      crmStore.saveItem('deals', dealObj);
+    }
+
+    if (Array.isArray(data.parts)) {
+      renderDealAttachedParts(data.parts);
+    } else {
+      const dRes = await fetch(`/api/deals/${dealId}`);
+      if (dRes.ok) {
+        const dJson = await dRes.json();
+        renderDealAttachedParts(dJson.parts || []);
+      }
+    }
+
+    await loadWarehousePartsOptions();
+    showToast(data.message || 'Количество списанной запчасти обновлено');
+    renderPartsTable();
+    renderDeals();
+    loadDashboard();
+  } catch (err) {
+    showToast(err.message || 'Ошибка изменения количества запчасти', 'error');
+    // Refresh current deal parts to restore valid input value
+    try {
+      const dRes = await fetch(`/api/deals/${dealId}`);
+      if (dRes.ok) {
+        const dJson = await dRes.json();
+        renderDealAttachedParts(dJson.parts || []);
+      }
+    } catch (e) {}
   }
 }
 
@@ -3990,6 +4135,7 @@ async function removeAttachedPart(dealId, dealPartId) {
     const dealObj = (state.deals || []).find(d => Number(d.id) === Number(dealId));
     if (dealObj) {
       if (typeof data.parts_cost === 'number') dealObj.cost = data.parts_cost;
+      if (typeof data.parts_selling_total === 'number') dealObj.parts_selling_total = data.parts_selling_total;
       if (typeof data.parts_count === 'number') dealObj.parts_count = data.parts_count;
       dealObj._updated_at = Date.now();
       crmStore.saveItem('deals', dealObj);
@@ -4081,6 +4227,8 @@ async function saveDeal(e) {
       ...payload,
       id: savedId,
       deal_type: data.deal_type || payload.deal_type,
+      parts_count: typeof data.parts_count === 'number' ? data.parts_count : undefined,
+      parts_selling_total: typeof data.parts_selling_total === 'number' ? data.parts_selling_total : (parseFloat(document.getElementById('deal-parts-selling-total')?.value) || 0),
       client_name: data.client_name || (clientObj ? clientObj.name : ''),
       client_company: data.client_company || (clientObj ? clientObj.company : ''),
       client_phone: data.client_phone || (clientObj ? clientObj.phone : ''),
