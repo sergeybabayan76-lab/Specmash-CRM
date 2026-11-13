@@ -2019,21 +2019,34 @@ function renderDealsList() {
           </div>
         </td>
 
-        <!-- Requirement #2: Client and Company name -->
+        <!-- Requirement #2: Client and Company name (clickable to view Client Card) -->
         <td class="p-3.5 text-xs">
-          ${deal.client_company ? `<div class="font-bold text-slate-900 flex items-center gap-1.5"><i data-lucide="building" class="w-3.5 h-3.5 text-blue-600 flex-shrink-0"></i><span>${deal.client_company}</span></div>` : ''}
+          ${deal.client_company ? (deal.client_id ? `
+          <button type="button" onclick="openClientCardFromDeal(${deal.client_id}, event)" class="font-bold text-slate-900 hover:text-blue-600 hover:underline flex items-center gap-1.5 text-left transition-colors cursor-pointer" title="Открыть карточку клиента для просмотра">
+            <i data-lucide="building" class="w-3.5 h-3.5 text-blue-600 flex-shrink-0"></i><span>${deal.client_company}</span>
+          </button>` : `<div class="font-bold text-slate-900 flex items-center gap-1.5"><i data-lucide="building" class="w-3.5 h-3.5 text-blue-600 flex-shrink-0"></i><span>${deal.client_company}</span></div>`) : ''}
+          ${deal.client_id ? `
+          <button type="button" onclick="openClientCardFromDeal(${deal.client_id}, event)" class="${deal.client_company ? 'text-slate-600 font-medium' : 'font-bold text-slate-800'} hover:text-blue-600 hover:underline flex items-center gap-1 text-left transition-colors cursor-pointer" title="Открыть карточку клиента для просмотра">
+            ${deal.client_company ? '<i data-lucide="user" class="w-3 h-3 text-slate-400 flex-shrink-0"></i>' : ''}
+            <span>${deal.client_name || 'Не указан'}</span>
+          </button>` : `
           <div class="${deal.client_company ? 'text-slate-600 font-medium' : 'font-bold text-slate-800'} flex items-center gap-1">
             ${deal.client_company ? '<i data-lucide="user" class="w-3 h-3 text-slate-400 flex-shrink-0"></i>' : ''}
             <span>${deal.client_name || 'Не указан'}</span>
-          </div>
+          </div>`}
           <div class="text-slate-400 text-[11px] font-mono">${deal.client_phone || '—'}</div>
         </td>
 
         <td class="p-3.5 text-xs">
+          ${(deal.deal_type !== 'parts_sale' && deal.equipment_id) ? `
+          <button type="button" onclick="openEquipmentCardFromDeal(${deal.equipment_id}, event)" class="font-bold text-slate-700 hover:text-blue-600 hover:underline flex items-center gap-1.5 text-left transition-colors cursor-pointer" title="Открыть карточку техники для просмотра">
+            <i data-lucide="${deal.deal_type === 'sales' ? 'tractor' : 'truck'}" class="w-3.5 h-3.5 text-blue-600 flex-shrink-0"></i>
+            <span>${deal.equipment_name || (state.equipment && state.equipment.find(eq => eq.id === deal.equipment_id)?.name) || ('Техника #' + deal.equipment_id)}</span>
+          </button>` : `
           <div class="font-bold text-slate-700 flex items-center gap-1.5">
             <i data-lucide="${deal.deal_type === 'parts_sale' ? 'shopping-cart' : (deal.deal_type === 'sales' ? 'tractor' : 'truck')}" class="w-3.5 h-3.5 text-blue-600"></i>
             <span>${deal.deal_type === 'parts_sale' ? 'Продажа со склада' : (deal.equipment_name || (state.equipment && state.equipment.find(eq => eq.id === deal.equipment_id)?.name) || 'Не привязана')}</span>
-          </div>
+          </div>`}
           <div class="text-[11px] text-slate-400 font-mono">${deal.equipment_vin ? `VIN: ${deal.equipment_vin}` : 'VIN: —'}</div>
         </td>
 
@@ -2259,30 +2272,47 @@ function renderKanbanCard(deal) {
         </div>
       </div>
 
-      <!-- Requirement #2: Client and Company name -->
+      <!-- Requirement #2: Client and Company name (clickable to view Client & Equipment cards) -->
       <div class="space-y-1 text-[11px] text-slate-500 border-t border-slate-100 pt-2">
-        ${deal.client_company ? `
+        ${deal.client_company ? (deal.client_id ? `
+        <button type="button" onclick="openClientCardFromDeal(${deal.client_id}, event)" class="w-full flex items-center gap-1.5 font-bold text-slate-900 hover:text-blue-600 hover:underline truncate text-left transition-colors" title="Открыть карточку клиента: ${escapeHtml(deal.client_company)}">
+          <i data-lucide="building" class="w-3.5 h-3.5 text-blue-600 flex-shrink-0"></i>
+          <span class="truncate">${deal.client_company}</span>
+        </button>` : `
         <div class="flex items-center gap-1.5 font-bold text-slate-900 truncate" title="${deal.client_company}">
           <i data-lucide="building" class="w-3.5 h-3.5 text-blue-600 flex-shrink-0"></i>
           <span class="truncate">${deal.client_company}</span>
-        </div>` : ''}
+        </div>`) : ''}
+        ${deal.client_id ? `
+        <button type="button" onclick="openClientCardFromDeal(${deal.client_id}, event)" class="w-full flex items-center gap-1.5 font-medium text-slate-700 hover:text-blue-600 hover:underline truncate text-left transition-colors" title="Открыть карточку клиента для просмотра">
+          <i data-lucide="user" class="w-3.5 h-3.5 text-slate-400 flex-shrink-0"></i>
+          <span class="truncate">${deal.client_name || 'Клиент не указан'}</span>
+        </button>` : `
         <div class="flex items-center gap-1.5 font-medium text-slate-700 truncate">
           <i data-lucide="user" class="w-3.5 h-3.5 text-slate-400 flex-shrink-0"></i>
           <span class="truncate">${deal.client_name || 'Клиент не указан'}</span>
-        </div>
+        </div>`}
         ${deal.deal_type === 'parts_sale' ? `
         <div class="flex items-center gap-1.5 text-emerald-700 font-medium text-[11px]">
           <i data-lucide="shopping-cart" class="w-3.5 h-3.5 text-emerald-600 flex-shrink-0"></i>
           <span>Отдел: Продажа запчастей</span>
-        </div>` : (deal.deal_type === 'sales' ? `
+        </div>` : (deal.deal_type === 'sales' ? (deal.equipment_id ? `
+        <button type="button" onclick="openEquipmentCardFromDeal(${deal.equipment_id}, event)" class="w-full flex items-center gap-1.5 text-indigo-700 hover:text-blue-600 hover:underline font-medium text-[11px] truncate text-left transition-colors" title="Открыть карточку техники для просмотра">
+          <i data-lucide="tractor" class="w-3.5 h-3.5 text-indigo-600 flex-shrink-0"></i>
+          <span class="truncate">${deal.equipment_name || (state.equipment && state.equipment.find(eq => eq.id === deal.equipment_id)?.name) || 'Отдел: Продажа спецтехники'}</span>
+        </button>` : `
         <div class="flex items-center gap-1.5 text-indigo-700 font-medium text-[11px]">
           <i data-lucide="tractor" class="w-3.5 h-3.5 text-indigo-600 flex-shrink-0"></i>
           <span>Отдел: Продажа спецтехники</span>
-        </div>` : `
+        </div>`) : (deal.equipment_id ? `
+        <button type="button" onclick="openEquipmentCardFromDeal(${deal.equipment_id}, event)" class="w-full flex items-center gap-1.5 text-slate-600 hover:text-blue-600 hover:underline truncate text-left transition-colors" title="Открыть карточку техники для просмотра">
+          <i data-lucide="truck" class="w-3.5 h-3.5 text-emerald-500 flex-shrink-0"></i>
+          <span class="truncate">${deal.equipment_name || (state.equipment && state.equipment.find(eq => eq.id === deal.equipment_id)?.name) || ('Техника #' + deal.equipment_id)}</span>
+        </button>` : `
         <div class="flex items-center gap-1.5 text-slate-600 truncate">
           <i data-lucide="truck" class="w-3.5 h-3.5 text-emerald-500 flex-shrink-0"></i>
           <span class="truncate">${deal.equipment_name || (state.equipment && state.equipment.find(eq => eq.id === deal.equipment_id)?.name) || 'Техника не привязана'}</span>
-        </div>`)}
+        </div>`))}
       </div>
 
       <div class="flex items-center justify-between pt-1 text-xs">
@@ -2445,6 +2475,48 @@ function renderClientsTable() {
   `).join('');
 
   if (window.lucide) lucide.createIcons();
+}
+
+async function openClientCardFromDeal(clientId, event = null) {
+  if (event) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  const id = parseInt(clientId, 10);
+  if (!id || isNaN(id)) {
+    showToast('Клиент не привязан к этому наряду', 'info');
+    return;
+  }
+  await viewClientDetails(id);
+}
+
+async function openEquipmentCardFromDeal(eqId, event = null) {
+  if (event) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  const id = parseInt(eqId, 10);
+  if (!id || isNaN(id)) {
+    showToast('Техника не привязана к этому наряду', 'info');
+    return;
+  }
+  if (!state.equipment || state.equipment.length === 0 || !state.equipment.some(e => Number(e.id) === id)) {
+    try {
+      const res = await fetch('/api/equipment');
+      if (res.ok) {
+        const data = await res.json();
+        state.equipment = crmStore.mergeWithServer('equipment', data);
+      }
+    } catch (e) {}
+  }
+  await openEquipmentModal(id);
+}
+
+function updateDealEquipmentViewBtn(eqId) {
+  const btn = document.getElementById('btn-deal-view-equipment');
+  if (btn) {
+    btn.classList.toggle('hidden', !eqId || Number(eqId) <= 0);
+  }
 }
 
 async function viewClientDetails(clientId) {
@@ -3005,10 +3077,14 @@ async function saveUser(e) {
 
   try {
     let res;
+    const reqHeaders = {
+      'Content-Type': 'application/json',
+      'X-User-Role': state.currentUser?.role || ''
+    };
     if (userId) {
       res = await fetch(`/api/users/${userId}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: reqHeaders,
         body: JSON.stringify({
           full_name: fullName,
           role: role,
@@ -3019,7 +3095,7 @@ async function saveUser(e) {
       if (!res.ok) {
         res = await fetch(`/api/users/${userId}`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: reqHeaders,
           body: JSON.stringify({
             full_name: fullName,
             role: role,
@@ -3031,7 +3107,7 @@ async function saveUser(e) {
     } else {
       res = await fetch('/api/users', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: reqHeaders,
         body: JSON.stringify({
           username: username,
           password: password,
@@ -3595,6 +3671,11 @@ async function handleDealClientChange(clientId, selectedEqId = null) {
   const searchInput = document.getElementById('deal-client-search');
   const clearBtn = document.getElementById('deal-client-search-clear');
 
+  const viewClientBtn = document.getElementById('btn-deal-view-client');
+  if (viewClientBtn) {
+    viewClientBtn.classList.toggle('hidden', !clientId || Number(clientId) <= 0);
+  }
+
   if (client) {
     if (searchInput) searchInput.value = client.name;
     if (clearBtn) clearBtn.classList.remove('hidden');
@@ -3644,6 +3725,7 @@ async function handleDealClientChange(clientId, selectedEqId = null) {
   if (selectedEqId) {
     eqSelect.value = String(selectedEqId);
   }
+  updateDealEquipmentViewBtn(eqSelect.value);
 }
 
 function renderDealAttachedParts(parts) {
@@ -4545,6 +4627,15 @@ async function openEquipmentModal(eqId = null) {
     document.getElementById('modal-equipment-title').textContent = 'Карточка техники';
     if (tabsHeader) tabsHeader.classList.remove('hidden');
     document.getElementById('btn-delete-equipment').classList.remove('hidden');
+    if (!state.equipment || state.equipment.length === 0 || !state.equipment.some(e => e.id == eqId)) {
+      try {
+        const res = await fetch('/api/equipment');
+        if (res.ok) {
+          const data = await res.json();
+          state.equipment = crmStore.mergeWithServer('equipment', data);
+        }
+      } catch (e) {}
+    }
     const eq = state.equipment.find(e => e.id == eqId);
     if (eq) {
       document.getElementById('equipment-id').value = eq.id;

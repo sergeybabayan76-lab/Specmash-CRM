@@ -362,9 +362,9 @@ def create_user(u: UserCreate, x_user_role: Optional[str] = Header(None, alias="
     if effective_role and effective_role != "admin":
         raise HTTPException(status_code=403, detail="Управление сотрудниками доступно исключительно Администратору")
 
-    valid_roles = ["admin", "moderator", "manager", "mechanic"]
+    valid_roles = ["admin", "moderator", "manager", "sales_manager", "mechanic"]
     if u.role not in valid_roles:
-        raise HTTPException(status_code=400, detail="Недопустимая роль. Доступны: admin, moderator, manager, mechanic")
+        raise HTTPException(status_code=400, detail="Недопустимая роль. Доступны: admin, moderator, manager, sales_manager, mechanic")
 
     clean_username = u.username.strip().lower()
     if len(clean_username) < 3 or clean_username in ('undefined', 'null'):
@@ -386,9 +386,9 @@ def update_user(user_id: int, u: UserUpdate, x_user_role: Optional[str] = Header
     if effective_role and effective_role != "admin":
         raise HTTPException(status_code=403, detail="Управление сотрудниками доступно исключительно Администратору")
 
-    valid_roles = ["admin", "moderator", "manager", "mechanic"]
+    valid_roles = ["admin", "moderator", "manager", "sales_manager", "mechanic"]
     if u.role not in valid_roles:
-        raise HTTPException(status_code=400, detail="Недопустимая роль")
+        raise HTTPException(status_code=400, detail="Недопустимая роль. Доступны: admin, moderator, manager, sales_manager, mechanic")
 
     try:
         return database.update_user(user_id, u.model_dump())

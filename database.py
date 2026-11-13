@@ -337,6 +337,15 @@ def initialize_schema() -> None:
                     "INSERT INTO public.schema_migrations (version, checksum) VALUES (%s, %s)",
                     (version, checksum),
                 )
+
+            # Ensure users_role_check allows sales_manager on existing databases
+            connection.execute(
+                "ALTER TABLE public.users DROP CONSTRAINT IF EXISTS users_role_check"
+            )
+            connection.execute(
+                "ALTER TABLE public.users ADD CONSTRAINT users_role_check "
+                "CHECK (role IN ('admin', 'moderator', 'manager', 'mechanic', 'sales_manager'))"
+            )
         connection.commit()
 
 def ensure_bootstrap_admin() -> None:
@@ -421,6 +430,17 @@ def create_user(data: Dict[str, Any]) -> Dict[str, Any]:
             "created_at": now_str
         }
         r = client.post("/users", json=payload)
+        if r.status_code not in (200, 201) and "users_role_check" in (r.text or ""):
+            try:
+                client.connection.execute("ALTER TABLE public.users DROP CONSTRAINT IF EXISTS users_role_check")
+                client.connection.execute(
+                    "ALTER TABLE public.users ADD CONSTRAINT users_role_check "
+                    "CHECK (role IN ('admin', 'moderator', 'manager', 'mechanic', 'sales_manager'))"
+                )
+                client.connection.commit()
+                r = client.post("/users", json=payload)
+            except Exception:
+                pass
         if r.status_code not in (200, 201):
             raise Exception(r.text)
         res = r.json()
@@ -442,6 +462,17 @@ def update_user(user_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
             payload["salt"] = salt
         
         r = client.patch(f"/users?id=eq.{user_id}", json=payload)
+        if r.status_code not in (200, 204) and "users_role_check" in (r.text or ""):
+            try:
+                client.connection.execute("ALTER TABLE public.users DROP CONSTRAINT IF EXISTS users_role_check")
+                client.connection.execute(
+                    "ALTER TABLE public.users ADD CONSTRAINT users_role_check "
+                    "CHECK (role IN ('admin', 'moderator', 'manager', 'mechanic', 'sales_manager'))"
+                )
+                client.connection.commit()
+                r = client.patch(f"/users?id=eq.{user_id}", json=payload)
+            except Exception:
+                pass
         if r.status_code not in (200, 204):
             raise Exception(r.text)
         return {"id": user_id, "message": "Сотрудник обновлен"}
