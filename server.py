@@ -248,6 +248,7 @@ class DealCreate(BaseModel):
     closing_outcome: Optional[str] = "success"
     stage: str = "new"
     amount: float = 0.0
+    labor_cost: float = 0.0
     cost: float = 0.0
     priority: str = "normal"
     responsible: str = "Мастер-приемщик"

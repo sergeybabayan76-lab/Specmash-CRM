@@ -963,11 +963,20 @@ def get_stock_movements(limit: int = 50) -> List[Dict[str, Any]]:
 
 # ==================== DEALS & KANBAN ====================
 
-def serialize_deal_description(description: str, deal_type: str = "service", service_type: str = "service", closing_outcome: str = "success") -> str:
+def extract_deal_labor_cost(raw_description: str) -> float:
+    if not raw_description:
+        return 0.0
+    m = re.search(r'\[LABOR_COST:(.*?)\]', raw_description, flags=re.DOTALL)
+    if m:
+        return round(_to_float(m.group(1).strip(), 0.0), 2)
+    return 0.0
+
+def serialize_deal_description(description: str, deal_type: str = "service", service_type: str = "service", closing_outcome: str = "success", labor_cost: Optional[float] = None) -> str:
     clean_desc = (description or "").strip()
     clean_desc = re.sub(r'\[DEAL_TYPE:.*?\]', '', clean_desc, flags=re.DOTALL).strip()
     clean_desc = re.sub(r'\[SERVICE_TYPE:.*?\]', '', clean_desc, flags=re.DOTALL).strip()
     clean_desc = re.sub(r'\[OUTCOME:.*?\]', '', clean_desc, flags=re.DOTALL).strip()
+    clean_desc = re.sub(r'\[LABOR_COST:.*?\]', '', clean_desc, flags=re.DOTALL).strip()
     tags = []
     dtype = (deal_type or "service").strip().lower()
     if dtype in ("parts_sale", "sales"):
@@ -978,6 +987,8 @@ def serialize_deal_description(description: str, deal_type: str = "service", ser
     outcome = (closing_outcome or "success").strip().lower()
     if outcome in ("success", "failed"):
         tags.append(f"[OUTCOME:{outcome}]")
+    if labor_cost is not None and _to_float(labor_cost, 0.0) > 0:
+        tags.append(f"[LABOR_COST:{round(_to_float(labor_cost, 0.0), 2)}]")
     if tags:
         tag_str = "\n".join(tags)
         return f"{clean_desc}\n{tag_str}".strip() if clean_desc else tag_str
@@ -1014,6 +1025,8 @@ def parse_deal_description(raw_description: str, title: str = "") -> tuple[str, 
     if m_outcome:
         closing_outcome = m_outcome.group(1).strip().lower()
         clean_desc = re.sub(r'\[OUTCOME:.*?\]', '', clean_desc, flags=re.DOTALL).strip()
+
+    clean_desc = re.sub(r'\[LABOR_COST:.*?\]', '', clean_desc, flags=re.DOTALL).strip()
 
     return clean_desc, deal_type, service_type, closing_outcome
 
@@ -1061,13 +1074,15 @@ def list_deals(stage: Optional[str] = None, q: Optional[str] = None, deal_type: 
             item = dict(d)
             item.pop("clients", None)
             item.pop("equipment", None)
-            clean_desc, dtype, stype, outcome = parse_deal_description(d.get("description") or "", d.get("title") or "")
+            raw_d_desc = d.get("description") or ""
+            clean_desc, dtype, stype, outcome = parse_deal_description(raw_d_desc, d.get("title") or "")
             if deal_type and deal_type != "all" and dtype != deal_type:
                 continue
             item["description"] = clean_desc
             item["deal_type"] = dtype
             item["service_type"] = stype
             item["closing_outcome"] = outcome
+            item["labor_cost"] = extract_deal_labor_cost(raw_d_desc)
             item["client_name"] = cl.get("name", "")
             item["client_company"] = cl.get("company", "")
             item["client_phone"] = cl.get("phone", "")
@@ -1090,7 +1105,8 @@ def create_deal(deal_data: Dict[str, Any]) -> Dict[str, Any]:
         deal_type = (deal_data.get("deal_type") or "service").strip().lower()
         service_type = (deal_data.get("service_type") or "service").strip().lower()
         closing_outcome = (deal_data.get("closing_outcome") or "success").strip().lower()
-        serialized_desc = serialize_deal_description(deal_data.get("description") or "", deal_type=deal_type, service_type=service_type, closing_outcome=closing_outcome)
+        labor_cost = round(_to_float(deal_data.get("labor_cost"), 0.0), 2)
+        serialized_desc = serialize_deal_description(deal_data.get("description") or "", deal_type=deal_type, service_type=service_type, closing_outcome=closing_outcome, labor_cost=labor_cost)
 
         payload = {
             "id": next_id,
@@ -1136,6 +1152,7 @@ def create_deal(deal_data: Dict[str, Any]) -> Dict[str, Any]:
             "deal_type": deal_type,
             "service_type": service_type,
             "closing_outcome": closing_outcome,
+            "labor_cost": labor_cost,
             "client_name": cl_name,
             "client_company": cl_comp,
             "client_phone": cl_phone,
@@ -1157,11 +1174,13 @@ def get_deal(deal_id: int) -> Dict[str, Any]:
         eq = d.get("equipment") or {}
         d.pop("clients", None)
         d.pop("equipment", None)
-        clean_desc, dtype, stype, outcome = parse_deal_description(d.get("description") or "", d.get("title") or "")
+        raw_d_desc = d.get("description") or ""
+        clean_desc, dtype, stype, outcome = parse_deal_description(raw_d_desc, d.get("title") or "")
         d["description"] = clean_desc
         d["deal_type"] = dtype
         d["service_type"] = stype
         d["closing_outcome"] = outcome
+        d["labor_cost"] = extract_deal_labor_cost(raw_d_desc)
         d["client_name"] = cl.get("name", "")
         d["client_company"] = cl.get("company", "")
         d["client_phone"] = cl.get("phone", "")
@@ -1216,11 +1235,13 @@ def update_deal(deal_id: int, deal_data: Dict[str, Any]) -> Dict[str, Any]:
             existing_title = row.get("title") or ""
             existing_completed_at = row.get("completed_at")
         old_desc, old_dtype, old_stype, old_outcome = parse_deal_description(existing_desc, existing_title)
+        old_labor_cost = extract_deal_labor_cost(existing_desc)
         new_dtype = (deal_data.get("deal_type") or old_dtype or "service").strip().lower()
         new_stype = (deal_data.get("service_type") or old_stype or "service").strip().lower()
         new_outcome = (deal_data.get("closing_outcome") or old_outcome or "success").strip().lower()
+        new_labor_cost = round(_to_float(deal_data.get("labor_cost"), old_labor_cost), 2) if "labor_cost" in deal_data and deal_data["labor_cost"] is not None else old_labor_cost
         raw_desc = deal_data.get("description") if "description" in deal_data and deal_data["description"] is not None else old_desc
-        serialized_desc = serialize_deal_description(raw_desc or "", deal_type=new_dtype, service_type=new_stype, closing_outcome=new_outcome)
+        serialized_desc = serialize_deal_description(raw_desc or "", deal_type=new_dtype, service_type=new_stype, closing_outcome=new_outcome, labor_cost=new_labor_cost)
 
         if stage in ("ready", "completed"):
             completed_at = existing_completed_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1252,7 +1273,7 @@ def update_deal(deal_id: int, deal_data: Dict[str, Any]) -> Dict[str, Any]:
             payload["id"] = deal_id
             payload["created_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             client.post("/deals", json=payload, headers={"Prefer": "resolution=merge-duplicates"})
-        return {"id": deal_id, **payload, "parts_count": parts_qty_sum, "parts_selling_total": parts_selling_sum, "description": raw_desc, "deal_type": new_dtype, "service_type": new_stype, "closing_outcome": new_outcome, "message": "Сделка обновлена"}
+        return {"id": deal_id, **payload, "parts_count": parts_qty_sum, "parts_selling_total": parts_selling_sum, "labor_cost": new_labor_cost, "description": raw_desc, "deal_type": new_dtype, "service_type": new_stype, "closing_outcome": new_outcome, "message": "Сделка обновлена"}
 
 def delete_deal(deal_id: int) -> Dict[str, Any]:
     with get_database_client() as client:

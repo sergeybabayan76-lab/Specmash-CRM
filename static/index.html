@@ -11,7 +11,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Lucide Icons CDN -->
   <script src="https://unpkg.com/lucide@latest"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=1.2.4.1">
+  <link rel="stylesheet" href="/static/styles.css?v=1.2.4.2">
   <script>
     tailwind.config = {
       theme: {
@@ -1878,20 +1878,36 @@
           </div>
         </div>
 
-        <!-- Requirement #4: Deal Registration and Completion Dates -->
-        <div id="deal-dates-banner" class="hidden p-3 bg-slate-50 border border-slate-200 rounded-xl flex flex-wrap items-center justify-between text-xs text-slate-600 gap-2">
+        <!-- Requirement #4: Deal Registration, Funnel Stage (in the middle), and Completion Dates -->
+        <div id="deal-dates-banner" class="p-3 bg-slate-50 border border-slate-200 rounded-xl grid grid-cols-1 md:grid-cols-3 items-center text-xs text-slate-600 gap-3">
           <div class="flex items-center gap-2">
-            <div class="w-6 h-6 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center">
-              <i data-lucide="calendar" class="w-3.5 h-3.5"></i>
+            <div class="w-7 h-7 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center shrink-0">
+              <i data-lucide="calendar" class="w-4 h-4"></i>
             </div>
             <div>
               <span class="text-[10px] text-slate-400 block font-medium uppercase leading-tight">Дата регистрации</span>
               <span id="deal-date-created" class="font-bold text-slate-800 font-mono text-xs">—</span>
             </div>
           </div>
-          <div class="flex items-center gap-2">
-            <div class="w-6 h-6 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center">
-              <i data-lucide="calendar-check" class="w-3.5 h-3.5"></i>
+
+          <div>
+            <label class="block text-[10px] font-bold text-slate-700 uppercase mb-1 text-center">Стадия воронки</label>
+            <select id="deal-stage" class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-semibold outline-none focus:border-blue-500 bg-white shadow-2xs">
+              <option value="new">📥 Новая заявка</option>
+              <option value="diagnostic">🔍 Диагностика</option>
+              <option value="estimate">📝 Согласование сметы</option>
+              <option value="in_progress">⚙️ В ремонте / работе</option>
+              <option value="parts_waiting">📦 Ожидание запчастей</option>
+              <option value="ready">✅ Готово к выдаче</option>
+              <option value="invoiced">🧾 Фактура выписана</option>
+              <option value="completed">💰 Оплачено (Завершено)</option>
+              <option value="cancelled">❌ Отказ / Архив</option>
+            </select>
+          </div>
+
+          <div class="flex items-center gap-2 md:justify-end">
+            <div class="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0">
+              <i data-lucide="calendar-check" class="w-4 h-4"></i>
             </div>
             <div>
               <span class="text-[10px] text-slate-400 block font-medium uppercase leading-tight">Дата закрытия</span>
@@ -1957,19 +1973,9 @@
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div>
-            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Стадия воронки</label>
-            <select id="deal-stage" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white">
-              <option value="new">📥 Новая заявка</option>
-              <option value="diagnostic">🔍 Диагностика</option>
-              <option value="estimate">📝 Согласование сметы</option>
-              <option value="in_progress">⚙️ В ремонте / работе</option>
-              <option value="parts_waiting">📦 Ожидание запчастей</option>
-              <option value="ready">✅ Готово к выдаче</option>
-              <option value="invoiced">🧾 Фактура выписана</option>
-              <option value="completed">💰 Оплачено (Завершено)</option>
-              <option value="cancelled">❌ Отказ / Архив</option>
-            </select>
+          <div id="deal-labor-cost-group">
+            <label id="deal-labor-cost-label" class="block text-xs font-bold text-slate-700 uppercase mb-1">Стоимость работы (AMD)</label>
+            <input type="number" id="deal-labor-cost" step="any" min="0" placeholder="0" oninput="handleDealLaborCostInput()" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-mono" title="Стоимость выполненных работ по заказ-наряду">
           </div>
 
           <div>
@@ -2055,7 +2061,7 @@
                 <!-- populated -->
               </select>
               <div class="flex items-center gap-1.5 shrink-0">
-                <span class="text-xs text-slate-600 font-medium">Шт:</span>
+                <span id="attach-part-unit-label" class="text-xs text-slate-600 font-medium">Шт:</span>
                 <input type="number" id="attach-part-qty" value="1" min="1" class="w-16 text-xs border border-amber-300 rounded-lg px-2 py-2 font-mono text-center outline-none bg-white font-bold">
               </div>
               <button type="button" onclick="submitAttachPart()" class="bg-amber-600 hover:bg-amber-700 text-white text-xs px-4 py-2 rounded-lg font-bold shadow-sm flex items-center gap-1.5 shrink-0">
@@ -2334,7 +2340,7 @@
           </div>
           <div>
             <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Категория *</label>
-            <select id="part-category" required class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white">
+            <select id="part-category" required onchange="updatePartQuantityUnit(this.value)" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white">
               <option value="Фильтры">Фильтры</option>
               <option value="Масла и техжидкости">Масла и техжидкости</option>
               <option value="Гидравлика">Гидравлика</option>
@@ -2354,11 +2360,11 @@
 
         <div class="grid grid-cols-3 gap-3">
           <div>
-            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Количество (шт)</label>
+            <label id="part-quantity-label" class="block text-xs font-bold text-slate-700 uppercase mb-1">Количество (шт)</label>
             <input type="number" id="part-quantity" min="0" value="0" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-mono">
           </div>
           <div>
-            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Мин. остаток</label>
+            <label id="part-min-threshold-label" class="block text-xs font-bold text-slate-700 uppercase mb-1">Мин. остаток (шт)</label>
             <input type="number" id="part-min-threshold" min="0" value="2" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-mono">
           </div>
           <div>
@@ -2712,6 +2718,6 @@
   <script src="/static/app/core/router.js?v=1.0.0"></script>
   <script src="/static/app/core/api.js?v=1.0.0"></script>
   <script src="/static/app/pages/index.js?v=1.0.0"></script>
-  <script src="/static/app.js?v=1.2.4.1"></script>
+  <script src="/static/app.js?v=1.2.4.2"></script>
 </body>
 </html>

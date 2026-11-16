@@ -130,6 +130,7 @@ const crmStore = {
           ...d,
           parts_count: Number(d.parts_count || 0),
           parts_selling_total: Number(d.parts_selling_total || 0),
+          labor_cost: Number(d.labor_cost || 0),
           amount: Number(d.amount || 0),
           cost: Number(d.cost || 0),
         })).sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0));
@@ -341,7 +342,7 @@ const SERVICE_KANBAN_STAGES = [
   { id: 'in_progress', label: 'В работе / Ремонт', short: 'Ремонт', icon: 'wrench', color: 'border-amber-500' },
   { id: 'parts_waiting', label: 'Ожидание запчастей', short: 'Ожид. з/ч', icon: 'package-open', color: 'border-orange-500' },
   { id: 'ready', label: 'Готово к выдаче', short: 'Готово', icon: 'check-circle', color: 'border-emerald-500' },
-  { id: 'invoiced', label: 'Фактура выписана', short: 'Фактура выписана', icon: 'file-text', color: 'border-teal-500' },
+  { id: 'invoiced', label: 'Фактура выписана', short: 'Фактура выписана', icon: 'file-text', color: 'border-yellow-400' },
   { id: 'completed', label: 'Оплачено / Закрыто', short: 'Оплачено', icon: 'badge-dollar-sign', color: 'border-green-600' },
 ];
 const KANBAN_STAGES = SERVICE_KANBAN_STAGES;
@@ -352,7 +353,7 @@ const PARTS_KANBAN_STAGES = [
   { id: 'estimate', label: 'Подбор и расчет', short: 'Подбор', icon: 'file-text', color: 'border-indigo-500' },
   { id: 'parts_waiting', label: 'Ожидание поставки', short: 'Поставка', icon: 'truck', color: 'border-amber-500' },
   { id: 'ready', label: 'Скомплектовано / Готово', short: 'Готово', icon: 'check-circle', color: 'border-emerald-500' },
-  { id: 'invoiced', label: 'Фактура выписана', short: 'Фактура выписана', icon: 'file-text', color: 'border-teal-500' },
+  { id: 'invoiced', label: 'Фактура выписана', short: 'Фактура выписана', icon: 'file-text', color: 'border-yellow-400' },
   { id: 'completed', label: 'Оплачено и выдано', short: 'Выдано', icon: 'badge-dollar-sign', color: 'border-green-600' },
 ];
 
@@ -390,6 +391,22 @@ const ROLE_DEFINITIONS = {
   sales_manager: { label: 'Менеджер по продажам', badge: 'bg-indigo-100 text-indigo-800 border-indigo-200', icon: '🚜' },
   mechanic: { label: 'Механик', badge: 'bg-amber-100 text-amber-800 border-amber-200', icon: '🔧' },
 };
+
+// Unit helper: returns 'л' for 'Масла и техжидкости', otherwise 'шт'
+function getPartUnit(partOrCategory) {
+  const cat = typeof partOrCategory === 'string'
+    ? partOrCategory
+    : (partOrCategory?.part_category || partOrCategory?.category || '');
+  return String(cat).trim() === 'Масла и техжидкости' ? 'л' : 'шт';
+}
+
+function updatePartQuantityUnit(category) {
+  const unit = getPartUnit(category);
+  const qtyLabel = document.getElementById('part-quantity-label');
+  const minLabel = document.getElementById('part-min-threshold-label');
+  if (qtyLabel) qtyLabel.textContent = `Количество (${unit})`;
+  if (minLabel) minLabel.textContent = `Мин. остаток (${unit})`;
+}
 
 // Currency Formatter: AMD
 function formatMoney(amount) {
@@ -1540,10 +1557,10 @@ function renderCriticalParts(parts, targetRows = 6) {
           <span class="truncate">${escapeHtml(p.name)}</span>
           <span class="font-mono text-[10px] text-slate-500 bg-white px-1.5 py-0.5 rounded border shrink-0">${escapeHtml(p.sku)}</span>
         </div>
-        <div class="text-[11px] text-slate-500 mt-0.5 truncate">Локация: ${escapeHtml(p.location || 'Склад')} • Мин. остаток: ${p.min_threshold} шт</div>
+        <div class="text-[11px] text-slate-500 mt-0.5 truncate">Локация: ${escapeHtml(p.location || 'Склад')} • Мин. остаток: ${p.min_threshold} ${getPartUnit(p)}</div>
       </div>
       <div class="flex items-center gap-2.5 shrink-0">
-        <span class="font-bold text-rose-600 font-mono text-sm whitespace-nowrap">${p.quantity} шт</span>
+        <span class="font-bold text-rose-600 font-mono text-sm whitespace-nowrap">${p.quantity} ${getPartUnit(p)}</span>
         <button onclick="openStockAdjustModal(${p.id}, '${String(p.name || '').replace(/'/g, "\\'") }')" class="bg-rose-600 hover:bg-rose-700 text-white px-2.5 py-1 rounded text-[11px] font-medium shadow-sm whitespace-nowrap">
           + Приход
         </button>
@@ -2062,7 +2079,7 @@ function renderDealsList() {
             <!-- Quick Inline Dropdown Selector -->
             <div class="flex items-center gap-2">
               <span class="text-[10px] text-slate-400 font-medium">Стадия:</span>
-              <select ${isLocked ? 'disabled' : ''} onchange="updateDealStageQuick(${deal.id}, this.value, event)" class="b24-stage-select bg-white border border-slate-200 text-[11px] font-semibold rounded px-2 py-0.5 outline-none focus:border-blue-500 ${isLocked ? 'bg-slate-100 cursor-not-allowed text-slate-400' : 'cursor-pointer'}">
+              <select ${isLocked ? 'disabled' : ''} onchange="updateDealStageQuick(${deal.id}, this.value, event)" class="b24-stage-select ${deal.stage === 'invoiced' ? 'bg-yellow-100 border-yellow-400 text-yellow-950' : 'bg-white border-slate-200'} border text-[11px] font-semibold rounded px-2 py-0.5 outline-none focus:border-blue-500 ${isLocked ? 'bg-slate-100 cursor-not-allowed text-slate-400' : 'cursor-pointer'}">
                 ${activeStages.map(s => `
                   <option value="${s.id}" ${s.id === deal.stage ? 'selected' : ''}>${s.label}</option>
                 `).join('')}
@@ -2735,9 +2752,9 @@ function renderPartsTable(searchQuery = null) {
         </td>
         <td class="p-3.5 text-xs font-mono font-bold">
           <span class="px-2 py-0.5 rounded-full ${isLow ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-800'}">
-            ${p.quantity} шт
+            ${p.quantity} ${getPartUnit(p)}
           </span>
-          ${isLow ? '<span class="text-[10px] text-rose-500 block font-normal mt-0.5">Дефицит! (мин ' + p.min_threshold + ')</span>' : ''}
+          ${isLow ? `<span class="text-[10px] text-rose-500 block font-normal mt-0.5">Дефицит! (мин ${p.min_threshold} ${getPartUnit(p)})</span>` : ''}
         </td>
         <td class="p-3.5 text-xs font-mono text-slate-600 col-purchase-price">
           ${formatMoney(p.purchase_price)}
@@ -3365,6 +3382,11 @@ function setDealModalType(type) {
   const costLabel = document.getElementById('deal-cost-label');
   const costInput = document.getElementById('deal-cost');
   const partsSellingInput = document.getElementById('deal-parts-selling-total');
+  const laborCostGroup = document.getElementById('deal-labor-cost-group');
+  const laborCostLabel = document.getElementById('deal-labor-cost-label');
+  if (laborCostLabel) {
+    laborCostLabel.textContent = isSales ? 'Доп. услуги / предпродажка (AMD)' : 'Стоимость работы (AMD)';
+  }
 
   if (partsSection) {
     if (isSales) {
@@ -3529,11 +3551,17 @@ async function openDealModal(dealId = null, defaultStage = 'new', defaultType = 
   hideAttachPartRow();
   document.getElementById('btn-delete-deal').classList.add('hidden');
   const datesBanner = document.getElementById('deal-dates-banner');
-  if (datesBanner) datesBanner.classList.add('hidden');
+  if (datesBanner) datesBanner.classList.remove('hidden');
+  const createdEl = document.getElementById('deal-date-created');
+  if (createdEl) createdEl.textContent = new Date().toLocaleDateString('ru-RU');
+  const completedEl = document.getElementById('deal-date-completed');
+  if (completedEl) completedEl.textContent = 'В работе';
+  const laborInput = document.getElementById('deal-labor-cost');
+  if (laborInput) laborInput.value = '';
   const lockedBanner = document.getElementById('deal-locked-banner');
   if (lockedBanner) lockedBanner.classList.add('hidden');
 
-  const fieldsToUnlock = ['deal-title', 'deal-client', 'deal-equipment', 'deal-stage', 'deal-amount', 'deal-cost', 'deal-priority', 'deal-responsible', 'deal-responsible-btn', 'deal-deadline', 'deal-description', 'deal-service-type', 'deal-closing-outcome'];
+  const fieldsToUnlock = ['deal-title', 'deal-client', 'deal-equipment', 'deal-stage', 'deal-labor-cost', 'deal-amount', 'deal-cost', 'deal-priority', 'deal-responsible', 'deal-responsible-btn', 'deal-deadline', 'deal-description', 'deal-service-type', 'deal-closing-outcome'];
   fieldsToUnlock.forEach(fId => {
     const el = document.getElementById(fId);
     if (el) el.disabled = false;
@@ -3580,6 +3608,8 @@ async function openDealModal(dealId = null, defaultStage = 'new', defaultType = 
       document.getElementById('deal-client').value = deal.client_id || '';
       await handleDealClientChange(deal.client_id, deal.equipment_id);
       document.getElementById('deal-stage').value = deal.stage;
+      const laborCostEl = document.getElementById('deal-labor-cost');
+      if (laborCostEl) laborCostEl.value = deal.labor_cost || 0;
       document.getElementById('deal-amount').value = deal.amount;
       document.getElementById('deal-cost').value = deal.cost;
       document.getElementById('deal-priority').value = deal.priority;
@@ -3600,7 +3630,7 @@ async function openDealModal(dealId = null, defaultStage = 'new', defaultType = 
         else lockedBanner.classList.add('hidden');
       }
 
-      const fieldsToLock = ['deal-title', 'deal-client', 'deal-equipment', 'deal-stage', 'deal-amount', 'deal-cost', 'deal-priority', 'deal-responsible', 'deal-responsible-btn', 'deal-deadline', 'deal-description', 'deal-service-type', 'deal-closing-outcome'];
+      const fieldsToLock = ['deal-title', 'deal-client', 'deal-equipment', 'deal-stage', 'deal-labor-cost', 'deal-amount', 'deal-cost', 'deal-priority', 'deal-responsible', 'deal-responsible-btn', 'deal-deadline', 'deal-description', 'deal-service-type', 'deal-closing-outcome'];
       fieldsToLock.forEach(fId => {
         const el = document.getElementById(fId);
         if (el) el.disabled = isLocked;
@@ -3765,11 +3795,12 @@ function renderDealAttachedParts(parts) {
     const qty = Math.max(1, Number(p.quantity || 1));
     const unitPrice = Number(p.selling_price || 0);
     const lineTotal = unitPrice * qty;
+    const unit = getPartUnit(p);
     return `
     <div class="flex items-center justify-between gap-2 p-2 rounded-lg bg-slate-50 border border-slate-200 text-xs">
       <div class="min-w-0 flex-1">
         <div class="font-bold text-slate-800 truncate" title="${escapeHtml(p.part_name)}">${escapeHtml(p.part_name)}</div>
-        <div class="text-[11px] font-mono text-slate-500">${escapeHtml(p.sku)} • ${formatMoney(unitPrice)} / шт</div>
+        <div class="text-[11px] font-mono text-slate-500">${escapeHtml(p.sku)} • ${formatMoney(unitPrice)} / ${unit}</div>
       </div>
       <div class="flex items-center gap-2 shrink-0">
         <div class="inline-flex items-center border border-slate-300 rounded-lg bg-white overflow-hidden shadow-2xs">
@@ -3832,15 +3863,17 @@ async function loadWarehousePartsOptions(filteredParts = null) {
   select.innerHTML = partsToRender.map(p => {
     const qty = Number(p.quantity || 0);
     const isSel = String(p.id) === String(selectedId);
+    const unit = getPartUnit(p);
     return `
       <option value="${p.id}" ${qty <= 0 ? 'disabled' : ''} ${isSel ? 'selected' : ''}>
-        ${escapeHtml(p.name)} [${escapeHtml(p.sku)}] — ост: ${qty} шт (${formatMoney(p.selling_price)})
+        ${escapeHtml(p.name)} [${escapeHtml(p.sku)}] — ост: ${qty} ${unit} (${formatMoney(p.selling_price)})
       </option>
     `;
   }).join('');
 
   if (firstInStock) {
     select.value = String(firstInStock.id);
+    handleAttachPartSelectChange(firstInStock.id);
   }
 }
 
@@ -3892,7 +3925,7 @@ function handleAttachPartSearch(query) {
           <div class="text-[11px] text-slate-400 mt-0.5">${p.location ? 'Локация: ' + escapeHtml(p.location) + ' • ' : ''}Категория: ${escapeHtml(p.category || 'Общая')}</div>
         </div>
         <div class="text-right shrink-0">
-          <div class="font-bold ${isOut ? 'text-rose-500' : 'text-emerald-700'} font-mono">${qty} шт</div>
+          <div class="font-bold ${isOut ? 'text-rose-500' : 'text-emerald-700'} font-mono">${qty} ${getPartUnit(p)}</div>
           <div class="text-[10px] text-slate-500 font-mono">${formatMoney(p.selling_price)}</div>
         </div>
       </div>
@@ -3940,6 +3973,10 @@ function handleAttachPartSelectChange(partId) {
     if (searchInput && !searchInput.value) {
       searchInput.placeholder = `Выбрано: [${part.sku}] ${part.name}`;
     }
+    const unitLabel = document.getElementById('attach-part-unit-label');
+    if (unitLabel) {
+      unitLabel.textContent = getPartUnit(part) === 'л' ? 'Л:' : 'Шт:';
+    }
   }
 }
 
@@ -3980,6 +4017,7 @@ async function ensureDealSavedForPartWriteOff() {
     client_id: clientId,
     equipment_id: eqId,
     stage: document.getElementById('deal-stage')?.value || 'new',
+    labor_cost: parseFloat(document.getElementById('deal-labor-cost')?.value) || 0.0,
     amount: parseFloat(document.getElementById('deal-amount')?.value) || 0.0,
     cost: parseFloat(document.getElementById('deal-cost')?.value) || 0.0,
     priority: document.getElementById('deal-priority')?.value || 'normal',
@@ -4249,6 +4287,15 @@ async function removeAttachedPart(dealId, dealPartId) {
   }
 }
 
+function handleDealLaborCostInput() {
+  const laborVal = parseFloat(document.getElementById('deal-labor-cost')?.value) || 0;
+  const partsVal = parseFloat(document.getElementById('deal-parts-selling-total')?.value) || 0;
+  const amountEl = document.getElementById('deal-amount');
+  if (amountEl) {
+    amountEl.value = Math.round(laborVal + partsVal);
+  }
+}
+
 async function saveDeal(e) {
   e.preventDefault();
   const dealId = document.getElementById('deal-id').value;
@@ -4264,6 +4311,7 @@ async function saveDeal(e) {
     client_id: clientId,
     equipment_id: eqId,
     stage: document.getElementById('deal-stage').value,
+    labor_cost: parseFloat(document.getElementById('deal-labor-cost')?.value) || 0.0,
     amount: parseFloat(document.getElementById('deal-amount').value) || 0.0,
     cost: parseFloat(document.getElementById('deal-cost').value) || 0.0,
     priority: document.getElementById('deal-priority').value,
@@ -4374,6 +4422,7 @@ async function printDealOrder(dealId = null, event = null) {
       deal_type: document.getElementById('deal-type')?.value || dealData.deal_type || 'service',
       service_type: document.getElementById('deal-service-type')?.value || dealData.service_type || 'service',
       stage: document.getElementById('deal-stage')?.value || dealData.stage || 'new',
+      labor_cost: parseFloat(document.getElementById('deal-labor-cost')?.value) || Number(dealData.labor_cost || 0),
       amount: parseFloat(document.getElementById('deal-amount')?.value) || Number(dealData.amount || 0),
       responsible: getDealResponsibles() || document.getElementById('deal-responsible')?.value || dealData.responsible || '—',
       deadline: document.getElementById('deal-deadline')?.value || dealData.deadline || '',
@@ -4426,6 +4475,7 @@ async function printDealOrder(dealId = null, event = null) {
   const parts = Array.isArray(dealData.parts) ? dealData.parts : [];
   const totalPartsQty = parts.reduce((acc, p) => acc + Number(p.quantity || 0), 0);
   const totalPartsSum = parts.reduce((acc, p) => acc + Number(p.selling_price || 0) * Number(p.quantity || 0), 0);
+  const laborCostVal = Number(dealData.labor_cost || 0);
   const dealAmount = Number(dealData.amount || 0);
   const printDate = new Date().toLocaleString('ru-RU');
 
@@ -4434,13 +4484,14 @@ async function printDealOrder(dealId = null, event = null) {
         const qty = Number(p.quantity || 1);
         const price = Number(p.selling_price || 0);
         const sum = qty * price;
+        const unit = getPartUnit(p);
         return `
           <tr>
             <td style="text-align:center;">${idx + 1}</td>
             <td style="font-family:monospace;font-weight:600;">${escapeHtml(p.sku || '—')}</td>
             <td>${escapeHtml(p.part_name || p.name || '—')}</td>
             <td>${escapeHtml(p.part_category || p.category || 'Запчасти')}</td>
-            <td style="text-align:center;font-weight:700;">${qty} шт</td>
+            <td style="text-align:center;font-weight:700;">${qty} ${unit}</td>
             <td style="text-align:right;font-family:monospace;">${formatMoney(price)}</td>
             <td style="text-align:right;font-family:monospace;font-weight:700;">${formatMoney(sum)}</td>
           </tr>
@@ -4710,16 +4761,16 @@ async function printDealOrder(dealId = null, event = null) {
 
     <div class="totals-box">
       <div class="totals-row">
-        <span>Всего списано запчастей:</span>
-        <strong>${totalPartsQty} шт.</strong>
+        <span>Стоимость выполненных работ:</span>
+        <strong>${formatMoney(laborCostVal)}</strong>
       </div>
       <div class="totals-row">
-        <span>Сумма продажи запчастей:</span>
+        <span>Сумма продажи запчастей (${totalPartsQty} ед.):</span>
         <strong>${formatMoney(totalPartsSum)}</strong>
       </div>
       <div class="totals-row grand">
         <span>Итого по заказ-наряду:</span>
-        <span>${formatMoney(dealAmount > 0 ? dealAmount : totalPartsSum)}</span>
+        <span>${formatMoney(dealAmount > 0 ? dealAmount : (laborCostVal + totalPartsSum))}</span>
       </div>
     </div>
 
@@ -5202,6 +5253,7 @@ function openPartModal(partId = null) {
     document.getElementById('modal-part-title').textContent = 'Новая запчасть / материал';
   }
 
+  updatePartQuantityUnit(document.getElementById('part-category')?.value || 'Фильтры');
   openModal('modal-part');
 }
 
