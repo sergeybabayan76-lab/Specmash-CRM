@@ -11,7 +11,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Lucide Icons CDN -->
   <script src="https://unpkg.com/lucide@latest"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=1.2.4.0">
+  <link rel="stylesheet" href="/static/styles.css?v=1.2.4.1">
   <script>
     tailwind.config = {
       theme: {
@@ -1822,9 +1822,15 @@
   <!-- Modal: Deal / Repair Order -->
   <div id="modal-deal" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 hidden flex items-start justify-center p-4 overflow-y-auto modal-overlay">
     <div class="bg-white rounded-2xl max-w-2xl w-full p-6 shadow-2xl border border-slate-100 modal-box my-auto">
-      <div class="flex items-center justify-between pb-4 border-b border-slate-100">
+      <div class="flex items-center justify-between pb-4 border-b border-slate-100 gap-2">
         <h3 id="modal-deal-title" class="font-bold text-slate-900 text-lg">Заказ-наряд СТО Спецмаш</h3>
-        <button onclick="closeModal('modal-deal')" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-5 h-5"></i></button>
+        <div class="flex items-center gap-2">
+          <button type="button" id="btn-print-deal-header" onclick="printDealOrder()" class="px-3 py-1.5 bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-blue-700 border border-slate-200 hover:border-blue-300 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors" title="Распечатать заказ-наряд со списанными запчастями и комментариями">
+            <i data-lucide="printer" class="w-4 h-4 text-blue-600"></i>
+            <span>Печать наряда</span>
+          </button>
+          <button onclick="closeModal('modal-deal')" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-5 h-5"></i></button>
+        </div>
       </div>
 
       <form id="form-deal" onsubmit="saveDeal(event)" class="mt-4 space-y-4">
@@ -1960,6 +1966,7 @@
               <option value="in_progress">⚙️ В ремонте / работе</option>
               <option value="parts_waiting">📦 Ожидание запчастей</option>
               <option value="ready">✅ Готово к выдаче</option>
+              <option value="invoiced">🧾 Фактура выписана</option>
               <option value="completed">💰 Оплачено (Завершено)</option>
               <option value="cancelled">❌ Отказ / Архив</option>
             </select>
@@ -2008,8 +2015,8 @@
         </div>
 
         <div>
-          <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Описание неисправности и работ</label>
-          <textarea id="deal-description" rows="2" placeholder="Замечания заказчика, дефекты техники CASE..." class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"></textarea>
+          <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Описание неисправности, работ и комментарии</label>
+          <textarea id="deal-description" rows="2" placeholder="Замечания заказчика, дефекты техники CASE, комментарии к заказ-наряду..." class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500"></textarea>
         </div>
 
         <!-- Attached Parts Section -->
@@ -2063,9 +2070,13 @@
           </div>
         </div>
 
-        <div class="flex items-center justify-between pt-4 border-t border-slate-100">
+        <div class="flex items-center justify-between pt-4 border-t border-slate-100 flex-wrap gap-2">
           <button type="button" id="btn-delete-deal" onclick="deleteDeal()" class="text-xs text-rose-600 hover:underline font-semibold hidden">Удалить заказ-наряд</button>
-          <div class="flex gap-2 ml-auto">
+          <div class="flex items-center gap-2 ml-auto">
+            <button type="button" id="btn-print-deal" onclick="printDealOrder()" class="px-3.5 py-2 bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-blue-700 border border-slate-300 hover:border-blue-300 rounded-lg text-sm font-medium flex items-center gap-1.5 transition-colors" title="Распечатать заказ-наряд со списанными запчастями и комментариями">
+              <i data-lucide="printer" class="w-4 h-4 text-blue-600"></i>
+              <span>Распечатать</span>
+            </button>
             <button type="button" onclick="closeModal('modal-deal')" class="px-4 py-2 border border-slate-300 rounded-lg text-sm text-slate-700 hover:bg-slate-100">Отмена</button>
             <button type="submit" id="btn-save-deal" class="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg text-sm shadow-md">Сохранить</button>
           </div>
@@ -2701,6 +2712,6 @@
   <script src="/static/app/core/router.js?v=1.0.0"></script>
   <script src="/static/app/core/api.js?v=1.0.0"></script>
   <script src="/static/app/pages/index.js?v=1.0.0"></script>
-  <script src="/static/app.js?v=1.2.4.0"></script>
+  <script src="/static/app.js?v=1.2.4.1"></script>
 </body>
 </html>

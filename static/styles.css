@@ -251,6 +251,9 @@ body {
 .b24-stage-chevron.current.stage-ready {
   background: linear-gradient(135deg, #10b981, #059669);
 }
+.b24-stage-chevron.current.stage-invoiced {
+  background: linear-gradient(135deg, #0d9488, #0f766e);
+}
 .b24-stage-chevron.current.stage-completed {
   background: linear-gradient(135deg, #059669, #047857);
 }

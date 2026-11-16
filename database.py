@@ -1624,7 +1624,7 @@ def get_dashboard_metrics(year: Optional[str] = None, month: Optional[str] = Non
         }
     with get_database_client() as client:
         all_deals = client.get("/deals", params={"select": "*,clients(name,company),equipment(name)", "order": "id.desc"}).json() or []
-        closed_stages = ("completed", "ready", "paid", "issued", "parts_paid", "parts_shipped", "sales_delivered")
+        closed_stages = ("completed", "ready", "invoiced", "paid", "issued", "parts_paid", "parts_shipped", "sales_delivered")
 
         years_set = {datetime.now().year, datetime.now().year - 1, datetime.now().year - 2}
         for d in all_deals:

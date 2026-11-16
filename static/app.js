@@ -341,6 +341,7 @@ const SERVICE_KANBAN_STAGES = [
   { id: 'in_progress', label: 'В работе / Ремонт', short: 'Ремонт', icon: 'wrench', color: 'border-amber-500' },
   { id: 'parts_waiting', label: 'Ожидание запчастей', short: 'Ожид. з/ч', icon: 'package-open', color: 'border-orange-500' },
   { id: 'ready', label: 'Готово к выдаче', short: 'Готово', icon: 'check-circle', color: 'border-emerald-500' },
+  { id: 'invoiced', label: 'Фактура выписана', short: 'Фактура выписана', icon: 'file-text', color: 'border-teal-500' },
   { id: 'completed', label: 'Оплачено / Закрыто', short: 'Оплачено', icon: 'badge-dollar-sign', color: 'border-green-600' },
 ];
 const KANBAN_STAGES = SERVICE_KANBAN_STAGES;
@@ -350,7 +351,8 @@ const PARTS_KANBAN_STAGES = [
   { id: 'new', label: 'Новые запросы', short: 'Запрос', icon: 'inbox', color: 'border-blue-500' },
   { id: 'estimate', label: 'Подбор и расчет', short: 'Подбор', icon: 'file-text', color: 'border-indigo-500' },
   { id: 'parts_waiting', label: 'Ожидание поставки', short: 'Поставка', icon: 'truck', color: 'border-amber-500' },
-  { id: 'ready', label: 'Скомплектовано / Готово', short: 'Скомпл.', icon: 'check-circle', color: 'border-emerald-500' },
+  { id: 'ready', label: 'Скомплектовано / Готово', short: 'Готово', icon: 'check-circle', color: 'border-emerald-500' },
+  { id: 'invoiced', label: 'Фактура выписана', short: 'Фактура выписана', icon: 'file-text', color: 'border-teal-500' },
   { id: 'completed', label: 'Оплачено и выдано', short: 'Выдано', icon: 'badge-dollar-sign', color: 'border-green-600' },
 ];
 
@@ -2091,6 +2093,9 @@ function renderDealsList() {
         </td>
 
         <td class="p-3.5 text-right space-x-1 whitespace-nowrap">
+          <button onclick="printDealOrder(${deal.id}, event)" class="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded" title="Распечатать заказ-наряд">
+            <i data-lucide="printer" class="w-4 h-4"></i>
+          </button>
           <button onclick="openDealModal(${deal.id})" class="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-slate-100 rounded" title="Просмотр / Редактирование наряда">
             <i data-lucide="${isLocked ? 'eye' : 'edit-3'}" class="w-4 h-4"></i>
           </button>
@@ -3730,6 +3735,7 @@ async function handleDealClientChange(clientId, selectedEqId = null) {
 
 function renderDealAttachedParts(parts) {
   const list = Array.isArray(parts) ? parts : [];
+  state.currentDealAttachedParts = list;
   const totalSelling = list.reduce((sum, p) => sum + Number(p.selling_price || 0) * Number(p.quantity || 0), 0);
 
   const sellingInput = document.getElementById('deal-parts-selling-total');
@@ -4327,6 +4333,432 @@ async function saveDeal(e) {
   } catch (err) {
     showToast(err.message, 'error');
   }
+}
+
+async function printDealOrder(dealId = null, event = null) {
+  if (event) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  const modalEl = document.getElementById('modal-deal');
+  const isModalOpen = modalEl && !modalEl.classList.contains('hidden');
+  const modalDealId = document.getElementById('deal-id')?.value;
+  const targetId = dealId || modalDealId;
+
+  let dealData = null;
+  if (targetId) {
+    try {
+      const res = await fetch(`/api/deals/${targetId}`);
+      if (res.ok) {
+        dealData = await res.json();
+      }
+    } catch (e) {}
+  }
+
+  if (!dealData) {
+    dealData = (state.deals || []).find(d => String(d.id) === String(targetId)) || {};
+  }
+
+  // If printing from the open modal, overlay current form values so unsaved comments/fields are included
+  if (isModalOpen && (!dealId || String(dealId) === String(modalDealId))) {
+    const formClientId = parseInt(document.getElementById('deal-client')?.value, 10) || dealData.client_id;
+    const formEqId = parseInt(document.getElementById('deal-equipment')?.value, 10) || dealData.equipment_id;
+    const clientObj = (state.clients || []).find(c => Number(c.id) === Number(formClientId));
+    const eqObj = (state.equipment || []).find(eq => Number(eq.id) === Number(formEqId));
+
+    dealData = {
+      ...dealData,
+      id: targetId || 'НОВЫЙ',
+      title: document.getElementById('deal-title')?.value?.trim() || dealData.title || 'Заказ-наряд',
+      deal_type: document.getElementById('deal-type')?.value || dealData.deal_type || 'service',
+      service_type: document.getElementById('deal-service-type')?.value || dealData.service_type || 'service',
+      stage: document.getElementById('deal-stage')?.value || dealData.stage || 'new',
+      amount: parseFloat(document.getElementById('deal-amount')?.value) || Number(dealData.amount || 0),
+      responsible: getDealResponsibles() || document.getElementById('deal-responsible')?.value || dealData.responsible || '—',
+      deadline: document.getElementById('deal-deadline')?.value || dealData.deadline || '',
+      description: document.getElementById('deal-description')?.value?.trim() ?? (dealData.description || ''),
+      client_id: formClientId,
+      client_name: clientObj?.name || dealData.client_name || 'Не указан',
+      client_company: clientObj?.company || dealData.client_company || '',
+      client_phone: clientObj?.phone || dealData.client_phone || '—',
+      client_email: clientObj?.email || dealData.client_email || '',
+      client_inn: clientObj?.inn || '',
+      equipment_id: formEqId,
+      equipment_name: eqObj?.name || dealData.equipment_name || 'Не привязана',
+      equipment_vin: eqObj?.serial_vin || dealData.equipment_vin || '—',
+      equipment_hours: eqObj?.operating_hours || dealData.equipment_hours || '—',
+      equipment_year: eqObj?.year || '',
+      parts: Array.isArray(state.currentDealAttachedParts) ? state.currentDealAttachedParts : (dealData.parts || [])
+    };
+  } else {
+    const clientObj = (state.clients || []).find(c => Number(c.id) === Number(dealData.client_id));
+    const eqObj = (state.equipment || []).find(eq => Number(eq.id) === Number(dealData.equipment_id));
+    dealData = {
+      ...dealData,
+      client_inn: clientObj?.inn || '',
+      equipment_year: eqObj?.year || '',
+      parts: Array.isArray(dealData.parts) ? dealData.parts : []
+    };
+  }
+
+  const settings = state.settings || {};
+  const companyName = settings.company_name || 'СТО Спецмаш';
+  const companySlogan = settings.company_slogan || 'Сервис спецтехники, грузовых авто и оборудования';
+  const companyPhone = settings.company_phone || '';
+  const companyEmail = settings.company_email || '';
+  const companyAddress = settings.company_address || '';
+  const companyTin = settings.company_tin || '';
+  const logoUrl = settings.logo_url || settings.auth_logo_url || '';
+
+  const allStages = [...SERVICE_KANBAN_STAGES, ...PARTS_KANBAN_STAGES, ...SALES_KANBAN_STAGES];
+  const stageLabel = allStages.find(s => s.id === dealData.stage)?.label || dealData.stage || '—';
+
+  const serviceTypeMap = {
+    service: 'Сервис (ремонт / ТО)',
+    pre_sale: 'Предпродажная подготовка',
+    warranty: 'Гарантийное обслуживание'
+  };
+  const serviceTypeLabel = dealData.deal_type === 'parts_sale'
+    ? 'Продажа запчастей'
+    : (dealData.deal_type === 'sales' ? 'Отдел продаж спецтехники' : (serviceTypeMap[dealData.service_type] || 'Сервис (ремонт / ТО)'));
+
+  const parts = Array.isArray(dealData.parts) ? dealData.parts : [];
+  const totalPartsQty = parts.reduce((acc, p) => acc + Number(p.quantity || 0), 0);
+  const totalPartsSum = parts.reduce((acc, p) => acc + Number(p.selling_price || 0) * Number(p.quantity || 0), 0);
+  const dealAmount = Number(dealData.amount || 0);
+  const printDate = new Date().toLocaleString('ru-RU');
+
+  const partsRowsHtml = parts.length > 0
+    ? parts.map((p, idx) => {
+        const qty = Number(p.quantity || 1);
+        const price = Number(p.selling_price || 0);
+        const sum = qty * price;
+        return `
+          <tr>
+            <td style="text-align:center;">${idx + 1}</td>
+            <td style="font-family:monospace;font-weight:600;">${escapeHtml(p.sku || '—')}</td>
+            <td>${escapeHtml(p.part_name || p.name || '—')}</td>
+            <td>${escapeHtml(p.part_category || p.category || 'Запчасти')}</td>
+            <td style="text-align:center;font-weight:700;">${qty} шт</td>
+            <td style="text-align:right;font-family:monospace;">${formatMoney(price)}</td>
+            <td style="text-align:right;font-family:monospace;font-weight:700;">${formatMoney(sum)}</td>
+          </tr>
+        `;
+      }).join('')
+    : `<tr><td colspan="7" style="text-align:center;color:#64748b;padding:14px;">Запчасти со склада по данному заказ-наряду не списывались</td></tr>`;
+
+  const printHtml = `<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Заказ-наряд №${escapeHtml(String(dealData.id || ''))} — ${escapeHtml(companyName)}</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      color: #0f172a;
+      background: #f1f5f9;
+      margin: 0;
+      padding: 24px;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    .print-toolbar {
+      max-width: 210mm;
+      margin: 0 auto 16px auto;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #1e293b;
+      color: #fff;
+      padding: 10px 16px;
+      border-radius: 10px;
+    }
+    .print-toolbar button {
+      cursor: pointer;
+      border: none;
+      border-radius: 6px;
+      padding: 8px 16px;
+      font-weight: 600;
+      font-size: 13px;
+    }
+    .btn-print { background: #2563eb; color: #fff; }
+    .btn-close { background: #475569; color: #fff; margin-left: 8px; }
+    .sheet {
+      max-width: 210mm;
+      margin: 0 auto;
+      background: #ffffff;
+      padding: 16mm 15mm;
+      border-radius: 8px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      border-bottom: 2px solid #0f172a;
+      padding-bottom: 12px;
+      margin-bottom: 16px;
+      gap: 16px;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand img { max-height: 52px; max-width: 100px; object-fit: contain; }
+    .brand-title { font-size: 20px; font-weight: 800; margin: 0; }
+    .brand-sub { font-size: 11px; color: #475569; margin: 2px 0 0 0; }
+    .company-contacts { text-align: right; font-size: 11px; color: #334155; }
+    .doc-title-box {
+      background: #f8fafc;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin-bottom: 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .doc-title { font-size: 18px; font-weight: 800; margin: 0; }
+    .doc-meta { font-size: 12px; color: #334155; }
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .info-card {
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      padding: 10px 12px;
+    }
+    .info-card h4 {
+      margin: 0 0 8px 0;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: #475569;
+      border-bottom: 1px solid #e2e8f0;
+      padding-bottom: 4px;
+    }
+    .info-row {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 4px;
+      font-size: 12px;
+      gap: 8px;
+    }
+    .info-row span:first-child { color: #64748b; }
+    .info-row span:last-child { font-weight: 600; text-align: right; }
+    .section-title {
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: #1e293b;
+      margin: 16px 0 6px 0;
+    }
+    .comments-box {
+      border: 1px solid #cbd5e1;
+      background: #f8fafc;
+      border-radius: 8px;
+      padding: 10px 12px;
+      min-height: 54px;
+      white-space: pre-wrap;
+      font-size: 12.5px;
+    }
+    table.parts-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      margin-top: 6px;
+    }
+    table.parts-table th, table.parts-table td {
+      border: 1px solid #cbd5e1;
+      padding: 7px 8px;
+    }
+    table.parts-table th {
+      background: #f1f5f9;
+      text-align: left;
+      font-size: 11px;
+      text-transform: uppercase;
+      color: #334155;
+    }
+    .totals-box {
+      margin-top: 14px;
+      margin-left: auto;
+      max-width: 340px;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      padding: 10px 14px;
+      background: #f8fafc;
+    }
+    .totals-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 3px 0;
+      font-size: 12.5px;
+    }
+    .totals-row.grand {
+      border-top: 1px solid #94a3b8;
+      margin-top: 6px;
+      padding-top: 6px;
+      font-size: 14px;
+      font-weight: 800;
+    }
+    .signatures {
+      margin-top: 32px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 28px;
+      font-size: 12px;
+    }
+    .sig-line {
+      margin-top: 28px;
+      border-bottom: 1px solid #334155;
+      height: 1px;
+    }
+    .sig-caption {
+      font-size: 10px;
+      color: #64748b;
+      margin-top: 4px;
+    }
+    @media print {
+      body { background: #fff; padding: 0; }
+      .no-print { display: none !important; }
+      .sheet { box-shadow: none; padding: 0; max-width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="print-toolbar no-print">
+    <div><strong>Предпросмотр печати:</strong> Заказ-наряд №${escapeHtml(String(dealData.id || ''))}</div>
+    <div>
+      <button class="btn-print" onclick="window.print()">🖨️ Распечатать</button>
+      <button class="btn-close" onclick="window.close()">Закрыть</button>
+    </div>
+  </div>
+
+  <div class="sheet">
+    <div class="header">
+      <div class="brand">
+        ${logoUrl ? `<img src="${escapeHtml(logoUrl)}" alt="Logo">` : ''}
+        <div>
+          <h1 class="brand-title">${escapeHtml(companyName)}</h1>
+          <p class="brand-sub">${escapeHtml(companySlogan)}</p>
+        </div>
+      </div>
+      <div class="company-contacts">
+        ${companyAddress ? `<div>${escapeHtml(companyAddress)}</div>` : ''}
+        ${companyPhone ? `<div>Тел: <strong>${escapeHtml(companyPhone)}</strong></div>` : ''}
+        ${companyEmail ? `<div>Email: ${escapeHtml(companyEmail)}</div>` : ''}
+        ${companyTin ? `<div>ИНН: ${escapeHtml(companyTin)}</div>` : ''}
+      </div>
+    </div>
+
+    <div class="doc-title-box">
+      <div>
+        <h2 class="doc-title">ЗАКАЗ-НАРЯД № ${escapeHtml(String(dealData.id || '—'))}</h2>
+        <div style="font-weight:600;margin-top:2px;">${escapeHtml(dealData.title || '—')}</div>
+      </div>
+      <div class="doc-meta" style="text-align:right;">
+        <div>Дата регистрации: <strong>${escapeHtml(formatDate(dealData.created_at))}</strong></div>
+        <div>Стадия: <strong>${escapeHtml(stageLabel)}</strong></div>
+        <div>Тип наряда: <strong>${escapeHtml(serviceTypeLabel)}</strong></div>
+        ${dealData.deadline ? `<div>Срок сдачи: <strong>${escapeHtml(dealData.deadline)}</strong></div>` : ''}
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="info-card">
+        <h4>Сведения о клиенте (Заказчик)</h4>
+        <div class="info-row"><span>Клиент:</span><span>${escapeHtml(dealData.client_name || 'Не указан')}</span></div>
+        <div class="info-row"><span>Компания:</span><span>${escapeHtml(dealData.client_company || 'Частное лицо')}</span></div>
+        <div class="info-row"><span>Телефон:</span><span>${escapeHtml(dealData.client_phone || '—')}</span></div>
+        ${dealData.client_inn ? `<div class="info-row"><span>ИНН:</span><span>${escapeHtml(dealData.client_inn)}</span></div>` : ''}
+      </div>
+
+      <div class="info-card">
+        <h4>Сведения о технике и исполнителе</h4>
+        <div class="info-row"><span>Техника:</span><span>${escapeHtml(dealData.equipment_name || 'Не привязана')}</span></div>
+        <div class="info-row"><span>VIN / Серийный №:</span><span style="font-family:monospace;">${escapeHtml(dealData.equipment_vin || '—')}</span></div>
+        <div class="info-row"><span>Наработка:</span><span>${escapeHtml(dealData.equipment_hours || '—')}</span></div>
+        <div class="info-row"><span>Ответственные:</span><span>${escapeHtml(dealData.responsible || '—')}</span></div>
+      </div>
+    </div>
+
+    <div class="section-title">Описание неисправности, выполненных работ и комментарии</div>
+    <div class="comments-box">${escapeHtml(dealData.description || 'Комментарии и замечания отсутствуют')}</div>
+
+    <div class="section-title">Списанные запчасти и расходные материалы со склада</div>
+    <table class="parts-table">
+      <thead>
+        <tr>
+          <th style="width:36px;text-align:center;">№</th>
+          <th style="width:120px;">Артикул (SKU)</th>
+          <th>Наименование запчасти</th>
+          <th style="width:120px;">Категория</th>
+          <th style="width:80px;text-align:center;">Кол-во</th>
+          <th style="width:110px;text-align:right;">Цена за ед.</th>
+          <th style="width:120px;text-align:right;">Сумма</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${partsRowsHtml}
+      </tbody>
+    </table>
+
+    <div class="totals-box">
+      <div class="totals-row">
+        <span>Всего списано запчастей:</span>
+        <strong>${totalPartsQty} шт.</strong>
+      </div>
+      <div class="totals-row">
+        <span>Сумма продажи запчастей:</span>
+        <strong>${formatMoney(totalPartsSum)}</strong>
+      </div>
+      <div class="totals-row grand">
+        <span>Итого по заказ-наряду:</span>
+        <span>${formatMoney(dealAmount > 0 ? dealAmount : totalPartsSum)}</span>
+      </div>
+    </div>
+
+    <div class="signatures">
+      <div>
+        <div><strong>Заказчик (Клиент):</strong></div>
+        <div>С объемом работ и списком запчастей ознакомлен, претензий не имею.</div>
+        <div class="sig-line"></div>
+        <div class="sig-caption">Подпись / ФИО (${escapeHtml(dealData.client_name || '')})</div>
+      </div>
+      <div>
+        <div><strong>Исполнитель (${escapeHtml(companyName)}):</strong></div>
+        <div>Работы выполнены, запчасти отпущены со склада по наряду.</div>
+        <div class="sig-line"></div>
+        <div class="sig-caption">Подпись / Ответственный (${escapeHtml(dealData.responsible || '')})</div>
+      </div>
+    </div>
+
+    <div style="margin-top:20px;font-size:10px;color:#94a3b8;text-align:right;">
+      Документ сформирован в CRM «${escapeHtml(companyName)}» • ${escapeHtml(printDate)}
+    </div>
+  </div>
+
+  <script>
+    window.addEventListener('load', function() {
+      setTimeout(function() { window.print(); }, 250);
+    });
+  </script>
+</body>
+</html>`;
+
+  const printWin = window.open('', '_blank', 'width=960,height=800');
+  if (!printWin) {
+    showToast('Разрешите всплывающие окна в браузере для печати заказ-наряда', 'warning');
+    return;
+  }
+  printWin.document.open();
+  printWin.document.write(printHtml);
+  printWin.document.close();
 }
 
 async function deleteDeal() {

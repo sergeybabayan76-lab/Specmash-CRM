@@ -666,7 +666,7 @@ async def update_deal_stage(
         raise HTTPException(status_code=404, detail="Сделка не найдена")
 
     # Requirement #5: Forbid changes to closed/paid deals for non-admins
-    if existing.get("stage") in ("ready", "completed", "paid", "issued") and effective_role != "admin":
+    if existing.get("stage") in ("completed", "paid", "issued", "closed") and effective_role != "admin":
         raise HTTPException(
             status_code=403,
             detail="Изменение стадии закрытых/оплаченных сделок разрешено только Администратору"
@@ -698,7 +698,7 @@ async def update_deal(
         raise HTTPException(status_code=404, detail="Сделка не найдена")
 
     # Requirement #5: Forbid changes to closed/paid deals for non-admins
-    if existing.get("stage") in ("ready", "completed", "paid", "issued") and effective_role != "admin":
+    if existing.get("stage") in ("completed", "paid", "issued", "closed") and effective_role != "admin":
         raise HTTPException(
             status_code=403,
             detail="Редактирование закрытых/оплаченных сделок разрешено только Администратору"
@@ -749,7 +749,7 @@ async def attach_part_to_deal(
     effective_role = check_effective_role(x_user_role, role)
     try:
         existing = database.get_deal(deal_id)
-        if existing.get("stage") in ("ready", "completed", "paid", "issued") and effective_role != "admin":
+        if existing.get("stage") in ("completed", "paid", "issued", "closed") and effective_role != "admin":
             raise HTTPException(status_code=403, detail="Добавление запчастей в закрытые/оплаченные сделки разрешено только Администратору")
     except KeyError:
         raise HTTPException(status_code=404, detail="Сделка не найдена")
@@ -779,7 +779,7 @@ async def update_deal_part_quantity(
     effective_role = check_effective_role(x_user_role, role)
     try:
         existing = database.get_deal(deal_id)
-        if existing.get("stage") in ("ready", "completed", "paid", "issued") and effective_role != "admin":
+        if existing.get("stage") in ("completed", "paid", "issued", "closed") and effective_role != "admin":
             raise HTTPException(status_code=403, detail="Изменение запчастей в закрытых/оплаченных сделках разрешено только Администратору")
     except KeyError:
         raise HTTPException(status_code=404, detail="Сделка не найдена")
@@ -810,7 +810,7 @@ async def remove_part_from_deal(
     effective_role = check_effective_role(x_user_role, role)
     try:
         existing = database.get_deal(deal_id)
-        if existing.get("stage") in ("ready", "completed", "paid", "issued") and effective_role != "admin":
+        if existing.get("stage") in ("completed", "paid", "issued", "closed") and effective_role != "admin":
             raise HTTPException(status_code=403, detail="Удаление запчастей из закрытых/оплаченных сделок разрешено только Администратору")
     except KeyError:
         raise HTTPException(status_code=404, detail="Сделка не найдена")
