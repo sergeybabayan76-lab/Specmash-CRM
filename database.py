@@ -5,6 +5,7 @@ import json
 import hashlib
 import secrets
 from datetime import datetime
+from decimal import Decimal
 import re
 from typing import List, Dict, Any, Optional
 from urllib.parse import quote
@@ -135,9 +136,18 @@ class LocalDatabaseClient:
 
     @staticmethod
     def _row_dict(row: Any, columns: Any = None) -> Dict[str, Any]:
-        if isinstance(row, dict):
-            return row
-        return dict(zip([column.name for column in columns or []], row))
+        raw = row if isinstance(row, dict) else dict(zip([column.name for column in columns or []], row))
+        out = {}
+        for k, v in raw.items():
+            if isinstance(v, Decimal):
+                fval = round(float(v), 2)
+                if k in ("quantity", "min_threshold") and fval.is_integer():
+                    out[k] = int(fval)
+                else:
+                    out[k] = fval
+            else:
+                out[k] = v
+        return out
 
     def get(self, path: str, params: Optional[Dict[str, Any]] = None):
         table = path.strip("/").split("?", 1)[0]
@@ -345,6 +355,20 @@ def initialize_schema() -> None:
             connection.execute(
                 "ALTER TABLE public.users ADD CONSTRAINT users_role_check "
                 "CHECK (role IN ('admin', 'moderator', 'manager', 'mechanic', 'sales_manager'))"
+            )
+
+            # Ensure quantity columns support fractional values (e.g., 0.5 L for oils/fluids)
+            connection.execute(
+                "ALTER TABLE public.parts ALTER COLUMN quantity TYPE numeric(14, 2) USING quantity::numeric(14, 2)"
+            )
+            connection.execute(
+                "ALTER TABLE public.parts ALTER COLUMN min_threshold TYPE numeric(14, 2) USING min_threshold::numeric(14, 2)"
+            )
+            connection.execute(
+                "ALTER TABLE public.deal_parts ALTER COLUMN quantity TYPE numeric(14, 2) USING quantity::numeric(14, 2)"
+            )
+            connection.execute(
+                "ALTER TABLE public.stock_movements ALTER COLUMN quantity TYPE numeric(14, 2) USING quantity::numeric(14, 2)"
             )
         connection.commit()
 
@@ -827,6 +851,24 @@ def delete_equipment(eq_id: int) -> Dict[str, Any]:
         client.delete(f"/equipment?id=eq.{eq_id}")
         return {"id": eq_id, "message": "Техника удалена"}
 
+# ==================== NUMERIC & QUANTITY HELPERS ====================
+
+def _to_float(v: Any, default: float = 0.0) -> float:
+    try:
+        if v is None:
+            return default
+        if isinstance(v, str):
+            v = v.replace(",", ".").strip()
+            if not v:
+                return default
+        return float(v)
+    except (ValueError, TypeError):
+        return default
+
+def _norm_qty(v: Any, default: float = 0.0) -> Any:
+    val = round(_to_float(v, default), 2)
+    return int(val) if val.is_integer() else val
+
 # ==================== PARTS & WAREHOUSE ====================
 
 def list_parts(q: Optional[str] = None, low_stock: bool = False, category: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -844,8 +886,11 @@ def list_parts(q: Optional[str] = None, low_stock: bool = False, category: Optio
         if r.status_code != 200:
             return []
         parts = r.json()
+        for p in parts:
+            p["quantity"] = _norm_qty(p.get("quantity"), 0.0)
+            p["min_threshold"] = _norm_qty(p.get("min_threshold"), 2.0)
         if low_stock:
-            parts = [p for p in parts if p.get("quantity", 0) <= p.get("min_threshold", 2)]
+            parts = [p for p in parts if _to_float(p.get("quantity"), 0.0) <= _to_float(p.get("min_threshold"), 2.0)]
         return parts
 
 def create_part(part_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -858,14 +903,15 @@ def create_part(part_data: Dict[str, Any]) -> Dict[str, Any]:
 
         next_id = get_next_id(client, "parts")
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        qty = int(part_data.get("quantity") or 0)
+        qty = _norm_qty(part_data.get("quantity"), 0.0)
+        min_th = _norm_qty(part_data.get("min_threshold"), 2.0)
         payload = {
             "id": next_id,
             "sku": sku,
             "name": part_data["name"].strip(),
             "category": (part_data.get("category") or "Запчасти").strip(),
             "quantity": qty,
-            "min_threshold": int(part_data.get("min_threshold") or 2),
+            "min_threshold": min_th,
             "purchase_price": float(part_data.get("purchase_price") or 0.0),
             "selling_price": float(part_data.get("selling_price") or 0.0),
             "location": (part_data.get("location") or "").strip(),
@@ -874,7 +920,7 @@ def create_part(part_data: Dict[str, Any]) -> Dict[str, Any]:
         r = client.post("/parts", json=payload)
         if r.status_code not in (200, 201):
             raise Exception(r.text)
-        
+
         if qty > 0:
             sm_id = get_next_id(client, "stock_movements")
             client.post("/stock_movements", json={
@@ -888,6 +934,8 @@ def create_part(part_data: Dict[str, Any]) -> Dict[str, Any]:
 
         res = r.json()
         item = res[0] if isinstance(res, list) else res
+        item["quantity"] = _norm_qty(item.get("quantity"), qty)
+        item["min_threshold"] = _norm_qty(item.get("min_threshold"), min_th)
         item["message"] = "Запчасть добавлена на склад"
         return item
 
@@ -897,32 +945,38 @@ def get_part(part_id: int) -> Dict[str, Any]:
         rows = r.json()
         if not rows:
             raise KeyError("Запчасть не найдена")
-        return rows[0]
+        row = rows[0]
+        row["quantity"] = _norm_qty(row.get("quantity"), 0.0)
+        row["min_threshold"] = _norm_qty(row.get("min_threshold"), 2.0)
+        return row
 
 def update_part(part_id: int, part_data: Dict[str, Any]) -> Dict[str, Any]:
     with get_database_client() as client:
-        payload = {
+        payload: Dict[str, Any] = {
             "sku": part_data["sku"].strip(),
             "name": part_data["name"].strip(),
             "category": (part_data.get("category") or "Запчасти").strip(),
-            "min_threshold": int(part_data.get("min_threshold") or 2),
+            "min_threshold": _norm_qty(part_data.get("min_threshold"), 2.0),
             "purchase_price": float(part_data.get("purchase_price") or 0.0),
             "selling_price": float(part_data.get("selling_price") or 0.0),
             "location": (part_data.get("location") or "").strip(),
         }
+        if "quantity" in part_data and part_data.get("quantity") is not None:
+            payload["quantity"] = _norm_qty(part_data.get("quantity"), 0.0)
         r = client.patch(f"/parts?id=eq.{part_id}", json=payload)
         if r.status_code not in (200, 204):
             payload["id"] = part_id
-            payload["quantity"] = int(part_data.get("quantity") or 0)
+            payload["quantity"] = _norm_qty(part_data.get("quantity"), 0.0)
             payload["created_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             client.post("/parts", json=payload, headers={"Prefer": "resolution=merge-duplicates"})
         return {"id": part_id, **payload, "message": "Карточка запчасти обновлена"}
 
-def adjust_part_stock(part_id: int, quantity_change: int, comment: str) -> Dict[str, Any]:
+def adjust_part_stock(part_id: int, quantity_change: float, comment: str) -> Dict[str, Any]:
     with get_database_client() as client:
         p = get_part(part_id)
-        current_qty = p.get("quantity", 0)
-        new_qty = current_qty + quantity_change
+        current_qty = _to_float(p.get("quantity"), 0.0)
+        change_val = _to_float(quantity_change, 0.0)
+        new_qty = _norm_qty(current_qty + change_val, 0.0)
         if new_qty < 0:
             raise ValueError("Остаток не может быть отрицательным!")
 
@@ -930,12 +984,12 @@ def adjust_part_stock(part_id: int, quantity_change: int, comment: str) -> Dict[
         client.patch(f"/parts?id=eq.{part_id}", json={"quantity": new_qty})
 
         sm_id = get_next_id(client, "stock_movements")
-        m_type = "incoming" if quantity_change > 0 else "outgoing"
+        m_type = "incoming" if change_val > 0 else "outgoing"
         client.post("/stock_movements", json={
             "id": sm_id,
             "part_id": part_id,
             "type": m_type,
-            "quantity": abs(quantity_change),
+            "quantity": _norm_qty(abs(change_val), 0.0),
             "comment": comment or "Корректировка остатка",
             "created_at": now_str
         })
@@ -1051,18 +1105,15 @@ def list_deals(stage: Optional[str] = None, q: Optional[str] = None, deal_type: 
         parts_response = client.get("/deal_parts", params={"select": "deal_id,quantity,selling_price"})
         if parts_response.status_code != 200:
             raise RuntimeError(f"Не удалось загрузить запчасти нарядов: {parts_response.text}")
-        parts_by_deal: Dict[int, int] = {}
+        parts_by_deal: Dict[int, Any] = {}
         parts_selling_by_deal: Dict[int, float] = {}
         for part_row in parts_response.json() or []:
             deal_id = part_row.get("deal_id")
             if deal_id is None:
                 continue
-            try:
-                quantity = int(_to_float(part_row.get("quantity"), 0))
-            except (TypeError, ValueError):
-                quantity = 0
+            quantity = _norm_qty(part_row.get("quantity"), 0.0)
             selling_price = round(_to_float(part_row.get("selling_price"), 0.0), 2)
-            parts_by_deal[int(deal_id)] = parts_by_deal.get(int(deal_id), 0) + quantity
+            parts_by_deal[int(deal_id)] = _norm_qty(_to_float(parts_by_deal.get(int(deal_id), 0)) + float(quantity), 0.0)
             parts_selling_by_deal[int(deal_id)] = round(
                 parts_selling_by_deal.get(int(deal_id), 0.0) + quantity * selling_price, 2
             )
@@ -1197,7 +1248,7 @@ def get_deal(deal_id: int) -> Dict[str, Any]:
                 parts_list.append({
                     "deal_part_id": dp.get("id"),
                     "part_id": dp.get("part_id"),
-                    "quantity": int(_to_float(dp.get("quantity"), 1)),
+                    "quantity": _norm_qty(dp.get("quantity"), 1.0),
                     "purchase_price": round(_to_float(dp.get("purchase_price"), 0.0), 2),
                     "selling_price": round(_to_float(dp.get("selling_price"), 0.0), 2),
                     "sku": p.get("sku") or f"P-{dp.get('part_id')}",
@@ -1205,7 +1256,7 @@ def get_deal(deal_id: int) -> Dict[str, Any]:
                     "part_category": p.get("category") or "Запчасти"
                 })
         d["parts"] = parts_list
-        d["parts_count"] = sum(p["quantity"] for p in parts_list)
+        d["parts_count"] = _norm_qty(sum(p["quantity"] for p in parts_list), 0.0)
         d["parts_selling_total"] = round(float(sum(p["quantity"] * p["selling_price"] for p in parts_list)), 2)
         return d
 
@@ -1251,7 +1302,7 @@ def update_deal(deal_id: int, deal_data: Dict[str, Any]) -> Dict[str, Any]:
         attached_parts = _get_deal_attached_parts(client, int(deal_id))
         parts_cost_sum = round(float(sum(item["quantity"] * item["purchase_price"] for item in attached_parts)), 2)
         parts_selling_sum = round(float(sum(item["quantity"] * item["selling_price"] for item in attached_parts)), 2)
-        parts_qty_sum = int(sum(item["quantity"] for item in attached_parts))
+        parts_qty_sum = _norm_qty(sum(item["quantity"] for item in attached_parts), 0.0)
         req_cost = float(deal_data.get("cost") or 0.0)
         final_cost = parts_cost_sum if attached_parts else req_cost
 
@@ -1289,7 +1340,7 @@ def _get_deal_attached_parts(client: LocalDatabaseClient, deal_id: int) -> List[
             parts_list.append({
                 "deal_part_id": dp.get("id"),
                 "part_id": dp.get("part_id"),
-                "quantity": int(_to_float(dp.get("quantity"), 1)),
+                "quantity": _norm_qty(dp.get("quantity"), 1.0),
                 "purchase_price": round(_to_float(dp.get("purchase_price"), 0.0), 2),
                 "selling_price": round(_to_float(dp.get("selling_price"), 0.0), 2),
                 "sku": p.get("sku") or f"P-{dp.get('part_id')}",
@@ -1298,13 +1349,15 @@ def _get_deal_attached_parts(client: LocalDatabaseClient, deal_id: int) -> List[
             })
     return parts_list
 
-def attach_part_to_deal(deal_id: int, part_id: int, quantity: int) -> Dict[str, Any]:
+def attach_part_to_deal(deal_id: int, part_id: int, quantity: float) -> Dict[str, Any]:
     with get_database_client() as client:
-        qty_to_deduct = max(1, int(_to_float(quantity, 1)))
+        raw_qty = _to_float(quantity, 1.0)
+        qty_to_deduct = _norm_qty(raw_qty if raw_qty > 0 else 1.0, 1.0)
         p = get_part(part_id)
-        cur_qty = int(_to_float(p.get("quantity"), 0))
-        if cur_qty < qty_to_deduct:
-            raise ValueError(f"Недостаточно остатка на складе! В наличии: {cur_qty} шт.")
+        unit_str = "л" if str(p.get("category") or "").strip() == "Масла и техжидкости" else "шт."
+        cur_qty = _norm_qty(p.get("quantity"), 0.0)
+        if float(cur_qty) < float(qty_to_deduct):
+            raise ValueError(f"Недостаточно остатка на складе! В наличии: {cur_qty} {unit_str}")
 
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         dp_id = get_next_id(client, "deal_parts")
@@ -1324,7 +1377,7 @@ def attach_part_to_deal(deal_id: int, part_id: int, quantity: int) -> Dict[str, 
             raise RuntimeError(f"Не удалось списать запчасть в наряд: {post_res.text}")
 
         # Deduct part quantity
-        new_qty = max(0, cur_qty - qty_to_deduct)
+        new_qty = _norm_qty(max(0.0, float(cur_qty) - float(qty_to_deduct)), 0.0)
         client.patch(f"/parts?id=eq.{part_id}", json={"quantity": new_qty})
 
         # Record stock movement
@@ -1343,23 +1396,23 @@ def attach_part_to_deal(deal_id: int, part_id: int, quantity: int) -> Dict[str, 
         attached_parts = _get_deal_attached_parts(client, int(deal_id))
         total_cost = round(float(sum(item["quantity"] * item["purchase_price"] for item in attached_parts)), 2)
         total_selling = round(float(sum(item["quantity"] * item["selling_price"] for item in attached_parts)), 2)
-        total_parts_qty = int(sum(item["quantity"] for item in attached_parts))
+        total_parts_qty = _norm_qty(sum(item["quantity"] for item in attached_parts), 0.0)
         client.patch(f"/deals?id=eq.{deal_id}", json={"cost": total_cost})
 
         return {
             "deal_part_id": dp_id,
             "part_id": int(part_id),
-            "new_quantity": int(new_qty),
+            "new_quantity": new_qty,
             "parts_cost": total_cost,
             "parts_selling_total": total_selling,
             "parts_count": total_parts_qty,
             "parts": attached_parts,
-            "message": f"Запчасть «{p.get('name')}» ({qty_to_deduct} шт.) списана со склада"
+            "message": f"Запчасть «{p.get('name')}» ({qty_to_deduct} {unit_str}) списана со склада"
         }
 
-def update_deal_part_quantity(deal_id: int, deal_part_id: int, new_quantity: int) -> Dict[str, Any]:
-    target_qty = int(_to_float(new_quantity, 0))
-    if target_qty <= 0:
+def update_deal_part_quantity(deal_id: int, deal_part_id: int, new_quantity: float) -> Dict[str, Any]:
+    target_qty = _norm_qty(new_quantity, 0.0)
+    if float(target_qty) <= 0:
         return remove_part_from_deal(deal_id, deal_part_id)
 
     with get_database_client() as client:
@@ -1368,17 +1421,18 @@ def update_deal_part_quantity(deal_id: int, deal_part_id: int, new_quantity: int
             raise KeyError("Прикрепленная запчасть не найдена")
         row = dp[0]
         part_id = int(row.get("part_id"))
-        old_qty = max(1, int(_to_float(row.get("quantity"), 1)))
-        delta = target_qty - old_qty
+        old_qty = _norm_qty(row.get("quantity"), 1.0)
+        delta = _norm_qty(float(target_qty) - float(old_qty), 0.0)
 
         p = get_part(part_id)
-        cur_stock = int(_to_float(p.get("quantity"), 0))
+        unit_str = "л" if str(p.get("category") or "").strip() == "Масла и техжидкости" else "шт."
+        cur_stock = _norm_qty(p.get("quantity"), 0.0)
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        if delta > 0:
-            if cur_stock < delta:
-                raise ValueError(f"Недостаточно остатка на складе! Доступно для добавления: {cur_stock} шт.")
-            new_stock = cur_stock - delta
+        if float(delta) > 0:
+            if float(cur_stock) < float(delta):
+                raise ValueError(f"Недостаточно остатка на складе! Доступно для добавления: {cur_stock} {unit_str}")
+            new_stock = _norm_qty(float(cur_stock) - float(delta), 0.0)
             client.patch(f"/parts?id=eq.{part_id}", json={"quantity": new_stock})
             client.patch(f"/deal_parts?id=eq.{deal_part_id}", json={"quantity": target_qty})
             sm_id = get_next_id(client, "stock_movements")
@@ -1388,12 +1442,12 @@ def update_deal_part_quantity(deal_id: int, deal_part_id: int, new_quantity: int
                 "type": "outgoing",
                 "quantity": delta,
                 "deal_id": int(deal_id),
-                "comment": f"Увеличение кол-ва запчасти (+{delta} шт.) в наряде №{deal_id}",
+                "comment": f"Увеличение кол-ва запчасти (+{delta} {unit_str}) в наряде №{deal_id}",
                 "created_at": now_str
             })
-        elif delta < 0:
-            ret_qty = abs(delta)
-            new_stock = cur_stock + ret_qty
+        elif float(delta) < 0:
+            ret_qty = _norm_qty(abs(float(delta)), 0.0)
+            new_stock = _norm_qty(float(cur_stock) + float(ret_qty), 0.0)
             client.patch(f"/parts?id=eq.{part_id}", json={"quantity": new_stock})
             client.patch(f"/deal_parts?id=eq.{deal_part_id}", json={"quantity": target_qty})
             sm_id = get_next_id(client, "stock_movements")
@@ -1403,7 +1457,7 @@ def update_deal_part_quantity(deal_id: int, deal_part_id: int, new_quantity: int
                 "type": "incoming",
                 "quantity": ret_qty,
                 "deal_id": int(deal_id),
-                "comment": f"Частичный возврат запчасти (-{ret_qty} шт.) из наряда №{deal_id}",
+                "comment": f"Частичный возврат запчасти (-{ret_qty} {unit_str}) из наряда №{deal_id}",
                 "created_at": now_str
             })
         else:
@@ -1412,19 +1466,19 @@ def update_deal_part_quantity(deal_id: int, deal_part_id: int, new_quantity: int
         attached_parts = _get_deal_attached_parts(client, int(deal_id))
         total_cost = round(float(sum(item["quantity"] * item["purchase_price"] for item in attached_parts)), 2)
         total_selling = round(float(sum(item["quantity"] * item["selling_price"] for item in attached_parts)), 2)
-        total_parts_qty = int(sum(item["quantity"] for item in attached_parts))
+        total_parts_qty = _norm_qty(sum(item["quantity"] for item in attached_parts), 0.0)
         client.patch(f"/deals?id=eq.{deal_id}", json={"cost": total_cost})
 
         return {
             "deal_part_id": int(deal_part_id),
             "part_id": part_id,
             "quantity": target_qty,
-            "new_quantity": int(new_stock),
+            "new_quantity": new_stock,
             "parts_cost": total_cost,
             "parts_selling_total": total_selling,
             "parts_count": total_parts_qty,
             "parts": attached_parts,
-            "message": f"Количество запчасти «{p.get('name')}» изменено на {target_qty} шт."
+            "message": f"Количество запчасти «{p.get('name')}» изменено на {target_qty} {unit_str}"
         }
 
 def remove_part_from_deal(deal_id: int, deal_part_id: int) -> Dict[str, Any]:
@@ -1434,15 +1488,15 @@ def remove_part_from_deal(deal_id: int, deal_part_id: int) -> Dict[str, Any]:
             raise KeyError("Прикрепленная запчасть не найдена")
         row = dp[0]
         part_id = int(row.get("part_id"))
-        qty = max(1, int(_to_float(row.get("quantity"), 1)))
+        qty = _norm_qty(row.get("quantity"), 1.0)
 
         # Delete deal_part
         client.delete(f"/deal_parts?id=eq.{deal_part_id}")
 
         # Return stock
         p = get_part(part_id)
-        cur_qty = int(_to_float(p.get("quantity"), 0))
-        new_qty = cur_qty + qty
+        cur_qty = _norm_qty(p.get("quantity"), 0.0)
+        new_qty = _norm_qty(float(cur_qty) + float(qty), 0.0)
         client.patch(f"/parts?id=eq.{part_id}", json={"quantity": new_qty})
 
         # Record stock movement return
@@ -1462,12 +1516,12 @@ def remove_part_from_deal(deal_id: int, deal_part_id: int) -> Dict[str, Any]:
         attached_parts = _get_deal_attached_parts(client, int(deal_id))
         total_cost = round(float(sum(item["quantity"] * item["purchase_price"] for item in attached_parts)), 2)
         total_selling = round(float(sum(item["quantity"] * item["selling_price"] for item in attached_parts)), 2)
-        total_parts_qty = int(sum(item["quantity"] for item in attached_parts))
+        total_parts_qty = _norm_qty(sum(item["quantity"] for item in attached_parts), 0.0)
         client.patch(f"/deals?id=eq.{deal_id}", json={"cost": total_cost})
 
         return {
             "part_id": part_id,
-            "new_quantity": int(new_qty),
+            "new_quantity": new_qty,
             "parts_cost": total_cost,
             "parts_selling_total": total_selling,
             "parts_count": total_parts_qty,
@@ -1602,14 +1656,6 @@ def delete_task(task_id: int) -> Dict[str, Any]:
         return {"id": task_id, "message": "Задача удалена"}
 
 # ==================== DASHBOARD METRICS ====================
-
-def _to_float(v: Any, default: float = 0.0) -> float:
-    try:
-        if v is None:
-            return default
-        return float(v)
-    except (ValueError, TypeError):
-        return default
 
 def _extract_deal_year_month(d: Dict[str, Any], closed_stages: tuple) -> tuple[Optional[int], Optional[int]]:
     dt_value = (d.get("completed_at") or d.get("created_at")) if d.get("stage") in closed_stages else (d.get("created_at") or d.get("completed_at"))
@@ -2161,27 +2207,27 @@ def get_top_sold_parts(limit: int = 10, year: Optional[str] = None, month: Optio
                     if did is None or int(did) not in allowed_deal_ids:
                         continue
                 pid = int(pid_raw)
-                qty = int(_to_float(dp.get("quantity"), 0))
+                qty = _to_float(dp.get("quantity"), 0.0)
                 price = _to_float(dp.get("selling_price"), 0.0)
                 if price <= 0 and pid in parts_map:
                     price = _to_float(parts_map[pid].get("selling_price"), 0.0)
                 if pid not in sales_agg:
-                    sales_agg[pid] = {"sold_count": 0, "total_revenue": 0.0}
+                    sales_agg[pid] = {"sold_count": 0.0, "total_revenue": 0.0}
                 sales_agg[pid]["sold_count"] += qty
                 sales_agg[pid]["total_revenue"] += float(qty) * price
 
         results = []
         for pid, p in parts_map.items():
-            agg = sales_agg.get(pid, {"sold_count": 0, "total_revenue": 0.0})
+            agg = sales_agg.get(pid, {"sold_count": 0.0, "total_revenue": 0.0})
             unit_price = round(_to_float(p.get("selling_price"), 0.0), 2)
-            cur_stock = int(_to_float(p.get("quantity"), 0))
+            cur_stock = _norm_qty(p.get("quantity"), 0.0)
             results.append({
                 "part_id": pid,
                 "sku": p.get("sku") or f"P-{pid}",
                 "name": p.get("name") or f"Запчасть #{pid}",
                 "category": p.get("category") or "Запчасти",
                 "current_stock": cur_stock,
-                "sold_count": int(agg["sold_count"]),
+                "sold_count": _norm_qty(agg["sold_count"], 0.0),
                 "total_revenue": round(float(agg["total_revenue"]), 2),
                 "unit_price": unit_price
             })

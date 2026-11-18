@@ -400,12 +400,28 @@ function getPartUnit(partOrCategory) {
   return String(cat).trim() === 'Масла и техжидкости' ? 'л' : 'шт';
 }
 
+function parsePartNumberInput(val, fallback = 0) {
+  const cleaned = String(val ?? '').replace(',', '.').trim();
+  const num = parseFloat(cleaned);
+  return isNaN(num) ? fallback : Math.round(num * 100) / 100;
+}
+
 function updatePartQuantityUnit(category) {
   const unit = getPartUnit(category);
+  const isOil = unit === 'л';
   const qtyLabel = document.getElementById('part-quantity-label');
   const minLabel = document.getElementById('part-min-threshold-label');
+  const qtyInput = document.getElementById('part-quantity');
+  const minInput = document.getElementById('part-min-threshold');
   if (qtyLabel) qtyLabel.textContent = `Количество (${unit})`;
   if (minLabel) minLabel.textContent = `Мин. остаток (${unit})`;
+  if (qtyInput) {
+    qtyInput.step = isOil ? 'any' : '1';
+    qtyInput.placeholder = isOil ? 'Например: 0.5' : '0';
+  }
+  if (minInput) {
+    minInput.step = isOil ? 'any' : '1';
+  }
 }
 
 // Currency Formatter: AMD
@@ -2788,7 +2804,7 @@ function openStockAdjustModal(partId, partName) {
 async function saveStockAdjust(e) {
   e.preventDefault();
   const partId = parseInt(document.getElementById('adjust-part-id').value);
-  const qty = parseInt(document.getElementById('adjust-quantity').value);
+  const qty = parsePartNumberInput(document.getElementById('adjust-quantity').value, 0);
   const comment = document.getElementById('adjust-comment').value || 'Корректировка остатка';
 
   if (isNaN(qty) || qty === 0) {
@@ -3792,10 +3808,14 @@ function renderDealAttachedParts(parts) {
   const dealId = document.getElementById('deal-id').value;
 
   container.innerHTML = list.map(p => {
-    const qty = Math.max(1, Number(p.quantity || 1));
+    const rawQty = Number(p.quantity || 1);
+    const qty = rawQty > 0 ? Math.round(rawQty * 100) / 100 : 1;
     const unitPrice = Number(p.selling_price || 0);
     const lineTotal = unitPrice * qty;
     const unit = getPartUnit(p);
+    const stepDelta = (unit === 'л' && (qty <= 1 || !Number.isInteger(qty))) ? 0.5 : 1;
+    const decQty = Math.max(0, Math.round((qty - stepDelta) * 100) / 100);
+    const incQty = Math.round((qty + stepDelta) * 100) / 100;
     return `
     <div class="flex items-center justify-between gap-2 p-2 rounded-lg bg-slate-50 border border-slate-200 text-xs">
       <div class="min-w-0 flex-1">
@@ -3804,9 +3824,9 @@ function renderDealAttachedParts(parts) {
       </div>
       <div class="flex items-center gap-2 shrink-0">
         <div class="inline-flex items-center border border-slate-300 rounded-lg bg-white overflow-hidden shadow-2xs">
-          <button type="button" ${isLocked ? 'disabled' : ''} onclick="changeAttachedPartQty(${dealId}, ${p.deal_part_id}, ${qty - 1})" class="px-2 py-1 text-slate-600 hover:bg-slate-100 font-bold leading-none ${isLocked ? 'opacity-40 cursor-not-allowed' : ''}" title="Уменьшить количество">−</button>
-          <input type="number" min="1" value="${qty}" ${isLocked ? 'disabled' : ''} onchange="changeAttachedPartQty(${dealId}, ${p.deal_part_id}, this.value)" class="w-12 text-center font-mono font-bold text-xs py-1 outline-none border-x border-slate-200 bg-white">
-          <button type="button" ${isLocked ? 'disabled' : ''} onclick="changeAttachedPartQty(${dealId}, ${p.deal_part_id}, ${qty + 1})" class="px-2 py-1 text-slate-600 hover:bg-slate-100 font-bold leading-none ${isLocked ? 'opacity-40 cursor-not-allowed' : ''}" title="Увеличить количество">+</button>
+          <button type="button" ${isLocked ? 'disabled' : ''} onclick="changeAttachedPartQty(${dealId}, ${p.deal_part_id}, ${decQty})" class="px-2 py-1 text-slate-600 hover:bg-slate-100 font-bold leading-none ${isLocked ? 'opacity-40 cursor-not-allowed' : ''}" title="Уменьшить количество">−</button>
+          <input type="number" min="0.01" step="any" value="${qty}" ${isLocked ? 'disabled' : ''} onchange="changeAttachedPartQty(${dealId}, ${p.deal_part_id}, this.value)" class="w-14 text-center font-mono font-bold text-xs py-1 outline-none border-x border-slate-200 bg-white">
+          <button type="button" ${isLocked ? 'disabled' : ''} onclick="changeAttachedPartQty(${dealId}, ${p.deal_part_id}, ${incQty})" class="px-2 py-1 text-slate-600 hover:bg-slate-100 font-bold leading-none ${isLocked ? 'opacity-40 cursor-not-allowed' : ''}" title="Увеличить количество">+</button>
         </div>
         <span class="font-mono font-bold text-emerald-700 min-w-[85px] text-right">${formatMoney(lineTotal)}</span>
         ${isLocked ? '' : `
@@ -4058,7 +4078,8 @@ async function ensureDealSavedForPartWriteOff() {
 async function submitAttachPart() {
   const partSelect = document.getElementById('attach-part-select');
   const partId = parseInt(partSelect?.value);
-  const qty = Math.max(1, parseInt(document.getElementById('attach-part-qty')?.value) || 1);
+  const rawQty = parsePartNumberInput(document.getElementById('attach-part-qty')?.value, 1);
+  const qty = rawQty > 0 ? rawQty : 1;
 
   if (!partId || isNaN(partId)) {
     showToast('Выберите запчасть в наличии из списка склада', 'error');
@@ -4139,7 +4160,7 @@ async function submitAttachPart() {
 }
 
 async function changeAttachedPartQty(dealId, dealPartId, newQty) {
-  const parsedQty = parseInt(newQty, 10);
+  const parsedQty = parsePartNumberInput(newQty, NaN);
   if (isNaN(parsedQty)) return;
   if (parsedQty <= 0) {
     return removeAttachedPart(dealId, dealPartId);
@@ -5260,12 +5281,16 @@ function openPartModal(partId = null) {
 async function savePart(e) {
   e.preventDefault();
   const partId = document.getElementById('part-id').value;
+  const categoryVal = document.getElementById('part-category').value.trim();
+  const isOil = getPartUnit(categoryVal) === 'л';
+  const rawQty = parsePartNumberInput(document.getElementById('part-quantity').value, 0);
+  const rawMin = parsePartNumberInput(document.getElementById('part-min-threshold').value, 2);
   const payload = {
     sku: document.getElementById('part-sku').value.trim(),
-    category: document.getElementById('part-category').value.trim(),
+    category: categoryVal,
     name: document.getElementById('part-name').value.trim(),
-    quantity: parseInt(document.getElementById('part-quantity').value) || 0,
-    min_threshold: parseInt(document.getElementById('part-min-threshold').value) || 2,
+    quantity: isOil ? rawQty : Math.round(rawQty),
+    min_threshold: isOil ? rawMin : Math.round(rawMin),
     location: document.getElementById('part-location').value.trim(),
     purchase_price: parseFloat(document.getElementById('part-purchase-price').value) || 0.0,
     selling_price: parseFloat(document.getElementById('part-selling-price').value) || 0.0,
@@ -5709,9 +5734,9 @@ async function loadTopSoldParts(limit = null) {
           <td class="p-3 font-mono font-bold text-blue-700">${escapeHtml(p.sku)}</td>
           <td class="p-3 font-bold text-slate-800">${escapeHtml(p.name)}</td>
           <td class="p-3 text-slate-500">${escapeHtml(p.category || 'Запчасти')}</td>
-          <td class="p-3 text-center font-mono font-bold text-slate-900 text-sm">${p.sold_count} шт</td>
+          <td class="p-3 text-center font-mono font-bold text-slate-900 text-sm">${p.sold_count} ${getPartUnit(p)}</td>
           <td class="p-3 text-right font-mono font-bold text-emerald-600">${formatMoney(p.total_revenue)}</td>
-          <td class="p-3 text-center font-mono ${p.current_stock <= 2 ? 'text-rose-600 font-bold' : 'text-slate-600'}">${p.current_stock} шт</td>
+          <td class="p-3 text-center font-mono ${p.current_stock <= 2 ? 'text-rose-600 font-bold' : 'text-slate-600'}">${p.current_stock} ${getPartUnit(p)}</td>
         </tr>
       `;
     }).join('');

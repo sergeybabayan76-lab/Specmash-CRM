@@ -83,8 +83,8 @@ CREATE TABLE IF NOT EXISTS public.parts (
     sku text NOT NULL UNIQUE,
     name text NOT NULL,
     category text NOT NULL DEFAULT 'Запчасти',
-    quantity integer NOT NULL DEFAULT 0 CHECK (quantity >= 0),
-    min_threshold integer NOT NULL DEFAULT 2 CHECK (min_threshold >= 0),
+    quantity numeric(14, 2) NOT NULL DEFAULT 0 CHECK (quantity >= 0),
+    min_threshold numeric(14, 2) NOT NULL DEFAULT 2 CHECK (min_threshold >= 0),
     purchase_price numeric(14, 2) NOT NULL DEFAULT 0 CHECK (purchase_price >= 0),
     selling_price numeric(14, 2) NOT NULL DEFAULT 0 CHECK (selling_price >= 0),
     location text NOT NULL DEFAULT '',
@@ -119,7 +119,7 @@ CREATE TABLE IF NOT EXISTS public.deal_parts (
     id integer PRIMARY KEY,
     deal_id integer NOT NULL REFERENCES public.deals(id) ON DELETE CASCADE,
     part_id integer NOT NULL REFERENCES public.parts(id) ON DELETE CASCADE,
-    quantity integer NOT NULL CHECK (quantity > 0),
+    quantity numeric(14, 2) NOT NULL CHECK (quantity > 0),
     purchase_price numeric(14, 2) NOT NULL DEFAULT 0,
     selling_price numeric(14, 2) NOT NULL DEFAULT 0
 );
@@ -149,7 +149,7 @@ CREATE TABLE IF NOT EXISTS public.stock_movements (
     id integer PRIMARY KEY,
     part_id integer REFERENCES public.parts(id) ON DELETE SET NULL,
     type text NOT NULL CHECK (type IN ('incoming', 'outgoing')),
-    quantity integer NOT NULL CHECK (quantity > 0),
+    quantity numeric(14, 2) NOT NULL CHECK (quantity > 0),
     deal_id integer REFERENCES public.deals(id) ON DELETE SET NULL,
     comment text NOT NULL DEFAULT '',
     created_at timestamptz NOT NULL DEFAULT now()
