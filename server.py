@@ -229,14 +229,14 @@ class PartCreate(BaseModel):
     sku: str
     name: str
     category: str
-    quantity: float = 0.0
-    min_threshold: float = 2.0
+    quantity: Any = 0.0
+    min_threshold: Any = 2.0
     purchase_price: float = 0.0
     selling_price: float = 0.0
     location: Optional[str] = ""
 
 class PartStockAdjust(BaseModel):
-    quantity_change: float
+    quantity_change: Any
     comment: Optional[str] = "Корректировка остатка"
 
 class DealCreate(BaseModel):
@@ -296,10 +296,10 @@ class UserPermissionsUpdate(BaseModel):
 
 class DealAttachPart(BaseModel):
     part_id: int
-    quantity: float = 1.0
+    quantity: Any = 1.0
 
 class DealUpdatePartQty(BaseModel):
-    quantity: float
+    quantity: Any
 
 class TaskCreate(BaseModel):
     title: str

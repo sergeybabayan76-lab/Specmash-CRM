@@ -3813,9 +3813,11 @@ function renderDealAttachedParts(parts) {
     const unitPrice = Number(p.selling_price || 0);
     const lineTotal = unitPrice * qty;
     const unit = getPartUnit(p);
-    const stepDelta = (unit === 'л' && (qty <= 1 || !Number.isInteger(qty))) ? 0.5 : 1;
-    const decQty = Math.max(0, Math.round((qty - stepDelta) * 100) / 100);
-    const incQty = Math.round((qty + stepDelta) * 100) / 100;
+    const isOil = unit === 'л';
+    const decDelta = (isOil || qty <= 1 || !Number.isInteger(qty)) ? 0.5 : 1;
+    const incDelta = (isOil || qty < 1 || !Number.isInteger(qty)) ? 0.5 : 1;
+    const decQty = Math.max(0, Math.round((qty - decDelta) * 100) / 100);
+    const incQty = Math.round((qty + incDelta) * 100) / 100;
     return `
     <div class="flex items-center justify-between gap-2 p-2 rounded-lg bg-slate-50 border border-slate-200 text-xs">
       <div class="min-w-0 flex-1">
@@ -3825,7 +3827,7 @@ function renderDealAttachedParts(parts) {
       <div class="flex items-center gap-2 shrink-0">
         <div class="inline-flex items-center border border-slate-300 rounded-lg bg-white overflow-hidden shadow-2xs">
           <button type="button" ${isLocked ? 'disabled' : ''} onclick="changeAttachedPartQty(${dealId}, ${p.deal_part_id}, ${decQty})" class="px-2 py-1 text-slate-600 hover:bg-slate-100 font-bold leading-none ${isLocked ? 'opacity-40 cursor-not-allowed' : ''}" title="Уменьшить количество">−</button>
-          <input type="number" min="0.01" step="any" value="${qty}" ${isLocked ? 'disabled' : ''} onchange="changeAttachedPartQty(${dealId}, ${p.deal_part_id}, this.value)" class="w-14 text-center font-mono font-bold text-xs py-1 outline-none border-x border-slate-200 bg-white">
+          <input type="text" inputmode="decimal" value="${qty}" ${isLocked ? 'disabled' : ''} onchange="changeAttachedPartQty(${dealId}, ${p.deal_part_id}, this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();changeAttachedPartQty(${dealId}, ${p.deal_part_id}, this.value);}" class="w-14 text-center font-mono font-bold text-xs py-1 outline-none border-x border-slate-200 bg-white">
           <button type="button" ${isLocked ? 'disabled' : ''} onclick="changeAttachedPartQty(${dealId}, ${p.deal_part_id}, ${incQty})" class="px-2 py-1 text-slate-600 hover:bg-slate-100 font-bold leading-none ${isLocked ? 'opacity-40 cursor-not-allowed' : ''}" title="Увеличить количество">+</button>
         </div>
         <span class="font-mono font-bold text-emerald-700 min-w-[85px] text-right">${formatMoney(lineTotal)}</span>
@@ -3997,7 +3999,26 @@ function handleAttachPartSelectChange(partId) {
     if (unitLabel) {
       unitLabel.textContent = getPartUnit(part) === 'л' ? 'Л:' : 'Шт:';
     }
+    const qtyInput = document.getElementById('attach-part-qty');
+    const avail = Number(part.quantity || 0);
+    if (qtyInput && avail > 0 && avail < 1) {
+      qtyInput.value = String(avail);
+    }
   }
+}
+
+function stepAttachPartQty(direction) {
+  const qtyInput = document.getElementById('attach-part-qty');
+  if (!qtyInput) return;
+  const select = document.getElementById('attach-part-select');
+  const part = getWarehousePartsCatalog().find(p => String(p.id) === String(select?.value));
+  const isOil = part ? getPartUnit(part) === 'л' : false;
+  const cur = parsePartNumberInput(qtyInput.value, 1);
+  const delta = (isOil || cur <= 1 || !Number.isInteger(cur)) ? 0.5 : 1;
+  const next = direction < 0
+    ? Math.max(0.5, Math.round((cur - delta) * 100) / 100)
+    : Math.round((cur + delta) * 100) / 100;
+  qtyInput.value = String(next);
 }
 
 function showAttachPartRow() {
@@ -4089,7 +4110,7 @@ async function submitAttachPart() {
   const catalog = getWarehousePartsCatalog();
   const selectedPart = catalog.find(p => Number(p.id) === Number(partId));
   if (selectedPart && Number(selectedPart.quantity || 0) < qty) {
-    showToast(`Недостаточно на складе! Доступно: ${selectedPart.quantity} шт.`, 'error');
+    showToast(`Недостаточно на складе! Доступно: ${selectedPart.quantity} ${getPartUnit(selectedPart)}`, 'error');
     return;
   }
 
@@ -5289,8 +5310,8 @@ async function savePart(e) {
     sku: document.getElementById('part-sku').value.trim(),
     category: categoryVal,
     name: document.getElementById('part-name').value.trim(),
-    quantity: isOil ? rawQty : Math.round(rawQty),
-    min_threshold: isOil ? rawMin : Math.round(rawMin),
+    quantity: rawQty,
+    min_threshold: rawMin,
     location: document.getElementById('part-location').value.trim(),
     purchase_price: parseFloat(document.getElementById('part-purchase-price').value) || 0.0,
     selling_price: parseFloat(document.getElementById('part-selling-price').value) || 0.0,

@@ -224,7 +224,18 @@ class LocalDatabaseClient:
             return LocalResponse(201, result)
         except Exception as exc:
             self.connection.rollback()
-            return LocalResponse(400, [], str(exc))
+            err_str = str(exc)
+            if "invalid input syntax for type integer" in err_str and table in ("parts", "deal_parts", "stock_movements"):
+                try:
+                    self.connection.execute("ALTER TABLE public.parts ALTER COLUMN quantity TYPE numeric(14, 2) USING quantity::numeric(14, 2)")
+                    self.connection.execute("ALTER TABLE public.parts ALTER COLUMN min_threshold TYPE numeric(14, 2) USING min_threshold::numeric(14, 2)")
+                    self.connection.execute("ALTER TABLE public.deal_parts ALTER COLUMN quantity TYPE numeric(14, 2) USING quantity::numeric(14, 2)")
+                    self.connection.execute("ALTER TABLE public.stock_movements ALTER COLUMN quantity TYPE numeric(14, 2) USING quantity::numeric(14, 2)")
+                    self.connection.commit()
+                    return self.post(path, json=json, headers=headers)
+                except Exception:
+                    self.connection.rollback()
+            return LocalResponse(400, [], err_str)
 
     def patch(self, path: str, json: Dict[str, Any] = None):
         table, _, query_string = path.strip("/").partition("?")
@@ -241,7 +252,18 @@ class LocalDatabaseClient:
             return LocalResponse(204, [])
         except Exception as exc:
             self.connection.rollback()
-            return LocalResponse(400, [], str(exc))
+            err_str = str(exc)
+            if "invalid input syntax for type integer" in err_str and table in ("parts", "deal_parts", "stock_movements"):
+                try:
+                    self.connection.execute("ALTER TABLE public.parts ALTER COLUMN quantity TYPE numeric(14, 2) USING quantity::numeric(14, 2)")
+                    self.connection.execute("ALTER TABLE public.parts ALTER COLUMN min_threshold TYPE numeric(14, 2) USING min_threshold::numeric(14, 2)")
+                    self.connection.execute("ALTER TABLE public.deal_parts ALTER COLUMN quantity TYPE numeric(14, 2) USING quantity::numeric(14, 2)")
+                    self.connection.execute("ALTER TABLE public.stock_movements ALTER COLUMN quantity TYPE numeric(14, 2) USING quantity::numeric(14, 2)")
+                    self.connection.commit()
+                    return self.patch(path, json=json)
+                except Exception:
+                    self.connection.rollback()
+            return LocalResponse(400, [], err_str)
 
     def delete(self, path: str):
         table, _, query_string = path.strip("/").partition("?")
