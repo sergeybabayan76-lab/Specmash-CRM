@@ -467,7 +467,36 @@ def list_users() -> List[Dict[str, Any]]:
         return []
     with get_database_client() as client:
         r = client.get("/users", params={"select": "id,username,full_name,role,phone,created_at", "order": "id.asc"})
-        return r.json() if r.status_code == 200 else []
+        users = r.json() if r.status_code == 200 else []
+        perms_by_key: Dict[str, Any] = {}
+        try:
+            sr = client.get("/settings", params={"select": "*"})
+            if sr.status_code == 200:
+                for item in sr.json() or []:
+                    k = str(item.get("key") or "")
+                    if k.startswith("user_perms_"):
+                        perms_by_key[k] = item.get("value")
+        except Exception:
+            pass
+        for u in users:
+            uid = u.get("id")
+            urole = u.get("role") or "mechanic"
+            base_p = dict(DEFAULT_ROLE_PERMISSIONS.get(urole, DEFAULT_ROLE_PERMISSIONS["mechanic"]))
+            raw_custom = perms_by_key.get(f"user_perms_{uid}")
+            if raw_custom:
+                try:
+                    custom = json.loads(raw_custom) if isinstance(raw_custom, str) else raw_custom
+                    if isinstance(custom, dict):
+                        base_p.update(custom)
+                        if "sales_catalog" not in custom and "deals_sales" in custom:
+                            base_p["sales_catalog"] = bool(custom["deals_sales"])
+                except Exception:
+                    pass
+            if urole == "admin":
+                for pk in base_p:
+                    base_p[pk] = True
+            u["permissions"] = base_p
+        return users
 
 def create_user(data: Dict[str, Any]) -> Dict[str, Any]:
     with get_database_client() as client:
@@ -577,20 +606,32 @@ def save_setting(key: str, value: Any) -> Dict[str, Any]:
 def get_system_stats() -> Dict[str, Any]:
     if not DATABASE_READY:
         return {
-            "version": "1.2.0 (PostgreSQL)",
+            "version": "1.2.4.7 (PostgreSQL)",
             "db_type": "PostgreSQL (Docker)",
             "configured": False,
-            "message": "Пожалуйста, добавьте DATABASE_SECRET_KEY в переменные окружения",
+            "message": "Пожалуйста, добавьте DATABASE_URL в переменные окружения",
             "db_size_kb": 0.0,
             "counts": {"clients": 0, "equipment": 0, "parts": 0, "deals": 0, "users": 0, "tasks": 0}
         }
     with get_database_client() as client:
-        def count(table):
-            r = client.get(f"/{table}", params={"select": "id"})
-            return len(r.json()) if r.status_code == 200 else 0
+        def count(table: str) -> int:
+            try:
+                cur = client.connection.execute(
+                    f"SELECT COUNT(*) AS cnt FROM public.{psycopg_sql.Identifier(table).as_string(client.connection)}"
+                )
+                row = cur.fetchone()
+                if isinstance(row, dict):
+                    return int(row.get("cnt") or 0)
+                return int(row[0]) if row else 0
+            except Exception:
+                try:
+                    client.connection.rollback()
+                except Exception:
+                    pass
+                return 0
 
         return {
-            "version": "1.2.0 (PostgreSQL)",
+            "version": "1.2.4.7 (PostgreSQL)",
             "db_type": "PostgreSQL (Docker)",
             "db_size_kb": 128.0,
             "counts": {
@@ -2850,36 +2891,36 @@ def get_equipment_history(eq_id: int) -> Dict[str, Any]:
 DEFAULT_ROLE_PERMISSIONS = {
     "admin": {
         "dashboard": True, "deals_sto": True, "deals_parts": True, "deals_sales": True,
-        "warehouse": True, "equipment": True, "clients": True, "tasks": True,
-        "marketing": True, "users": True, "settings": True,
+        "warehouse": True, "equipment": True, "sales_catalog": True, "clients": True, "tasks": True,
+        "marketing": True, "users": True, "export": True, "settings": True,
         "can_delete_deals": True, "can_edit_closed_deals": True,
         "can_view_revenue": True, "can_edit_tasks": True
     },
     "moderator": {
         "dashboard": True, "deals_sto": True, "deals_parts": True, "deals_sales": False,
-        "warehouse": True, "equipment": True, "clients": True, "tasks": True,
-        "marketing": True, "users": False, "settings": False,
+        "warehouse": True, "equipment": True, "sales_catalog": False, "clients": True, "tasks": True,
+        "marketing": True, "users": False, "export": True, "settings": False,
         "can_delete_deals": False, "can_edit_closed_deals": False,
         "can_view_revenue": True, "can_edit_tasks": False
     },
     "manager": {
-        "dashboard": True, "deals_sto": True, "deals_parts": True, "deals_sales": False,
-        "warehouse": True, "equipment": True, "clients": True, "tasks": True,
-        "marketing": False, "users": False, "settings": False,
+        "dashboard": False, "deals_sto": True, "deals_parts": True, "deals_sales": False,
+        "warehouse": True, "equipment": True, "sales_catalog": False, "clients": True, "tasks": True,
+        "marketing": False, "users": False, "export": False, "settings": False,
         "can_delete_deals": False, "can_edit_closed_deals": False,
         "can_view_revenue": False, "can_edit_tasks": False
     },
     "sales_manager": {
-        "dashboard": True, "deals_sto": False, "deals_parts": False, "deals_sales": True,
-        "warehouse": True, "equipment": True, "clients": True, "tasks": True,
-        "marketing": True, "users": False, "settings": False,
+        "dashboard": False, "deals_sto": False, "deals_parts": False, "deals_sales": True,
+        "warehouse": False, "equipment": False, "sales_catalog": True, "clients": True, "tasks": True,
+        "marketing": True, "users": False, "export": False, "settings": False,
         "can_delete_deals": False, "can_edit_closed_deals": False,
         "can_view_revenue": False, "can_edit_tasks": False
     },
     "mechanic": {
         "dashboard": False, "deals_sto": True, "deals_parts": False, "deals_sales": False,
-        "warehouse": True, "equipment": True, "clients": False, "tasks": True,
-        "marketing": False, "users": False, "settings": False,
+        "warehouse": True, "equipment": True, "sales_catalog": False, "clients": False, "tasks": True,
+        "marketing": False, "users": False, "export": False, "settings": False,
         "can_delete_deals": False, "can_edit_closed_deals": False,
         "can_view_revenue": False, "can_edit_tasks": False
     }
@@ -2887,6 +2928,10 @@ DEFAULT_ROLE_PERMISSIONS = {
 
 def get_user_permissions(user_id: int, role: str = "mechanic") -> Dict[str, Any]:
     base_perms = dict(DEFAULT_ROLE_PERMISSIONS.get(role, DEFAULT_ROLE_PERMISSIONS["mechanic"]))
+    if role == "admin":
+        for k in base_perms:
+            base_perms[k] = True
+        return base_perms
     if not DATABASE_READY:
         return base_perms
     with get_database_client() as client:
@@ -2896,10 +2941,22 @@ def get_user_permissions(user_id: int, role: str = "mechanic") -> Dict[str, Any]
             if val:
                 try:
                     custom = json.loads(val) if isinstance(val, str) else val
-                    base_perms.update(custom)
+                    if isinstance(custom, dict):
+                        base_perms.update(custom)
+                        if "sales_catalog" not in custom and "deals_sales" in custom:
+                            base_perms["sales_catalog"] = bool(custom["deals_sales"])
                 except Exception:
                     pass
     return base_perms
+
+def user_has_permission(user_id: Optional[int], role: str, perm_key: str) -> bool:
+    if (role or "").strip().lower() == "admin":
+        return True
+    if user_id and int(user_id) > 0:
+        perms = get_user_permissions(int(user_id), role or "mechanic")
+        return bool(perms.get(perm_key, False))
+    defaults = DEFAULT_ROLE_PERMISSIONS.get((role or "mechanic").strip().lower(), DEFAULT_ROLE_PERMISSIONS["mechanic"])
+    return bool(defaults.get(perm_key, False))
 
 def save_user_permissions(user_id: int, permissions: Dict[str, Any]) -> Dict[str, Any]:
     save_setting(f"user_perms_{user_id}", json.dumps(permissions, ensure_ascii=False))

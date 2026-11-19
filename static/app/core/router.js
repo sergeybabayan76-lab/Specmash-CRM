@@ -14,20 +14,16 @@
   ];
 
   function canAccess(tabName, user) {
+    if (typeof window.canUserAccessTab === 'function') {
+      return window.canUserAccessTab(tabName, user);
+    }
     if (!user || !user.id) return false;
-    const permissions = user.permissions || {};
-    if (tabName === 'settings' || tabName === 'users' || tabName === 'marketing') {
-      return user.role === 'admin' || permissions[tabName] === true;
-    }
-    if (tabName === 'export') {
-      return user.role === 'admin' || !['mechanic', 'manager', 'sales_manager'].includes(user.role);
-    }
     return true;
   }
 
   function fromHash() {
     const requested = window.location.hash.replace(/^#\/?/, '');
-    return tabs.includes(requested) ? requested : 'dashboard';
+    return tabs.includes(requested) ? requested : '';
   }
 
   window.SpecmashApp = window.SpecmashApp || {};

@@ -397,15 +397,15 @@ html, body {
 }
 
 /* ==========================================================================
-   Role-Based Permissions (Mechanic Visibility Restrictions)
+   Permission-Based Visibility Restrictions (Revenue & Cost Analytics)
    ========================================================================== */
-body.role-mechanic .col-purchase-price,
-body.role-mechanic #deal-cost,
-body.role-mechanic #part-purchase-price-group,
-body.role-mechanic #header-finance-block,
-body.role-mechanic #dash-card-revenue,
-body.role-mechanic #dash-charts-row,
-body.role-mechanic #stat-inventory-cost-wrapper {
+body.hide-revenue-analytics .col-purchase-price,
+body.hide-revenue-analytics #deal-cost,
+body.hide-revenue-analytics #part-purchase-price-group,
+body.hide-revenue-analytics #header-finance-block,
+body.hide-revenue-analytics #dash-card-revenue,
+body.hide-revenue-analytics #dash-charts-row,
+body.hide-revenue-analytics #stat-inventory-cost-wrapper {
   display: none !important;
 }
 

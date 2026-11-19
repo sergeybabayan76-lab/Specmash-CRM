@@ -506,8 +506,160 @@ function stopHeartbeat() {
   window._heartbeatTimer = null;
 }
 
-function initAuth() {
-  state.currentTab = window.SpecmashApp.router.fromHash();
+const DEFAULT_ROLE_PERMISSIONS_JS = {
+  admin: {
+    dashboard: true, deals_sto: true, deals_parts: true, deals_sales: true,
+    warehouse: true, equipment: true, sales_catalog: true, clients: true, tasks: true,
+    marketing: true, users: true, export: true, settings: true,
+    can_delete_deals: true, can_edit_closed_deals: true,
+    can_view_revenue: true, can_edit_tasks: true
+  },
+  moderator: {
+    dashboard: true, deals_sto: true, deals_parts: true, deals_sales: false,
+    warehouse: true, equipment: true, sales_catalog: false, clients: true, tasks: true,
+    marketing: true, users: false, export: true, settings: false,
+    can_delete_deals: false, can_edit_closed_deals: false,
+    can_view_revenue: true, can_edit_tasks: false
+  },
+  manager: {
+    dashboard: false, deals_sto: true, deals_parts: true, deals_sales: false,
+    warehouse: true, equipment: true, sales_catalog: false, clients: true, tasks: true,
+    marketing: false, users: false, export: false, settings: false,
+    can_delete_deals: false, can_edit_closed_deals: false,
+    can_view_revenue: false, can_edit_tasks: false
+  },
+  sales_manager: {
+    dashboard: false, deals_sto: false, deals_parts: false, deals_sales: true,
+    warehouse: false, equipment: false, sales_catalog: true, clients: true, tasks: true,
+    marketing: true, users: false, export: false, settings: false,
+    can_delete_deals: false, can_edit_closed_deals: false,
+    can_view_revenue: false, can_edit_tasks: false
+  },
+  mechanic: {
+    dashboard: false, deals_sto: true, deals_parts: false, deals_sales: false,
+    warehouse: true, equipment: true, sales_catalog: false, clients: false, tasks: true,
+    marketing: false, users: false, export: false, settings: false,
+    can_delete_deals: false, can_edit_closed_deals: false,
+    can_view_revenue: false, can_edit_tasks: false
+  }
+};
+
+function hasUserPerm(key, user = null) {
+  const u = user || state.currentUser;
+  if (!u || !u.id) return false;
+  const role = String(u.role || 'mechanic').trim().toLowerCase();
+  if (role === 'admin') return true;
+
+  const perms = u.permissions || {};
+  const defaults = DEFAULT_ROLE_PERMISSIONS_JS[role] || DEFAULT_ROLE_PERMISSIONS_JS.mechanic;
+
+  if (key === 'sales_catalog' && perms.sales_catalog === undefined) {
+    if (perms.deals_sales !== undefined) return Boolean(perms.deals_sales);
+    return Boolean(defaults.sales_catalog);
+  }
+  if (key === 'export' && perms.export === undefined) {
+    return Boolean(defaults.export);
+  }
+  if (perms[key] !== undefined) {
+    return Boolean(perms[key]);
+  }
+  return Boolean(defaults[key]);
+}
+
+function getAllowedDealsDepartments(user = null) {
+  const u = user || state.currentUser;
+  const depts = [];
+  if (hasUserPerm('deals_sto', u)) depts.push('service');
+  if (hasUserPerm('deals_parts', u)) depts.push('parts_sale');
+  if (hasUserPerm('deals_sales', u)) depts.push('sales');
+  return depts;
+}
+
+function canUserAccessTab(tabName, user = null) {
+  const u = user || state.currentUser;
+  if (!u || !u.id) return false;
+  if (u.role === 'admin') return true;
+
+  switch (tabName) {
+    case 'dashboard': return hasUserPerm('dashboard', u);
+    case 'kanban': return getAllowedDealsDepartments(u).length > 0;
+    case 'clients': return hasUserPerm('clients', u);
+    case 'equipment': return hasUserPerm('equipment', u);
+    case 'sales_catalog': return hasUserPerm('sales_catalog', u);
+    case 'warehouse': return hasUserPerm('warehouse', u);
+    case 'tasks': return hasUserPerm('tasks', u);
+    case 'marketing': return hasUserPerm('marketing', u);
+    case 'users': return hasUserPerm('users', u);
+    case 'export': return hasUserPerm('export', u);
+    case 'settings': return hasUserPerm('settings', u);
+    default: return false;
+  }
+}
+window.canUserAccessTab = canUserAccessTab;
+
+function getFirstAllowedTabForUser(user = null) {
+  const u = user || state.currentUser;
+  if (!u || !u.id) return { tab: null, dept: null };
+
+  if (hasUserPerm('dashboard', u)) return { tab: 'dashboard', dept: null };
+  if (hasUserPerm('deals_sto', u)) return { tab: 'kanban', dept: 'service' };
+  if (hasUserPerm('deals_parts', u)) return { tab: 'kanban', dept: 'parts_sale' };
+  if (hasUserPerm('deals_sales', u)) return { tab: 'kanban', dept: 'sales' };
+  if (hasUserPerm('sales_catalog', u)) return { tab: 'sales_catalog', dept: null };
+  if (hasUserPerm('warehouse', u)) return { tab: 'warehouse', dept: null };
+  if (hasUserPerm('equipment', u)) return { tab: 'equipment', dept: null };
+  if (hasUserPerm('clients', u)) return { tab: 'clients', dept: null };
+  if (hasUserPerm('tasks', u)) return { tab: 'tasks', dept: null };
+  if (hasUserPerm('marketing', u)) return { tab: 'marketing', dept: null };
+  if (hasUserPerm('export', u)) return { tab: 'export', dept: null };
+  if (hasUserPerm('users', u)) return { tab: 'users', dept: null };
+  if (hasUserPerm('settings', u)) return { tab: 'settings', dept: null };
+
+  return { tab: null, dept: null };
+}
+
+async function refreshCurrentUserPermissions() {
+  if (!state.currentUser || !state.currentUser.id) return;
+  try {
+    const res = await fetch(`/api/users/${state.currentUser.id}/permissions`);
+    if (res.ok) {
+      const freshPerms = await res.json();
+      if (freshPerms && typeof freshPerms === 'object') {
+        state.currentUser.permissions = freshPerms;
+        localStorage.setItem('specmash_current_user', JSON.stringify(state.currentUser));
+      }
+    }
+  } catch (e) {
+    console.warn('Could not refresh user permissions:', e);
+  }
+}
+
+function preloadPermittedEntities() {
+  if (!state.currentUser || !state.currentUser.id) return;
+  const allowedDepts = getAllowedDealsDepartments();
+  if (hasUserPerm('clients') || allowedDepts.length > 0 || hasUserPerm('equipment') || hasUserPerm('tasks') || hasUserPerm('marketing')) {
+    loadClients();
+  }
+  if (hasUserPerm('equipment') || hasUserPerm('deals_sto') || hasUserPerm('clients')) {
+    loadEquipment();
+  }
+  if (hasUserPerm('sales_catalog') || hasUserPerm('deals_sales')) {
+    loadSalesEquipment();
+  }
+  if (hasUserPerm('warehouse') || hasUserPerm('deals_sto') || hasUserPerm('deals_parts')) {
+    loadParts();
+  }
+  if (allowedDepts.length > 0 || hasUserPerm('tasks')) {
+    loadDeals();
+  }
+  if (hasUserPerm('tasks')) {
+    loadTasks();
+  }
+  loadUsers();
+}
+
+async function initAuth() {
+  const hashTab = window.SpecmashApp.router.fromHash();
   try {
     const savedUser = localStorage.getItem('specmash_current_user');
     state.currentUser = savedUser ? JSON.parse(savedUser) : null;
@@ -523,18 +675,23 @@ function initAuth() {
     return;
   }
 
+  // Fetch latest permissions set by Administrator in PostgreSQL
+  await refreshCurrentUserPermissions();
+
   showAppLayout();
   applyUserPermissions();
   startHeartbeat();
   loadSettings();
-  // Preload core entities so cache and relations are always ready
-  loadClients();
-  loadEquipment();
-  loadParts();
-  loadDeals();
-  loadTasks();
-  loadUsers();
-  switchTab(state.currentTab || 'dashboard');
+  preloadPermittedEntities();
+
+  // Navigate to requested tab ONLY if allowed; otherwise open the first section allowed by Administrator
+  if (hashTab && canUserAccessTab(hashTab)) {
+    switchTab(hashTab, { silent: true });
+  } else {
+    const firstAllowed = getFirstAllowedTabForUser();
+    if (firstAllowed.dept) state.dealsDepartment = firstAllowed.dept;
+    switchTab(firstAllowed.tab || 'dashboard', { silent: true });
+  }
 }
 
 function showAuthScreen() {
@@ -617,7 +774,12 @@ async function handleAuthScreenLogin(e) {
     applyUserPermissions();
     startHeartbeat();
     await loadSettings();
-    await switchTab('dashboard');
+    preloadPermittedEntities();
+
+    const firstAllowed = getFirstAllowedTabForUser();
+    if (firstAllowed.dept) state.dealsDepartment = firstAllowed.dept;
+    await switchTab(firstAllowed.tab || 'dashboard', { silent: true });
+
     showToast(`Добро пожаловать, ${data.full_name}!`);
     if (usernameInput) usernameInput.value = '';
     if (passwordInput) passwordInput.value = '';
@@ -671,17 +833,9 @@ function applyUserPermissions() {
   const u = state.currentUser;
   if (!u) return;
 
-  const perms = u.permissions || {};
   const role = u.role || 'mechanic';
   const isAdmin = role === 'admin';
   const isSalesManager = role === 'sales_manager';
-
-  // Helper to check perm or fallback to role
-  function hasPerm(key, fallbackRoleAllowed) {
-    if (perms[key] !== undefined) return Boolean(perms[key]);
-    if (isAdmin) return true;
-    return Boolean(fallbackRoleAllowed);
-  }
 
   // 1. TOP-RIGHT USER DISPLAY (Header & Dropdown)
   const nameEl = document.getElementById('user-display-name');
@@ -702,7 +856,6 @@ function applyUserPermissions() {
   if (ddRoleEl) ddRoleEl.textContent = `${roleInfo.icon} ${roleInfo.label}`;
 
   if (avatarEl) {
-    // Generate clean 2-letter initials
     const words = displayName.replace(/[^a-zA-Zа-яА-ЯёЁ\s]/g, '').trim().split(/\s+/).filter(Boolean);
     let initials = 'СП';
     if (words.length >= 2) {
@@ -727,52 +880,73 @@ function applyUserPermissions() {
     }
   }
 
-  // 2. NAV ITEMS VISIBILITY
-  const setNavVis = (id, visible) => {
+  // 2. NAV ITEMS VISIBILITY (Strictly governed by Administrator's permissions matrix)
+  const setVis = (id, visible) => {
     const el = document.getElementById(id);
     if (el) el.classList.toggle('hidden', !visible);
   };
 
-  setNavVis('nav-dashboard', hasPerm('dashboard', true));
-  setNavVis('nav-kanban', hasPerm('deals_sto', true));
-  setNavVis('nav-parts-sales', hasPerm('deals_parts', true));
-  setNavVis('nav-sales', hasPerm('deals_sales', isAdmin || isSalesManager));
-  setNavVis('nav-warehouse', hasPerm('warehouse', true));
-  setNavVis('nav-equipment', hasPerm('equipment', true));
-  setNavVis('nav-sales_catalog', hasPerm('deals_sales', isAdmin || isSalesManager) || hasPerm('equipment', true));
-  setNavVis('nav-clients', hasPerm('clients', true));
-  setNavVis('nav-tasks', hasPerm('tasks', true));
-  setNavVis('nav-marketing', hasPerm('marketing', isAdmin || isSalesManager));
-  setNavVis('nav-users', hasPerm('users', isAdmin));
-  setNavVis('nav-settings', hasPerm('settings', isAdmin));
+  const canDashboard = hasUserPerm('dashboard');
+  const canDealsSto = hasUserPerm('deals_sto');
+  const canDealsParts = hasUserPerm('deals_parts');
+  const canDealsSales = hasUserPerm('deals_sales');
+  const canWarehouse = hasUserPerm('warehouse');
+  const canEquipment = hasUserPerm('equipment');
+  const canSalesCatalog = hasUserPerm('sales_catalog');
+  const canClients = hasUserPerm('clients');
+  const canTasks = hasUserPerm('tasks');
+  const canMarketing = hasUserPerm('marketing');
+  const canUsers = hasUserPerm('users');
+  const canExport = hasUserPerm('export');
+  const canSettings = hasUserPerm('settings');
 
-  // Department pill in deals
-  const deptSalesBtn = document.getElementById('dept-btn-sales');
-  if (deptSalesBtn) deptSalesBtn.classList.toggle('hidden', !hasPerm('deals_sales', isAdmin || isSalesManager));
+  setVis('nav-dashboard', canDashboard);
+  setVis('nav-kanban', canDealsSto);
+  setVis('nav-parts-sales', canDealsParts);
+  setVis('nav-sales', canDealsSales);
+  setVis('nav-warehouse', canWarehouse);
+  setVis('nav-equipment', canEquipment);
+  setVis('nav-sales_catalog', canSalesCatalog);
+  setVis('nav-clients', canClients);
+  setVis('nav-tasks', canTasks);
+  setVis('nav-marketing', canMarketing);
+  setVis('nav-users', canUsers);
+  setVis('nav-export', canExport);
+  setVis('nav-settings', canSettings);
+
+  // Quick Create buttons in Sidebar & Header
+  setVis('sidebar-quick-deal-wrap', canDealsSto || canDealsParts || canDealsSales);
+  setVis('header-btn-add-client', canClients);
+  setVis('header-btn-add-equipment', canEquipment);
+  setVis('header-btn-add-part', canWarehouse);
+  setVis('sidebar-btn-logo', canSettings);
+
+  // Department pills in deals toolbar & deal modal
+  setVis('dept-btn-service', canDealsSto);
+  setVis('dept-btn-parts-sale', canDealsParts);
+  setVis('dept-btn-sales', canDealsSales);
+  setVis('deal-type-btn-service', canDealsSto);
+  setVis('deal-type-btn-parts', canDealsParts);
+  setVis('deal-type-btn-sales', canDealsSales);
+
+  // Ensure state.dealsDepartment is set to an allowed department
+  const allowedDepts = getAllowedDealsDepartments();
+  if (allowedDepts.length > 0 && !allowedDepts.includes(state.dealsDepartment)) {
+    state.dealsDepartment = allowedDepts[0];
+  }
 
   // 3. FINANCE & REVENUE VISIBILITY
-  const canViewRev = hasPerm('can_view_revenue', isAdmin || role === 'moderator');
-  const financeBlock = document.getElementById('header-finance-block');
-  const revCard = document.getElementById('dash-card-revenue');
-  const partsRevCard = document.getElementById('dash-card-parts-revenue');
-  const servRevCard = document.getElementById('dash-card-service-revenue');
-  const salesRevCard = document.getElementById('dash-card-sales-revenue');
-  const chartsRow = document.getElementById('dash-charts-row');
-  const revSection = document.getElementById('dash-mechanics-revenue-section');
+  const canViewRev = hasUserPerm('can_view_revenue');
+  setVis('header-finance-block', canViewRev);
+  setVis('dash-card-revenue', canViewRev);
+  setVis('dash-card-parts-revenue', canViewRev);
+  setVis('dash-card-service-revenue', canViewRev);
+  setVis('dash-card-sales-revenue', canViewRev || canDealsSales);
+  setVis('dash-charts-row', canViewRev);
+  setVis('dash-mechanics-revenue-section', isAdmin);
 
-  if (financeBlock) financeBlock.classList.toggle('hidden', !canViewRev);
-  if (revCard) revCard.classList.toggle('hidden', !canViewRev);
-  if (partsRevCard) partsRevCard.classList.toggle('hidden', !canViewRev);
-  if (servRevCard) servRevCard.classList.toggle('hidden', !canViewRev);
-  if (salesRevCard) salesRevCard.classList.toggle('hidden', !(canViewRev || isSalesManager));
-  if (chartsRow) chartsRow.classList.toggle('hidden', !canViewRev);
-  if (revSection) revSection.classList.toggle('hidden', !isAdmin);
-
-  // Import / Export
-  const navExport = document.getElementById('nav-export');
-  if (navExport) navExport.classList.toggle('hidden', !isAdmin && (role === 'mechanic' || role === 'manager' || role === 'sales_manager'));
-
-  // Body classes for global CSS role hiding
+  // Body classes for CSS permission hiding
+  document.body.classList.toggle('hide-revenue-analytics', !canViewRev);
   document.body.classList.toggle('role-mechanic', role === 'mechanic' || role === 'sales_manager');
   document.body.classList.toggle('role-manager', role === 'manager');
   document.body.classList.toggle('role-moderator', role === 'moderator');
@@ -804,7 +978,11 @@ async function handleManualLogin(e) {
     startHeartbeat();
     closeModal('modal-login');
     showToast(`Вы вошли как ${data.full_name}`);
-    loadDashboard();
+    preloadPermittedEntities();
+
+    const firstAllowed = getFirstAllowedTabForUser();
+    if (firstAllowed.dept) state.dealsDepartment = firstAllowed.dept;
+    switchTab(firstAllowed.tab || 'dashboard', { silent: true });
   } catch (err) {
     showToast(err.message, 'error');
   }
@@ -1190,45 +1368,96 @@ function toggleMobileSidebar(force) {
 
 // ================= TAB MANAGEMENT =================
 
-function switchTab(tabName) {
+const TAB_TITLES_RU = {
+  dashboard: 'Дашборд & Выручка',
+  kanban: 'Сделки и заказ-наряды',
+  clients: 'База клиентов',
+  equipment: 'База техники (СТО)',
+  sales_catalog: 'Техника для продажи',
+  warehouse: 'Склад запчастей',
+  tasks: 'Задачи & Планировщик',
+  marketing: 'Маркетинг (WhatsApp)',
+  users: 'Сотрудники & Роли',
+  export: 'Импорт & Экспорт',
+  settings: 'Настройки СТО'
+};
+
+let _isSwitchingTabInternal = false;
+
+// Single global hashchange listener (registered once, never inside switchTab!)
+window.addEventListener('hashchange', () => {
+  if (_isSwitchingTabInternal) return;
+  if (!state.currentUser || !state.currentUser.id) return;
+  const requested = window.SpecmashApp.router.fromHash();
+  if (requested && state.currentTab !== requested) {
+    switchTab(requested);
+  }
+});
+
+function switchTab(tabName, options = {}) {
   if (!state.currentUser || !state.currentUser.id) {
     showAuthScreen();
     return;
   }
 
-  const role = state.currentUser.role;
-  const perms = state.currentUser.permissions || {};
-  const isAdmin = role === 'admin';
+  const tabs = window.SpecmashApp.router.tabs;
+  const noAccessSection = document.getElementById('tab-no-access');
 
-  // Security check: Settings
-  if (tabName === 'settings' && !isAdmin && !perms.settings) {
-    showToast('Настройки СТО доступны исключительно Администратору', 'warning');
-    return switchTab('dashboard');
+  // Verify access permission for the requested tab
+  if (!tabName || !canUserAccessTab(tabName)) {
+    if (tabName && !options.silent) {
+      const titleRu = TAB_TITLES_RU[tabName] || tabName;
+      showToast(`Доступ к разделу «${titleRu}» ограничен Администратором`, 'warning');
+    }
+
+    const fallback = getFirstAllowedTabForUser();
+    if (!fallback.tab) {
+      // Employee has no sections permitted at all
+      state.currentTab = '';
+      tabs.forEach(t => {
+        const sec = document.getElementById(`tab-${t}`);
+        if (sec) sec.classList.add('hidden');
+      });
+      if (noAccessSection) noAccessSection.classList.remove('hidden');
+      try {
+        window.history.replaceState(null, '', window.location.pathname);
+      } catch (e) {}
+      if (window.lucide) lucide.createIcons();
+      return;
+    }
+
+    if (fallback.dept) {
+      state.dealsDepartment = fallback.dept;
+    }
+    tabName = fallback.tab;
   }
 
-  // Security check: Users tab
-  if (tabName === 'users' && !isAdmin && !perms.users) {
-    showToast('Раздел "Сотрудники & Роли" доступен исключительно Администратору', 'warning');
-    return switchTab('dashboard');
-  }
+  if (noAccessSection) noAccessSection.classList.add('hidden');
 
-  // Security check: Marketing tab (WhatsApp)
-  if (tabName === 'marketing' && !isAdmin && !perms.marketing) {
-    showToast('Раздел "Маркетинг" доступен исключительно Администратору', 'warning');
-    return switchTab('dashboard');
-  }
-
-  // Security check: Import & Export
-  if (tabName === 'export' && (role === 'mechanic' || role === 'manager' || role === 'sales_manager') && !isAdmin) {
-    showToast('Раздел "Импорт & Экспорт" недоступен для вашей роли', 'warning');
-    return switchTab('dashboard');
+  // If entering Kanban/Deals tab, ensure state.dealsDepartment is permitted for this user
+  if (tabName === 'kanban') {
+    const allowedDepts = getAllowedDealsDepartments();
+    if (allowedDepts.length > 0 && !allowedDepts.includes(state.dealsDepartment)) {
+      state.dealsDepartment = allowedDepts[0];
+    }
+    syncDealsDepartmentHeaderUI(state.dealsDepartment);
   }
 
   // Auto-close mobile drawer on navigation
   toggleMobileSidebar(false);
 
   state.currentTab = tabName;
-  const tabs = window.SpecmashApp.router.tabs;
+
+  // Update URL hash cleanly without firing hashchange loop
+  _isSwitchingTabInternal = true;
+  try {
+    if (window.location.hash !== `#${tabName}`) {
+      window.history.replaceState(null, '', `#${tabName}`);
+    }
+  } catch (e) {}
+  setTimeout(() => { _isSwitchingTabInternal = false; }, 0);
+
+  const navInactive = 'nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800';
 
   tabs.forEach(t => {
     const section = document.getElementById(`tab-${t}`);
@@ -1238,15 +1467,8 @@ function switchTab(tabName) {
       if (t === tabName) {
         navItem.className = 'nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-white bg-blue-600/20 border-l-4 border-blue-500';
       } else {
-        navItem.className = 'nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800';
+        navItem.className = navInactive;
       }
-
-      window.addEventListener('hashchange', () => {
-        const tabName = window.SpecmashApp.router.fromHash();
-        if (state.currentUser && state.currentTab !== tabName) {
-          switchTab(tabName);
-        }
-      });
     }
   });
 
@@ -1255,7 +1477,6 @@ function switchTab(tabName) {
   const navParts = document.getElementById('nav-parts-sales');
   const navSales = document.getElementById('nav-sales');
 
-  const navInactive = 'nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800';
   if (tabName === 'kanban') {
     if (state.dealsDepartment === 'parts_sale') {
       if (navParts) navParts.className = 'nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-white bg-emerald-600/20 border-l-4 border-emerald-500';
@@ -1275,6 +1496,9 @@ function switchTab(tabName) {
     if (navSales) navSales.className = navInactive;
   }
 
+  // Re-enforce visibility of all sidebar items and buttons according to Administrator permissions
+  applyUserPermissions();
+
   window.SpecmashApp.pages.load(tabName);
 
   if (window.lucide) lucide.createIcons();
@@ -1282,20 +1506,21 @@ function switchTab(tabName) {
 
 function handleGlobalSearch(query) {
   if (!query || query.length < 2) {
-    if (state.currentTab === 'clients') loadClients();
-    if (state.currentTab === 'equipment') loadEquipment();
-    if (state.currentTab === 'warehouse') loadParts();
-    if (state.currentTab === 'kanban') loadDeals();
+    if (state.currentTab === 'clients' && canUserAccessTab('clients')) loadClients();
+    if (state.currentTab === 'equipment' && canUserAccessTab('equipment')) loadEquipment();
+    if (state.currentTab === 'warehouse' && canUserAccessTab('warehouse')) loadParts();
+    if (state.currentTab === 'kanban' && canUserAccessTab('kanban')) loadDeals();
     return;
   }
 
-  if (state.currentTab === 'clients') loadClients(query);
-  else if (state.currentTab === 'equipment') loadEquipment(query);
-  else if (state.currentTab === 'warehouse') loadParts(query);
-  else {
+  if (state.currentTab === 'clients' && canUserAccessTab('clients')) loadClients(query);
+  else if (state.currentTab === 'equipment' && canUserAccessTab('equipment')) loadEquipment(query);
+  else if (state.currentTab === 'warehouse' && canUserAccessTab('warehouse')) loadParts(query);
+  else if (canUserAccessTab('kanban')) {
     if (state.currentTab !== 'kanban') switchTab('kanban');
-    document.getElementById('kanban-filter').value = query;
-    renderKanban();
+    const filterEl = document.getElementById('kanban-filter');
+    if (filterEl) filterEl.value = query;
+    renderDeals();
   }
 }
 
@@ -1418,6 +1643,10 @@ function resetDashboardPeriodFilter() {
 
 async function loadDashboard() {
   if (!state.currentUser || !state.currentUser.id) return;
+  if (!hasUserPerm('dashboard')) {
+    updateSidebarCounters();
+    return;
+  }
   try {
     const { year, month } = getDashboardPeriodParams();
     const qs = new URLSearchParams();
@@ -1875,39 +2104,18 @@ async function loadDeals() {
   }
 }
 
-function switchDealsDepartment(dept) {
-  const reqDept = dept || 'service';
-  if (reqDept === 'sales') {
-    const role = state.currentUser?.role;
-    const perms = state.currentUser?.permissions || {};
-    if (role !== 'admin' && role !== 'sales_manager' && !perms.deals_sales) {
-      showToast('Отдел продаж спецтехники доступен только Администраторам и Менеджерам по продажам', 'warning');
-      return;
-    }
-  }
-
-  state.dealsDepartment = reqDept;
-  const isParts = state.dealsDepartment === 'parts_sale';
-  const isSales = state.dealsDepartment === 'sales';
+function syncDealsDepartmentHeaderUI(dept) {
+  const isParts = dept === 'parts_sale';
+  const isSales = dept === 'sales';
 
   const btnService = document.getElementById('dept-btn-service');
   const btnParts = document.getElementById('dept-btn-parts-sale');
   const btnSales = document.getElementById('dept-btn-sales');
 
   const baseInactive = 'flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-slate-600 hover:text-slate-900 transition-all font-semibold';
-  if (btnService) btnService.className = (!isParts && !isSales) ? 'flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-blue-900 shadow-sm transition-all font-bold' : baseInactive;
-  if (btnParts) btnParts.className = isParts ? 'flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-emerald-800 shadow-sm transition-all font-bold' : baseInactive;
-  if (btnSales) btnSales.className = isSales ? 'flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-indigo-800 shadow-sm transition-all font-bold' : baseInactive;
-
-  // Nav item highlighting in sidebar
-  const navKanban = document.getElementById('nav-kanban');
-  const navParts = document.getElementById('nav-parts-sales');
-  const navSales = document.getElementById('nav-sales');
-
-  const navInactive = 'nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800';
-  if (navKanban) navKanban.className = (!isParts && !isSales && state.currentTab === 'kanban') ? 'nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-white bg-blue-600/20 border-l-4 border-blue-500' : navInactive;
-  if (navParts) navParts.className = (isParts && state.currentTab === 'kanban') ? 'nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-white bg-emerald-600/20 border-l-4 border-emerald-500' : navInactive;
-  if (navSales) navSales.className = (isSales && state.currentTab === 'kanban') ? 'nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-white bg-indigo-600/20 border-l-4 border-indigo-500' : navInactive;
+  if (btnService) btnService.className = `${(!isParts && !isSales) ? 'flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-blue-900 shadow-sm transition-all font-bold' : baseInactive}${hasUserPerm('deals_sto') ? '' : ' hidden'}`;
+  if (btnParts) btnParts.className = `${isParts ? 'flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-emerald-800 shadow-sm transition-all font-bold' : baseInactive}${hasUserPerm('deals_parts') ? '' : ' hidden'}`;
+  if (btnSales) btnSales.className = `${isSales ? 'flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white text-indigo-800 shadow-sm transition-all font-bold' : baseInactive}${hasUserPerm('deals_sales') ? '' : ' hidden'}`;
 
   const titleEl = document.getElementById('kanban-board-title');
   const subEl = document.getElementById('kanban-board-subtitle');
@@ -1919,7 +2127,7 @@ function switchDealsDepartment(dept) {
   }
   const salesCatalogShortcut = document.getElementById('btn-open-sales-catalog-shortcut');
   if (salesCatalogShortcut) {
-    salesCatalogShortcut.classList.toggle('hidden', !isSales);
+    salesCatalogShortcut.classList.toggle('hidden', !(isSales && hasUserPerm('sales_catalog')));
   }
 
   if (isSales) {
@@ -1935,6 +2143,43 @@ function switchDealsDepartment(dept) {
     if (subEl) subEl.textContent = 'СТО Спецмаш • Воронка ремонтов, контроль этапов и списание запчастей';
     if (btnText) btnText.textContent = 'Создать наряд';
   }
+}
+
+function switchDealsDepartment(dept) {
+  let reqDept = dept || 'service';
+  const permMap = {
+    service: { key: 'deals_sto', label: 'Заказ-наряды (СТО)' },
+    parts_sale: { key: 'deals_parts', label: 'Продажа запчастей' },
+    sales: { key: 'deals_sales', label: 'Отдел продаж спецтехники' }
+  };
+  const check = permMap[reqDept] || permMap.service;
+  if (!hasUserPerm(check.key)) {
+    const allowed = getAllowedDealsDepartments();
+    if (allowed.length === 0) {
+      showToast(`Доступ к разделу «${check.label}» ограничен Администратором`, 'warning');
+      return;
+    }
+    reqDept = allowed[0];
+  }
+
+  state.dealsDepartment = reqDept;
+  const isParts = state.dealsDepartment === 'parts_sale';
+  const isSales = state.dealsDepartment === 'sales';
+
+  syncDealsDepartmentHeaderUI(state.dealsDepartment);
+
+  // Nav item highlighting in sidebar
+  const navKanban = document.getElementById('nav-kanban');
+  const navParts = document.getElementById('nav-parts-sales');
+  const navSales = document.getElementById('nav-sales');
+
+  const navInactive = 'nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800';
+  if (navKanban) navKanban.className = (!isParts && !isSales && state.currentTab === 'kanban') ? 'nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-white bg-blue-600/20 border-l-4 border-blue-500' : navInactive;
+  if (navParts) navParts.className = (isParts && state.currentTab === 'kanban') ? 'nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-white bg-emerald-600/20 border-l-4 border-emerald-500' : navInactive;
+  if (navSales) navSales.className = (isSales && state.currentTab === 'kanban') ? 'nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-white bg-indigo-600/20 border-l-4 border-indigo-500' : navInactive;
+
+  // Re-enforce visibility of all sidebar items and buttons according to Administrator permissions
+  applyUserPermissions();
 
   // Requirement #12: List view is default for all departments
   setDealsViewMode('list');
@@ -3272,12 +3517,26 @@ async function loadUsers() {
     }
     state.users = crmStore.mergeWithServer('users', serverUsers);
 
-    // Keep state.currentUser in sync with fresh database profile
+    // Keep state.currentUser (including permissions) in sync with fresh database profile
     if (state.currentUser && state.currentUser.id && Array.isArray(state.users)) {
-      const freshSelf = state.users.find(u => u.id === state.currentUser.id || (u.username && u.username.toLowerCase() === state.currentUser.username?.toLowerCase()));
-      if (freshSelf && (freshSelf.full_name !== state.currentUser.full_name || freshSelf.role !== state.currentUser.role)) {
-        state.currentUser = { ...state.currentUser, ...freshSelf };
-        applyUserPermissions();
+      const freshSelf = state.users.find(u => Number(u.id) === Number(state.currentUser.id) || (u.username && u.username.toLowerCase() === state.currentUser.username?.toLowerCase()));
+      if (freshSelf) {
+        const prevPermsJson = JSON.stringify(state.currentUser.permissions || {});
+        const nextPermsJson = freshSelf.permissions ? JSON.stringify(freshSelf.permissions) : prevPermsJson;
+        if (freshSelf.full_name !== state.currentUser.full_name || freshSelf.role !== state.currentUser.role || prevPermsJson !== nextPermsJson) {
+          state.currentUser = {
+            ...state.currentUser,
+            ...freshSelf,
+            permissions: freshSelf.permissions || state.currentUser.permissions
+          };
+          localStorage.setItem('specmash_current_user', JSON.stringify(state.currentUser));
+          applyUserPermissions();
+          if (state.currentTab && !canUserAccessTab(state.currentTab)) {
+            const firstAllowed = getFirstAllowedTabForUser();
+            if (firstAllowed.dept) state.dealsDepartment = firstAllowed.dept;
+            switchTab(firstAllowed.tab || '', { silent: true });
+          }
+        }
       }
     }
 
@@ -3706,7 +3965,15 @@ function clearDealClientSearch() {
 
 // DEAL MODAL
 function setDealModalType(type) {
-  state.dealModalType = type || 'service';
+  let reqType = type || 'service';
+  const dealIdVal = document.getElementById('deal-id')?.value;
+  if (!dealIdVal) {
+    const allowedDepts = getAllowedDealsDepartments();
+    if (allowedDepts.length > 0 && !allowedDepts.includes(reqType)) {
+      reqType = allowedDepts[0];
+    }
+  }
+  state.dealModalType = reqType;
   const isParts = state.dealModalType === 'parts_sale';
   const isSales = state.dealModalType === 'sales';
   const typeInput = document.getElementById('deal-type');
@@ -3717,9 +3984,9 @@ function setDealModalType(type) {
   const btnSales = document.getElementById('deal-type-btn-sales');
 
   const inactiveBtn = 'flex-1 py-1.5 px-2.5 rounded-lg text-xs font-semibold transition-all text-slate-600 hover:text-slate-900 flex items-center justify-center gap-1';
-  if (btnService) btnService.className = (!isParts && !isSales) ? 'flex-1 py-1.5 px-2.5 rounded-lg text-xs font-bold transition-all bg-white text-blue-900 shadow-xs flex items-center justify-center gap-1' : inactiveBtn;
-  if (btnParts) btnParts.className = isParts ? 'flex-1 py-1.5 px-2.5 rounded-lg text-xs font-bold transition-all bg-white text-emerald-900 shadow-xs flex items-center justify-center gap-1' : inactiveBtn;
-  if (btnSales) btnSales.className = isSales ? 'flex-1 py-1.5 px-2.5 rounded-lg text-xs font-bold transition-all bg-white text-indigo-900 shadow-xs flex items-center justify-center gap-1' : inactiveBtn;
+  if (btnService) btnService.className = `${(!isParts && !isSales) ? 'flex-1 py-1.5 px-2.5 rounded-lg text-xs font-bold transition-all bg-white text-blue-900 shadow-xs flex items-center justify-center gap-1' : inactiveBtn}${hasUserPerm('deals_sto') ? '' : ' hidden'}`;
+  if (btnParts) btnParts.className = `${isParts ? 'flex-1 py-1.5 px-2.5 rounded-lg text-xs font-bold transition-all bg-white text-emerald-900 shadow-xs flex items-center justify-center gap-1' : inactiveBtn}${hasUserPerm('deals_parts') ? '' : ' hidden'}`;
+  if (btnSales) btnSales.className = `${isSales ? 'flex-1 py-1.5 px-2.5 rounded-lg text-xs font-bold transition-all bg-white text-indigo-900 shadow-xs flex items-center justify-center gap-1' : inactiveBtn}${hasUserPerm('deals_sales') ? '' : ' hidden'}`;
 
   const titleLabel = document.getElementById('deal-title-label');
   const titleInput = document.getElementById('deal-title');
@@ -6106,8 +6373,8 @@ async function handleRestoreSqlFile(event) {
 }
 
 function downloadTableExport(table, format = 'xlsx') {
-  if (state.currentUser?.role === 'mechanic' || state.currentUser?.role === 'manager') {
-    showToast('Выгрузка базы недоступна для роли Механик / Менеджер', 'error');
+  if (!hasUserPerm('export')) {
+    showToast('Доступ к разделу «Импорт & Экспорт» ограничен Администратором', 'error');
     return;
   }
   const role = state.currentUser?.role || 'admin';
@@ -6297,8 +6564,8 @@ async function openPermissionsModal(userId) {
 
     const permKeys = [
       'dashboard', 'deals_sto', 'deals_parts', 'deals_sales',
-      'warehouse', 'equipment', 'clients', 'tasks',
-      'marketing', 'users', 'settings',
+      'warehouse', 'equipment', 'sales_catalog', 'clients', 'tasks',
+      'marketing', 'users', 'export', 'settings',
       'can_delete_deals', 'can_edit_closed_deals', 'can_view_revenue', 'can_edit_tasks'
     ];
 
@@ -6322,8 +6589,8 @@ async function saveUserPermissions(event) {
 
   const permKeys = [
     'dashboard', 'deals_sto', 'deals_parts', 'deals_sales',
-    'warehouse', 'equipment', 'clients', 'tasks',
-    'marketing', 'users', 'settings',
+    'warehouse', 'equipment', 'sales_catalog', 'clients', 'tasks',
+    'marketing', 'users', 'export', 'settings',
     'can_delete_deals', 'can_edit_closed_deals', 'can_view_revenue', 'can_edit_tasks'
   ];
 
@@ -6350,9 +6617,21 @@ async function saveUserPermissions(event) {
     showToast('Права доступа сотрудника успешно сохранены');
     closeModal('modal-user-permissions');
 
+    const targetUser = (state.users || []).find(u => Number(u.id) === Number(userId));
+    if (targetUser) {
+      targetUser.permissions = permissions;
+      crmStore.saveItem('users', targetUser);
+    }
+
     if (state.currentUser && Number(state.currentUser.id) === Number(userId)) {
       state.currentUser.permissions = permissions;
+      localStorage.setItem('specmash_current_user', JSON.stringify(state.currentUser));
       applyUserPermissions();
+      if (state.currentTab && !canUserAccessTab(state.currentTab)) {
+        const firstAllowed = getFirstAllowedTabForUser();
+        if (firstAllowed.dept) state.dealsDepartment = firstAllowed.dept;
+        switchTab(firstAllowed.tab || '', { silent: true });
+      }
     }
   } catch (err) {
     showToast(err.message, 'error');

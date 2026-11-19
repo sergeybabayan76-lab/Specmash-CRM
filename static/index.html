@@ -11,7 +11,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Lucide Icons CDN -->
   <script src="https://unpkg.com/lucide@latest"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=1.2.4.6">
+  <link rel="stylesheet" href="/static/styles.css?v=1.2.4.7">
   <script>
     tailwind.config = {
       theme: {
@@ -142,7 +142,7 @@
     </div>
 
     <!-- Quick Action Button -->
-    <div class="p-4">
+    <div id="sidebar-quick-deal-wrap" class="p-4">
       <button onclick="openDealModal()" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium py-2.5 px-4 rounded-lg flex items-center justify-center gap-2 shadow-lg shadow-blue-600/30 transition-all text-sm">
         <i data-lucide="plus-circle" class="w-4 h-4"></i>
         <span>Новая сделка / наряд</span>
@@ -151,58 +151,58 @@
 
     <!-- Navigation Menu -->
     <nav class="flex-1 px-3 space-y-1 overflow-y-auto">
-      <a href="#dashboard" onclick="switchTab('dashboard')" id="nav-dashboard" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-white bg-blue-600/20 border-l-4 border-blue-500">
+      <a href="#dashboard" onclick="event.preventDefault(); switchTab('dashboard')" id="nav-dashboard" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-white bg-blue-600/20 border-l-4 border-blue-500">
         <i data-lucide="layout-dashboard" class="w-4 h-4 text-blue-400"></i>
         <span>Дашборд & Выручка</span>
       </a>
 
       <!-- 1. Kanban СТО (Заказ-наряды) -->
-      <a href="#kanban" onclick="switchDealsDepartment('service'); switchTab('kanban')" id="nav-kanban" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
+      <a href="#kanban" onclick="event.preventDefault(); switchDealsDepartment('service'); switchTab('kanban')" id="nav-kanban" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
         <i data-lucide="wrench" class="w-4 h-4 text-blue-400"></i>
         <span>Заказ-наряды (СТО)</span>
         <span id="badge-kanban-count" class="ml-auto bg-slate-800 text-slate-300 text-xs px-2 py-0.5 rounded-full font-mono">0</span>
       </a>
 
       <!-- 2. Kanban Продажа запчастей (Requirement #1) -->
-      <a href="#kanban" onclick="switchDealsDepartment('parts_sale'); switchTab('kanban')" id="nav-parts-sales" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
+      <a href="#kanban" onclick="event.preventDefault(); switchDealsDepartment('parts_sale'); switchTab('kanban')" id="nav-parts-sales" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
         <i data-lucide="shopping-cart" class="w-4 h-4 text-emerald-400"></i>
         <span>Продажа запчастей</span>
         <span id="badge-parts-sales-count" class="ml-auto bg-slate-800 text-slate-300 text-xs px-2 py-0.5 rounded-full font-mono">0</span>
       </a>
 
       <!-- 3. Kanban Отдел продаж спецтехники (Requirement #9) -->
-      <a href="#kanban" onclick="switchDealsDepartment('sales'); switchTab('kanban')" id="nav-sales" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
+      <a href="#kanban" onclick="event.preventDefault(); switchDealsDepartment('sales'); switchTab('kanban')" id="nav-sales" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
         <i data-lucide="tractor" class="w-4 h-4 text-indigo-400"></i>
         <span>Отдел продаж</span>
         <span id="badge-sales-count" class="ml-auto bg-slate-800 text-slate-300 text-xs px-2 py-0.5 rounded-full font-mono">0</span>
       </a>
 
-      <a href="#clients" onclick="switchTab('clients')" id="nav-clients" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
+      <a href="#clients" onclick="event.preventDefault(); switchTab('clients')" id="nav-clients" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
         <i data-lucide="users" class="w-4 h-4"></i>
         <span>База клиентов</span>
         <span id="badge-clients-count" class="ml-auto bg-slate-800 text-slate-300 text-xs px-2 py-0.5 rounded-full font-mono">0</span>
       </a>
 
-      <a href="#equipment" onclick="switchTab('equipment')" id="nav-equipment" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
+      <a href="#equipment" onclick="event.preventDefault(); switchTab('equipment')" id="nav-equipment" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
         <i data-lucide="truck" class="w-4 h-4"></i>
         <span>База техники (СТО)</span>
         <span id="badge-equipment-count" class="ml-auto bg-slate-800 text-slate-300 text-xs px-2 py-0.5 rounded-full font-mono">0</span>
       </a>
 
-      <a href="#sales_catalog" onclick="switchTab('sales_catalog')" id="nav-sales_catalog" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
+      <a href="#sales_catalog" onclick="event.preventDefault(); switchTab('sales_catalog')" id="nav-sales_catalog" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
         <i data-lucide="tractor" class="w-4 h-4 text-amber-400"></i>
         <span>Техника для продажи</span>
         <span id="badge-sales-catalog-count" class="ml-auto bg-slate-800 text-slate-300 text-xs px-2 py-0.5 rounded-full font-mono">0</span>
       </a>
 
-      <a href="#warehouse" onclick="switchTab('warehouse')" id="nav-warehouse" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
+      <a href="#warehouse" onclick="event.preventDefault(); switchTab('warehouse')" id="nav-warehouse" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
         <i data-lucide="package" class="w-4 h-4"></i>
         <span>Склад запчастей</span>
         <span id="badge-warehouse-count" class="ml-auto bg-slate-800 text-slate-300 text-xs px-2 py-0.5 rounded-full font-mono">0</span>
         <span id="badge-lowstock-alert" class="hidden bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs px-2 py-0.5 rounded-full font-mono ml-1">0</span>
       </a>
 
-      <a href="#tasks" onclick="switchTab('tasks')" id="nav-tasks" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
+      <a href="#tasks" onclick="event.preventDefault(); switchTab('tasks')" id="nav-tasks" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
         <i data-lucide="calendar-check-2" class="w-4 h-4"></i>
         <span>Задачи & Планировщик</span>
         <span id="badge-tasks-count" class="ml-auto bg-slate-800 text-slate-300 text-xs px-2 py-0.5 rounded-full font-mono">0</span>
@@ -210,24 +210,24 @@
       </a>
 
       <!-- Маркетинг (WhatsApp Cloud API) (Requirement #8) -->
-      <a href="#marketing" onclick="switchTab('marketing')" id="nav-marketing" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
+      <a href="#marketing" onclick="event.preventDefault(); switchTab('marketing')" id="nav-marketing" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
         <i data-lucide="message-circle" class="w-4 h-4 text-emerald-400"></i>
         <span>Маркетинг (WhatsApp)</span>
         <span class="ml-auto bg-emerald-900/60 text-emerald-300 border border-emerald-700/50 text-[10px] px-1.5 py-0.5 rounded font-mono">Cloud API</span>
       </a>
 
-      <a href="#users" onclick="switchTab('users')" id="nav-users" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
+      <a href="#users" onclick="event.preventDefault(); switchTab('users')" id="nav-users" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
         <i data-lucide="user-check" class="w-4 h-4"></i>
         <span>Сотрудники & Роли</span>
         <span id="badge-users-count" class="ml-auto bg-slate-800 text-slate-300 text-xs px-2 py-0.5 rounded-full font-mono">3</span>
       </a>
 
-      <a href="#export" onclick="switchTab('export')" id="nav-export" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
+      <a href="#export" onclick="event.preventDefault(); switchTab('export')" id="nav-export" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
         <i data-lucide="file-spreadsheet" class="w-4 h-4"></i>
         <span>Импорт & Экспорт</span>
       </a>
 
-      <a href="#settings" onclick="switchTab('settings')" id="nav-settings" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
+      <a href="#settings" onclick="event.preventDefault(); switchTab('settings')" id="nav-settings" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
         <i data-lucide="settings" class="w-4 h-4 text-purple-400"></i>
         <span>Настройки СТО</span>
         <span id="badge-admin-tag" class="ml-auto bg-purple-900/60 text-purple-300 border border-purple-700/50 text-[10px] px-1.5 py-0.5 rounded font-mono">Admin</span>
@@ -245,7 +245,7 @@
       </div>
       <div class="text-[11px] text-slate-400 flex items-center justify-between">
         <span>СТО Спецмаш (AMD)</span>
-        <button onclick="openLogoModal()" class="text-blue-400 hover:underline">Логотип</button>
+        <button id="sidebar-btn-logo" onclick="openLogoModal()" class="text-blue-400 hover:underline">Логотип</button>
       </div>
       <button onclick="handleLogout()" class="w-full mt-2 text-rose-400 hover:text-rose-300 hover:bg-rose-950/40 border border-rose-900/40 rounded-lg py-1.5 px-3 text-center text-xs flex items-center justify-center gap-1.5 transition-colors">
         <i data-lucide="log-out" class="w-3.5 h-3.5"></i>
@@ -286,15 +286,15 @@
 
         <!-- Quick actions buttons -->
         <div class="hidden sm:flex items-center gap-2">
-          <button onclick="openClientModal()" class="px-2.5 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg flex items-center gap-1 transition-colors">
+          <button id="header-btn-add-client" onclick="openClientModal()" class="px-2.5 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg flex items-center gap-1 transition-colors">
             <i data-lucide="user-plus" class="w-3.5 h-3.5 text-blue-600"></i>
             <span>+ Клиент</span>
           </button>
-          <button onclick="openEquipmentModal()" class="px-2.5 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg flex items-center gap-1 transition-colors">
+          <button id="header-btn-add-equipment" onclick="openEquipmentModal()" class="px-2.5 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg flex items-center gap-1 transition-colors">
             <i data-lucide="truck" class="w-3.5 h-3.5 text-emerald-600"></i>
             <span>+ Техника</span>
           </button>
-          <button onclick="openPartModal()" class="px-2.5 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg flex items-center gap-1 transition-colors">
+          <button id="header-btn-add-part" onclick="openPartModal()" class="px-2.5 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg flex items-center gap-1 transition-colors">
             <i data-lucide="box" class="w-3.5 h-3.5 text-amber-600"></i>
             <span>+ Запчасть</span>
           </button>
@@ -337,8 +337,19 @@
     <!-- Main Workspace Area -->
     <main class="flex-1 overflow-y-auto p-6 bg-slate-50" id="main-container">
 
+      <!-- Placeholder when all sections are restricted for an employee -->
+      <section id="tab-no-access" class="hidden py-16">
+        <div class="max-w-md mx-auto bg-white rounded-2xl border border-slate-200 shadow-sm p-8 text-center space-y-3">
+          <div class="w-12 h-12 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center mx-auto">
+            <i data-lucide="shield-alert" class="w-6 h-6"></i>
+          </div>
+          <h3 class="font-bold text-slate-900 text-base">Доступ к разделам ограничен</h3>
+          <p class="text-xs text-slate-500">Администратор еще не назначил доступные разделы для вашей учетной записи. Обратитесь к Администратору СТО Спецмаш.</p>
+        </div>
+      </section>
+
       <!-- ================= 1. TAB: DASHBOARD ================= -->
-      <section id="tab-dashboard" class="space-y-6">
+      <section id="tab-dashboard" class="hidden space-y-6">
         <!-- Period Filter Bar (Month & Year) -->
         <div class="bg-white p-4 rounded-xl border border-slate-200/80 shadow-sm flex flex-wrap items-center justify-between gap-3">
           <div class="flex items-center gap-2.5">
@@ -2955,7 +2966,11 @@
             </label>
             <label class="flex items-center gap-2 p-2 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer">
               <input type="checkbox" id="perm-equipment" class="rounded text-purple-600">
-              <span class="font-medium text-slate-800">База техники</span>
+              <span class="font-medium text-slate-800">База техники (СТО)</span>
+            </label>
+            <label class="flex items-center gap-2 p-2 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer">
+              <input type="checkbox" id="perm-sales-catalog" class="rounded text-purple-600">
+              <span class="font-medium text-slate-800">Техника для продажи (Каталог)</span>
             </label>
             <label class="flex items-center gap-2 p-2 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer">
               <input type="checkbox" id="perm-clients" class="rounded text-purple-600">
@@ -2972,6 +2987,10 @@
             <label class="flex items-center gap-2 p-2 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer">
               <input type="checkbox" id="perm-users" class="rounded text-purple-600">
               <span class="font-medium text-slate-800">Сотрудники & Роли</span>
+            </label>
+            <label class="flex items-center gap-2 p-2 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer">
+              <input type="checkbox" id="perm-export" class="rounded text-purple-600">
+              <span class="font-medium text-slate-800">Импорт & Экспорт</span>
             </label>
             <label class="flex items-center gap-2 p-2 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer">
               <input type="checkbox" id="perm-settings" class="rounded text-purple-600">
@@ -3075,9 +3094,9 @@
 
   <!-- Scripts -->
   <script src="/static/app/core/state.js?v=1.0.0"></script>
-  <script src="/static/app/core/router.js?v=1.0.0"></script>
+  <script src="/static/app/core/router.js?v=1.2.4.7"></script>
   <script src="/static/app/core/api.js?v=1.0.0"></script>
   <script src="/static/app/pages/index.js?v=1.0.0"></script>
-  <script src="/static/app.js?v=1.2.4.6"></script>
+  <script src="/static/app.js?v=1.2.4.7"></script>
 </body>
 </html>

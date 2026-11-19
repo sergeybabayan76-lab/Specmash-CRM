@@ -371,6 +371,12 @@ def check_effective_role(x_user_role: Any = None, role: Any = None) -> str:
         return role.lower().strip()
     return ""
 
+def check_effective_user_id(x_user_id: Any = None, user_id: Any = None) -> Optional[int]:
+    for val in (x_user_id, user_id):
+        if val is not None and str(val).strip().isdigit():
+            return int(str(val).strip())
+    return None
+
 @app.post("/api/users")
 def create_user(u: UserCreate, x_user_role: Optional[str] = Header(None, alias="X-User-Role"), role: Optional[str] = None):
     effective_role = check_effective_role(x_user_role, role)
@@ -741,16 +747,18 @@ async def update_deal(
     deal_id: int,
     deal: DealCreate,
     x_user_role: Optional[str] = Header(None, alias="X-User-Role"),
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
     role: Optional[str] = None
 ):
     effective_role = check_effective_role(x_user_role, role)
+    effective_uid = check_effective_user_id(x_user_id)
     try:
         existing = database.get_deal(deal_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Сделка не найдена")
 
-    # Requirement #5: Forbid changes to closed/paid deals for non-admins
-    if existing.get("stage") in ("completed", "paid", "issued", "closed") and effective_role != "admin":
+    # Requirement #5: Forbid changes to closed/paid deals unless admin or granted can_edit_closed_deals
+    if existing.get("stage") in ("completed", "paid", "issued", "closed") and not database.user_has_permission(effective_uid, effective_role, "can_edit_closed_deals"):
         raise HTTPException(
             status_code=403,
             detail="Редактирование закрытых/оплаченных сделок разрешено только Администратору"
@@ -769,16 +777,18 @@ async def update_deal(
 async def delete_deal(
     deal_id: int,
     x_user_role: Optional[str] = Header(None, alias="X-User-Role"),
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
     role: Optional[str] = None
 ):
     effective_role = check_effective_role(x_user_role, role)
+    effective_uid = check_effective_user_id(x_user_id)
     try:
         deal = database.get_deal(deal_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Сделка не найдена")
 
-    # Requirement #1: Only admin can delete completed deals
-    if deal.get("stage") == "completed" and effective_role != "admin":
+    # Requirement #1: Only admin (or user with can_delete_deals) can delete completed deals
+    if deal.get("stage") == "completed" and not database.user_has_permission(effective_uid, effective_role, "can_delete_deals"):
         raise HTTPException(
             status_code=403,
             detail="Удаление закрытых сделок (стадии 'Оплачено' / 'Выдано') разрешено только Администратору"
@@ -933,10 +943,12 @@ def update_task_endpoint(
     task_id: int,
     task: TaskUpdate,
     x_user_role: Optional[str] = Header(None, alias="X-User-Role"),
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
     role: Optional[str] = None
 ):
     effective_role = check_effective_role(x_user_role, role)
-    if effective_role != "admin":
+    effective_uid = check_effective_user_id(x_user_id)
+    if not database.user_has_permission(effective_uid, effective_role, "can_edit_tasks"):
         raise HTTPException(status_code=403, detail="Редактирование задач разрешено только Администратору")
     try:
         return database.update_task(task_id, task.model_dump(exclude_unset=True))
@@ -1109,7 +1121,7 @@ def export_table(table: str, format: str = "xlsx", x_user_role: Optional[str] = 
     if table not in valid_tables:
         raise HTTPException(status_code=400, detail="Неверная таблица для экспорта")
 
-    with database.get_sb_client() as client:
+    with database.get_database_client() as client:
         r = client.get(f"/{table}", params={"select": "*"})
         rows = r.json() if r.status_code == 200 else []
 
