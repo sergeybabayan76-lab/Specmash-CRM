@@ -361,14 +361,19 @@ const PARTS_KANBAN_STAGES = [
   { id: 'completed', label: 'Оплачено и выдано', short: 'Выдано', icon: 'badge-dollar-sign', color: 'border-green-600' },
 ];
 
-// Dedicated Kanban Stages: Отдел продаж спецтехники (Requirement #9)
+// Dedicated Kanban Stages: Отдел продаж спецтехники (Requirement 2.2: 11 stages)
 const SALES_KANBAN_STAGES = [
-  { id: 'new', label: 'Новые заявки / Лиды', short: 'Заявка', icon: 'inbox', color: 'border-blue-500' },
+  { id: 'new', label: 'Новая сделка', short: 'Новая сделка', icon: 'inbox', color: 'border-blue-500' },
   { id: 'selection', label: 'Подбор спецтехники', short: 'Подбор', icon: 'search', color: 'border-purple-500' },
-  { id: 'estimate', label: 'Коммерческое предл.', short: 'КП', icon: 'file-text', color: 'border-indigo-500' },
-  { id: 'contract', label: 'Договор и оплата', short: 'Договор', icon: 'file-check', color: 'border-amber-500' },
-  { id: 'ready', label: 'Готово к отгрузке', short: 'Отгрузка', icon: 'truck', color: 'border-emerald-500' },
-  { id: 'completed', label: 'Отгружено / Оплачено', short: 'Закрыто', icon: 'badge-dollar-sign', color: 'border-green-600' },
+  { id: 'estimate', label: 'Коммерческое предложение', short: 'КП', icon: 'file-text', color: 'border-indigo-500' },
+  { id: 'in_bank', label: 'В банке', short: 'В банке', icon: 'landmark', color: 'border-sky-500' },
+  { id: 'approved', label: 'Одобрено', short: 'Одобрено', icon: 'badge-check', color: 'border-teal-500' },
+  { id: 'contract', label: 'Контракт', short: 'Контракт', icon: 'file-check', color: 'border-amber-500' },
+  { id: 'manufacturer_order', label: 'Заказ у производителя', short: 'Заказ произв.', icon: 'factory', color: 'border-orange-500' },
+  { id: 'shipment', label: 'Отгрузка', short: 'Отгрузка', icon: 'truck', color: 'border-cyan-500' },
+  { id: 'pre_sale', label: 'Предпродажка', short: 'Предпродажка', icon: 'wrench', color: 'border-violet-500' },
+  { id: 'handover', label: 'Сдача', short: 'Сдача', icon: 'check-circle', color: 'border-emerald-500' },
+  { id: 'completed', label: 'Завершить сделку', short: 'Завершить сделку', icon: 'flag', color: 'border-green-600' },
 ];
 
 function getActiveStages() {
@@ -428,10 +433,20 @@ function updatePartQuantityUnit(category) {
   }
 }
 
-// Currency Formatter: AMD
-function formatMoney(amount) {
-  if (amount === undefined || amount === null) return '0 AMD';
-  return new Intl.NumberFormat('ru-RU').format(Math.round(amount)) + ' AMD';
+// Currency Formatter: AMD, USD, EUR (Requirement 1.3)
+function normalizeDealCurrency(curr) {
+  const c = String(curr || 'AMD').trim().toUpperCase();
+  return (c === 'USD' || c === 'EUR') ? c : 'AMD';
+}
+
+function formatMoney(amount, currency = 'AMD') {
+  const cur = normalizeDealCurrency(currency);
+  if (amount === undefined || amount === null || isNaN(Number(amount))) return `0 ${cur}`;
+  const num = Number(amount);
+  const formatted = Number.isInteger(num)
+    ? new Intl.NumberFormat('ru-RU').format(Math.round(num))
+    : new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(num);
+  return `${formatted} ${cur}`;
 }
 
 // Date Formatter
@@ -741,6 +756,7 @@ function applyUserPermissions() {
   const revCard = document.getElementById('dash-card-revenue');
   const partsRevCard = document.getElementById('dash-card-parts-revenue');
   const servRevCard = document.getElementById('dash-card-service-revenue');
+  const salesRevCard = document.getElementById('dash-card-sales-revenue');
   const chartsRow = document.getElementById('dash-charts-row');
   const revSection = document.getElementById('dash-mechanics-revenue-section');
 
@@ -748,6 +764,7 @@ function applyUserPermissions() {
   if (revCard) revCard.classList.toggle('hidden', !canViewRev);
   if (partsRevCard) partsRevCard.classList.toggle('hidden', !canViewRev);
   if (servRevCard) servRevCard.classList.toggle('hidden', !canViewRev);
+  if (salesRevCard) salesRevCard.classList.toggle('hidden', !(canViewRev || isSalesManager));
   if (chartsRow) chartsRow.classList.toggle('hidden', !canViewRev);
   if (revSection) revSection.classList.toggle('hidden', !isAdmin);
 
@@ -1443,6 +1460,9 @@ async function loadDashboard() {
     const statServCount = document.getElementById('stat-service-completed-count');
     if (statServCount) statServCount.textContent = `${data.service_completed_count || 0} нарядов`;
 
+    // Sales Department Revenue Metrics by Category (Requirement #4)
+    renderDashboardSalesAnalytics(data);
+
     document.getElementById('stat-active-deals').textContent = data.active_deals_count;
     document.getElementById('stat-active-volume').textContent = formatMoney(data.active_deals_volume);
 
@@ -1486,6 +1506,99 @@ async function loadDashboard() {
   } catch (err) {
     console.error('Error loading dashboard:', err);
   }
+}
+
+function formatMultiCurrencyBreakdown(byCurr) {
+  if (!byCurr || typeof byCurr !== 'object') return 'AMD: 0';
+  const parts = [];
+  if (Number(byCurr.AMD || 0) > 0 || (Number(byCurr.USD || 0) === 0 && Number(byCurr.EUR || 0) === 0)) {
+    parts.push(formatMoney(byCurr.AMD || 0, 'AMD'));
+  }
+  if (Number(byCurr.USD || 0) > 0) {
+    parts.push(formatMoney(byCurr.USD || 0, 'USD'));
+  }
+  if (Number(byCurr.EUR || 0) > 0) {
+    parts.push(formatMoney(byCurr.EUR || 0, 'EUR'));
+  }
+  return parts.join(' + ');
+}
+
+function setDashboardSalesCategory(catKey) {
+  state.dashboardSalesCategory = catKey || 'all';
+  const keys = ['all', 'construction', 'agriculture'];
+  keys.forEach(k => {
+    const btn = document.getElementById(`dash-sales-cat-btn-${k}`);
+    if (!btn) return;
+    if (k === state.dashboardSalesCategory) {
+      btn.className = 'px-3 py-1.5 rounded-lg font-bold bg-indigo-600 text-white shadow-xs transition-all';
+    } else {
+      btn.className = 'px-3 py-1.5 rounded-lg font-semibold text-slate-700 hover:bg-white transition-all';
+    }
+  });
+  renderDashboardSalesAnalytics(state.dashboard || {});
+}
+
+function renderDashboardSalesAnalytics(data) {
+  const analytics = (data && data.sales_analytics) ? data.sales_analytics : {
+    all: { label: 'Вся спецтехника', revenue: 0, by_currency: { AMD: 0, USD: 0, EUR: 0 }, completed_count: 0, active_count: 0, units_sold: 0 },
+    construction: { label: 'Строительная и коммунальная техника', revenue: 0, by_currency: { AMD: 0, USD: 0, EUR: 0 }, completed_count: 0, active_count: 0, units_sold: 0 },
+    agriculture: { label: 'Сельскохозяйственная техника', revenue: 0, by_currency: { AMD: 0, USD: 0, EUR: 0 }, completed_count: 0, active_count: 0, units_sold: 0 },
+  };
+  const selectedKey = state.dashboardSalesCategory || 'all';
+  const sel = analytics[selectedKey] || analytics.all || {};
+
+  const labelMap = {
+    all: 'Выручка: Вся спецтехника',
+    construction: 'Выручка: Строительная и коммунальная',
+    agriculture: 'Выручка: Сельскохозяйственная техника',
+  };
+
+  const labelEl = document.getElementById('stat-sales-selected-label');
+  if (labelEl) labelEl.textContent = labelMap[selectedKey] || 'Выручка: Вся спецтехника';
+
+  const revEl = document.getElementById('stat-sales-revenue');
+  if (revEl) {
+    revEl.textContent = formatMultiCurrencyBreakdown(sel.by_currency);
+  }
+  const currEl = document.getElementById('stat-sales-currency-breakdown');
+  if (currEl) {
+    const bc = sel.by_currency || {};
+    currEl.textContent = `AMD: ${new Intl.NumberFormat('ru-RU').format(Math.round(bc.AMD || 0))} • USD: ${new Intl.NumberFormat('ru-RU').format(Math.round(bc.USD || 0))} • EUR: ${new Intl.NumberFormat('ru-RU').format(Math.round(bc.EUR || 0))}`;
+  }
+  const countEl = document.getElementById('stat-sales-completed-count');
+  if (countEl) countEl.textContent = `${sel.completed_count || 0} сделок`;
+
+  const unitsEl = document.getElementById('stat-sales-units-sold');
+  if (unitsEl) unitsEl.textContent = `${sel.units_sold || 0} ед.`;
+
+  const activeEl = document.getElementById('stat-sales-active-info');
+  if (activeEl) activeEl.textContent = `В работе: ${sel.active_count || 0} (${formatMultiCurrencyBreakdown(sel.active_by_currency)})`;
+
+  // Construction summary card
+  const cData = analytics.construction || {};
+  const cRev = document.getElementById('stat-sales-constr-revenue');
+  if (cRev) cRev.textContent = formatMultiCurrencyBreakdown(cData.by_currency);
+  const cCur = document.getElementById('stat-sales-constr-currencies');
+  if (cCur) cCur.textContent = `AMD: ${new Intl.NumberFormat('ru-RU').format(Math.round(cData.by_currency?.AMD || 0))} • USD: ${new Intl.NumberFormat('ru-RU').format(Math.round(cData.by_currency?.USD || 0))} • EUR: ${new Intl.NumberFormat('ru-RU').format(Math.round(cData.by_currency?.EUR || 0))}`;
+  const cUnits = document.getElementById('stat-sales-constr-units');
+  if (cUnits) cUnits.textContent = `${cData.units_sold || 0} ед.`;
+  const cDeals = document.getElementById('stat-sales-constr-deals');
+  if (cDeals) cDeals.textContent = String(cData.completed_count || 0);
+  const cActive = document.getElementById('stat-sales-constr-active');
+  if (cActive) cActive.textContent = String(cData.active_count || 0);
+
+  // Agriculture summary card
+  const aData = analytics.agriculture || {};
+  const aRev = document.getElementById('stat-sales-agri-revenue');
+  if (aRev) aRev.textContent = formatMultiCurrencyBreakdown(aData.by_currency);
+  const aCur = document.getElementById('stat-sales-agri-currencies');
+  if (aCur) aCur.textContent = `AMD: ${new Intl.NumberFormat('ru-RU').format(Math.round(aData.by_currency?.AMD || 0))} • USD: ${new Intl.NumberFormat('ru-RU').format(Math.round(aData.by_currency?.USD || 0))} • EUR: ${new Intl.NumberFormat('ru-RU').format(Math.round(aData.by_currency?.EUR || 0))}`;
+  const aUnits = document.getElementById('stat-sales-agri-units');
+  if (aUnits) aUnits.textContent = `${aData.units_sold || 0} ед.`;
+  const aDeals = document.getElementById('stat-sales-agri-deals');
+  if (aDeals) aDeals.textContent = String(aData.completed_count || 0);
+  const aActive = document.getElementById('stat-sales-agri-active');
+  if (aActive) aActive.textContent = String(aData.active_count || 0);
 }
 
 function renderRevenueChart(monthlyData, totalRev, totalCost, netProfit) {
@@ -1835,25 +1948,65 @@ function updateDealsStageFilterOptions() {
   if (!select) return;
   const currentVal = select.value || 'active_only';
   const activeStages = getActiveStages();
-  select.innerHTML = '<option value="active_only">⚡ Все, кроме оплачено/закрыто</option><option value="all">Все стадии воронки</option>' + activeStages.map(s => `
-    <option value="${s.id}">${s.label}</option>
-  `).join('');
-  if (currentVal && (activeStages.some(s => s.id === currentVal) || currentVal === 'all' || currentVal === 'active_only')) {
+  select.innerHTML =
+    '<option value="active_only">⚡ В работе (активные сделки)</option>' +
+    '<option value="all">📋 Все сделки (включая завершенные)</option>' +
+    activeStages.map(s => `<option value="${s.id}">${s.label}</option>`).join('') +
+    '<option value="failed_archive">🗄️ Архив неудачных сделок</option>';
+  if (currentVal && (activeStages.some(s => s.id === currentVal) || currentVal === 'all' || currentVal === 'active_only' || currentVal === 'failed_archive')) {
     select.value = currentVal;
   } else {
     select.value = 'active_only';
   }
+  syncFailedArchiveButtonUI();
+}
+
+function toggleFailedDealsArchive() {
+  const select = document.getElementById('deals-stage-filter');
+  if (!select) return;
+  if (select.value === 'failed_archive') {
+    select.value = 'active_only';
+  } else {
+    select.value = 'failed_archive';
+  }
+  syncFailedArchiveButtonUI();
+  renderDeals();
+}
+
+function syncFailedArchiveButtonUI() {
+  const select = document.getElementById('deals-stage-filter');
+  const btn = document.getElementById('btn-toggle-failed-archive');
+  const txt = document.getElementById('btn-failed-archive-text');
+  const badge = document.getElementById('badge-failed-archive-count');
+  const isArchive = select && select.value === 'failed_archive';
+
+  // Count failed deals in current department
+  const deptDeals = (state.deals || []).filter(d => {
+    if (state.dealsDepartment === 'parts_sale') return d.deal_type === 'parts_sale';
+    if (state.dealsDepartment === 'sales') return d.deal_type === 'sales';
+    return d.deal_type !== 'parts_sale' && d.deal_type !== 'sales';
+  });
+  const failedCount = deptDeals.filter(d => d.closing_outcome === 'failed' || d.stage === 'cancelled').length;
+  if (badge) badge.textContent = String(failedCount);
+
+  if (btn) {
+    if (isArchive) {
+      btn.className = 'bg-rose-600 hover:bg-rose-700 text-white border border-rose-700 text-xs font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-sm transition-colors';
+      if (txt) txt.textContent = 'Выйти из архива неудачных';
+    } else {
+      btn.className = 'bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-200 text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-2xs transition-colors';
+      if (txt) txt.textContent = 'Архив неудачных';
+    }
+  }
 }
 
 function renderDeals() {
-  const serviceDeals = (state.deals || []).filter(d => d.deal_type !== 'parts_sale' && d.deal_type !== 'sales');
-  const partsDeals = (state.deals || []).filter(d => d.deal_type === 'parts_sale');
-  const salesDeals = (state.deals || []).filter(d => d.deal_type === 'sales');
-
   updateSidebarCounters();
+  syncFailedArchiveButtonUI();
 
   if (state.dealsViewMode === 'list') {
     renderDealsList();
+    applySavedDealsColumnWidths();
   } else {
     renderKanban();
   }
@@ -1880,11 +2033,16 @@ function renderKanban() {
       if (d.deal_type === 'parts_sale' || d.deal_type === 'sales') return false;
     }
 
-    // Filter by stage (Requirement #11: "Все, кроме оплачено/закрыто" by default - only final stage excluded)
-    if (stageFilter === 'active_only') {
+    const isDealFailed = (d.closing_outcome === 'failed' || d.stage === 'cancelled');
+    // Requirement 2.3: Failed deals live in the Archive of Failed Deals ('failed_archive')
+    if (stageFilter === 'failed_archive') {
+      if (!isDealFailed) return false;
+    } else if (stageFilter === 'active_only') {
+      if (isDealFailed) return false;
       const lastStageId = (activeStages && activeStages.length > 0) ? activeStages[activeStages.length - 1].id : 'completed';
       if (d.stage === lastStageId || d.stage === 'completed' || d.stage === 'paid' || d.stage === 'issued' || d.stage === 'closed') return false;
     } else if (stageFilter !== 'all') {
+      if (isDealFailed) return false;
       if (d.stage !== stageFilter) return false;
     }
 
@@ -1957,11 +2115,16 @@ function renderDealsList() {
       if (d.deal_type === 'parts_sale' || d.deal_type === 'sales') return false;
     }
 
-    // Filter by stage (Requirement #11: "Все, кроме оплачено/закрыто" by default - only final stage excluded)
-    if (stageFilter === 'active_only') {
+    const isDealFailed = (d.closing_outcome === 'failed' || d.stage === 'cancelled');
+    // Requirement 2.3: Failed deals live in the Archive of Failed Deals ('failed_archive')
+    if (stageFilter === 'failed_archive') {
+      if (!isDealFailed) return false;
+    } else if (stageFilter === 'active_only') {
+      if (isDealFailed) return false;
       const lastStageId = (activeStages && activeStages.length > 0) ? activeStages[activeStages.length - 1].id : 'completed';
       if (d.stage === lastStageId || d.stage === 'completed' || d.stage === 'paid' || d.stage === 'issued' || d.stage === 'closed') return false;
     } else if (stageFilter !== 'all') {
+      if (isDealFailed) return false;
       if (d.stage !== stageFilter) return false;
     }
 
@@ -1980,9 +2143,12 @@ function renderDealsList() {
     );
   });
 
+  // Requirement 2.1: Remove "Себестоимость" column on Bitrix24 List in Sales Department
   const colCostHeader = document.getElementById('deals-table-col-cost-header');
   if (colCostHeader) {
-    colCostHeader.textContent = isSalesDept ? 'Себест. (AMD)' : 'Сумма з/ч (AMD)';
+    colCostHeader.classList.toggle('hidden', isSalesDept);
+    const spanEl = colCostHeader.querySelector('span:first-child');
+    if (spanEl) spanEl.textContent = 'Сумма з/ч (AMD)';
   }
 
   const totalAmount = filteredDeals.reduce((sum, d) => sum + (d.amount || 0), 0);
@@ -1993,9 +2159,10 @@ function renderDealsList() {
 
   if (filteredDeals.length === 0) {
     let emptyMsg = 'Заказ-наряды не найдены по заданным условиям';
-    if (isPartsDept) emptyMsg = 'Продажи запчастей не найдены по заданным условиям';
-    if (isSalesDept) emptyMsg = 'Сделки отдела продаж спецтехники не найдены';
-    tbody.innerHTML = `<tr><td colspan="10" class="p-8 text-center text-slate-400 text-xs">${emptyMsg}</td></tr>`;
+    if (stageFilter === 'failed_archive') emptyMsg = 'В архиве неудачных сделок пока нет записей';
+    else if (isPartsDept) emptyMsg = 'Продажи запчастей не найдены по заданным условиям';
+    else if (isSalesDept) emptyMsg = 'Сделки отдела продаж спецтехники не найдены';
+    tbody.innerHTML = `<tr><td colspan="${isSalesDept ? 9 : 10}" class="p-8 text-center text-slate-400 text-xs">${emptyMsg}</td></tr>`;
     return;
   }
 
@@ -2021,14 +2188,18 @@ function renderDealsList() {
     const currIdx = activeStages.findIndex(s => s.id === deal.stage);
     const stageObj = activeStages.find(s => s.id === deal.stage) || { label: deal.stage };
     const isLocked = isDealLockedForUser(deal);
-    const isFailed = deal.closing_outcome === 'failed';
+    const isFailed = (deal.closing_outcome === 'failed' || deal.stage === 'cancelled');
+    const isCompletedSuccess = (deal.stage === 'completed' && !isFailed);
     const isOverdue = isDealReadyOverdue(deal);
+    const dealCurr = normalizeDealCurrency(deal.currency);
 
     // Bitrix24 Pipeline Chevrons using activeStages
     const chevronsHtml = activeStages.map((s, idx) => {
       let stateClass = 'future';
-      if (idx < currIdx) stateClass = 'passed';
-      else if (idx === currIdx) stateClass = `current stage-${s.id}`;
+      if (idx < currIdx) stateClass = isFailed ? 'passed opacity-60' : 'passed';
+      else if (idx === currIdx) {
+        stateClass = isFailed ? 'current stage-failed' : `current stage-${s.id}`;
+      }
 
       return `
         <button type="button"
@@ -2040,9 +2211,12 @@ function renderDealsList() {
       `;
     }).join('');
 
+    // Requirement 2.3: Green for successful completion, Red for failed completion
     let rowClass = 'hover:bg-slate-50/80 transition-colors';
     if (isFailed) {
-      rowClass = 'deal-row-failed bg-rose-50/80 hover:bg-rose-100/70 border-l-4 border-l-rose-600 transition-colors';
+      rowClass = 'deal-row-failed bg-rose-50/90 hover:bg-rose-100/80 border-l-4 border-l-rose-600 transition-colors';
+    } else if (isCompletedSuccess) {
+      rowClass = 'deal-row-success bg-emerald-50/80 hover:bg-emerald-100/70 border-l-4 border-l-emerald-600 transition-colors';
     } else if (isOverdue) {
       rowClass = 'bg-rose-50/70 hover:bg-rose-100/60 border-l-4 border-l-rose-600 transition-colors';
     }
@@ -2059,10 +2233,11 @@ function renderDealsList() {
               <div class="mt-1 flex items-center gap-1.5 flex-wrap">
                 ${priorityBadge}
                 ${typeBadge}
-                ${isFailed ? '<span class="bg-rose-600 text-white font-bold text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1 shadow-xs"><i data-lucide="x-circle" class="w-3 h-3"></i> ❌ Не удачно</span>' : ''}
+                ${isFailed ? '<span class="bg-rose-600 text-white font-bold text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1 shadow-xs"><i data-lucide="x-circle" class="w-3 h-3"></i> ❌ Не удачно (В архиве)</span>' : ''}
+                ${isCompletedSuccess ? '<span class="bg-emerald-600 text-white font-bold text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1 shadow-xs"><i data-lucide="check-circle-2" class="w-3 h-3"></i> ✅ Удачно завершена</span>' : ''}
                 ${isOverdue ? '<span class="bg-rose-600 text-white font-bold text-[10px] px-1.5 py-0.5 rounded flex items-center gap-1 w-fit shadow-xs"><i data-lucide="clock" class="w-3 h-3"></i> Ожидает выдачи &gt; 30 дней</span>' : ''}
                 ${isLocked ? '<span class="bg-amber-100 text-amber-800 text-[10px] font-bold px-1.5 py-0.2 rounded flex items-center gap-1 border border-amber-300"><i data-lucide="lock" class="w-3 h-3"></i> Закрыто</span>' : ''}
-                ${deal.deal_type === 'sales' ? '' : `<span class="bg-amber-50 text-amber-700 border border-amber-200 text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold" title="Списано запчастей на сумму ${formatMoney(deal.parts_selling_total || 0)}">${Number(deal.parts_count || 0)} з/ч</span>`}
+                ${deal.deal_type === 'sales' ? (Number(deal.discount || 0) > 0 ? `<span class="bg-rose-50 text-rose-700 border border-rose-200 text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold">Скидка: ${formatMoney(deal.discount, dealCurr)}</span>` : '') : `<span class="bg-amber-50 text-amber-700 border border-amber-200 text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold" title="Списано запчастей на сумму ${formatMoney(deal.parts_selling_total || 0)}">${Number(deal.parts_count || 0)} з/ч</span>`}
               </div>
             </div>
           </div>
@@ -2118,12 +2293,12 @@ function renderDealsList() {
           </div>
         </td>
 
-        <td class="p-3.5 text-xs font-mono font-bold text-blue-600 text-right">
-          ${formatMoney(deal.amount)}
+        <td class="p-3.5 text-xs font-mono font-bold ${isFailed ? 'text-rose-700' : (isCompletedSuccess ? 'text-emerald-700' : 'text-blue-600')} text-right whitespace-nowrap">
+          ${formatMoney(deal.amount, dealCurr)}
         </td>
 
-        <td class="p-3.5 text-xs font-mono ${deal.deal_type === 'sales' ? 'text-slate-500' : 'text-emerald-700 font-bold'} text-right col-deal-cost">
-          ${formatMoney(deal.deal_type === 'sales' ? (deal.cost || 0) : (deal.parts_selling_total || 0))}
+        <td class="${isSalesDept ? 'hidden ' : ''}p-3.5 text-xs font-mono text-emerald-700 font-bold text-right col-deal-cost whitespace-nowrap">
+          ${formatMoney(deal.parts_selling_total || 0)}
         </td>
 
         <td class="p-3.5 text-xs text-slate-700 font-medium">
@@ -2158,24 +2333,107 @@ function renderDealsList() {
   if (window.lucide) lucide.createIcons();
 }
 
-async function updateDealStageQuick(dealId, newStage, event) {
-  if (event) event.stopPropagation();
-  const deal = state.deals.find(d => Number(d.id) === Number(dealId));
-  if (!deal || deal.stage === newStage) return;
+let pendingCompleteDealCallback = null;
 
-  // Requirement #5: Forbid changes to closed/paid deals for non-admins
-  if (isDealLockedForUser(deal)) {
-    showToast('Изменение стадии закрытых/оплаченных сделок разрешено только Администратору!', 'error');
-    return;
+function promptDealCompletionOutcome(deal, onChoiceCallback) {
+  pendingCompleteDealCallback = onChoiceCallback;
+  const sub = document.getElementById('complete-deal-modal-subtitle');
+  if (sub && deal) {
+    sub.textContent = `Сделка #${deal.id}: ${deal.title || ''}`;
   }
+  openModal('modal-complete-deal-outcome');
+  if (window.lucide) lucide.createIcons();
+}
 
-  const oldStage = deal.stage;
+function confirmCompleteDealOutcome(outcome) {
+  closeModal('modal-complete-deal-outcome');
+  const cb = pendingCompleteDealCallback;
+  pendingCompleteDealCallback = null;
+  if (typeof cb === 'function') {
+    cb(outcome === 'failed' ? 'failed' : 'success');
+  }
+}
+
+function cancelCompleteDealOutcomePrompt() {
+  closeModal('modal-complete-deal-outcome');
+  pendingCompleteDealCallback = null;
+  renderDeals();
+}
+
+// Resizable Columns in Bitrix24 List View (Requirement 2.4)
+let activeColResize = null;
+
+function initDealsColumnResize(event, resizerEl) {
+  event.preventDefault();
+  event.stopPropagation();
+  const th = resizerEl.closest('th');
+  if (!th) return;
+  const startWidth = th.getBoundingClientRect().width;
+  activeColResize = {
+    th,
+    resizerEl,
+    colKey: th.getAttribute('data-col-key') || '',
+    startX: event.clientX,
+    startWidth
+  };
+  resizerEl.classList.add('is-resizing');
+  document.addEventListener('mousemove', handleDealsColumnResizeMove);
+  document.addEventListener('mouseup', handleDealsColumnResizeEnd);
+}
+
+function handleDealsColumnResizeMove(event) {
+  if (!activeColResize) return;
+  const delta = event.clientX - activeColResize.startX;
+  const newWidth = Math.max(80, Math.round(activeColResize.startWidth + delta));
+  activeColResize.th.style.width = `${newWidth}px`;
+  activeColResize.th.style.minWidth = `${newWidth}px`;
+}
+
+function handleDealsColumnResizeEnd() {
+  if (!activeColResize) return;
+  const { th, resizerEl, colKey } = activeColResize;
+  if (resizerEl) resizerEl.classList.remove('is-resizing');
+  if (colKey && th.style.width) {
+    try {
+      const saved = JSON.parse(localStorage.getItem('specmash_deals_col_widths') || '{}');
+      saved[colKey] = th.style.width;
+      localStorage.setItem('specmash_deals_col_widths', JSON.stringify(saved));
+    } catch (e) {}
+  }
+  activeColResize = null;
+  document.removeEventListener('mousemove', handleDealsColumnResizeMove);
+  document.removeEventListener('mouseup', handleDealsColumnResizeEnd);
+}
+
+function applySavedDealsColumnWidths() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('specmash_deals_col_widths') || '{}');
+    const table = document.getElementById('deals-bitrix-list-table');
+    if (!table || !saved) return;
+    table.querySelectorAll('th[data-col-key]').forEach(th => {
+      const key = th.getAttribute('data-col-key');
+      if (key && saved[key]) {
+        th.style.width = saved[key];
+        th.style.minWidth = saved[key];
+      }
+    });
+  } catch (e) {}
+}
+
+async function executeDealStageUpdate(dealId, newStage, closingOutcome = null) {
+  const deal = state.deals.find(d => Number(d.id) === Number(dealId));
+  if (!deal) return;
+
   deal.stage = newStage;
+  if (closingOutcome) {
+    deal.closing_outcome = closingOutcome;
+  } else if (newStage !== 'completed' && deal.closing_outcome === 'failed') {
+    deal.closing_outcome = 'success';
+  }
   crmStore.saveItem('deals', deal);
   renderDeals();
   highlightMovedCard(dealId);
 
-  // Send real-time notification to FastAPI WebSocket
   if (fastApiWs && fastApiWs.readyState === WebSocket.OPEN) {
     try {
       fastApiWs.send(JSON.stringify({
@@ -2186,31 +2444,67 @@ async function updateDealStageQuick(dealId, newStage, event) {
     } catch (e) {}
   }
 
+  const reqBody = { stage: newStage };
+  if (closingOutcome) reqBody.closing_outcome = closingOutcome;
+
   try {
     let res = await fetch(`/api/deals/${dealId}/stage`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ stage: newStage })
+      headers: {
+        'Content-Type': 'application/json',
+        'X-User-Role': state.currentUser?.role || ''
+      },
+      body: JSON.stringify(reqBody)
     });
     if (!res.ok) {
       res = await fetch(`/api/deals/${dealId}/stage`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stage: newStage })
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Role': state.currentUser?.role || ''
+        },
+        body: JSON.stringify(reqBody)
       });
     }
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка обновления стадии');
-    const activeStages = getActiveStages();
-    const stageName = activeStages.find(s => s.id === newStage)?.label || newStage;
-    showToast(`Сделка #${dealId}: стадия изменена на «${stageName}»`, 'info');
+    if (closingOutcome === 'failed') {
+      showToast(`Сделка #${dealId} завершена НЕ УДАЧНО и перемещена в Архив неудачных сделок`, 'warning');
+    } else if (closingOutcome === 'success' && newStage === 'completed') {
+      showToast(`Сделка #${dealId} успешно завершена (Удачно)!`, 'success');
+    } else {
+      const activeStages = getActiveStages();
+      const stageName = activeStages.find(s => s.id === newStage)?.label || newStage;
+      showToast(`Сделка #${dealId}: стадия изменена на «${stageName}»`, 'info');
+    }
     loadDashboard();
   } catch (err) {
     console.warn('Deal stage update warning:', err);
-    const activeStages = getActiveStages();
-    const stageName = activeStages.find(s => s.id === newStage)?.label || newStage;
-    showToast(`Стадия сделки сохранена: «${stageName}»`, 'info');
+    loadDashboard();
   }
+}
+
+async function updateDealStageQuick(dealId, newStage, event) {
+  if (event) event.stopPropagation();
+  const deal = state.deals.find(d => Number(d.id) === Number(dealId));
+  if (!deal) return;
+
+  // Requirement #5: Forbid changes to closed/paid deals for non-admins
+  if (isDealLockedForUser(deal)) {
+    showToast('Изменение стадии закрытых/оплаченных сделок разрешено только Администратору!', 'error');
+    return;
+  }
+
+  // Requirement 2.3: When clicking "Завершить сделку" ('completed'), ask if completed successfully or failed
+  if (newStage === 'completed') {
+    promptDealCompletionOutcome(deal, (outcome) => {
+      executeDealStageUpdate(dealId, 'completed', outcome);
+    });
+    return;
+  }
+
+  if (deal.stage === newStage) return;
+  await executeDealStageUpdate(dealId, newStage, 'success');
 }
 
 async function quickDeleteDeal(dealId) {
@@ -2275,14 +2569,18 @@ function renderKanbanCard(deal) {
     else typeBadge = '<span class="bg-blue-100 text-blue-800 border border-blue-200 text-[10px] font-bold px-1.5 py-0.5 rounded">🛠️ Сервис</span>';
   }
 
-  // Requirement #14: Deal Closing Outcome (Не удачно / Отказ -> Red highlight)
-  const isFailed = deal.closing_outcome === 'failed';
+  // Requirement 2.3: Deal Closing Outcome (Удачно -> Green, Не удачно -> Red & Archive)
+  const isFailed = (deal.closing_outcome === 'failed' || deal.stage === 'cancelled');
+  const isCompletedSuccess = (deal.stage === 'completed' && !isFailed);
   const isLocked = isDealLockedForUser(deal);
   const isOverdue = isDealReadyOverdue(deal);
+  const dealCurr = normalizeDealCurrency(deal.currency);
 
   let cardStyling = 'bg-white border border-slate-200/90 shadow-sm';
   if (isFailed) {
     cardStyling = 'deal-card-failed bg-rose-50/95 border-2 border-rose-500 shadow-sm shadow-rose-200 text-rose-950 ring-2 ring-rose-300/40';
+  } else if (isCompletedSuccess) {
+    cardStyling = 'deal-card-success bg-emerald-50/95 border-2 border-emerald-500 shadow-sm shadow-emerald-200 text-emerald-950 ring-2 ring-emerald-300/40';
   } else if (isOverdue) {
     cardStyling = 'bg-rose-50/95 border-2 border-rose-500 shadow-sm shadow-rose-200 ring-2 ring-rose-400/40 text-rose-950';
   } else if (isLocked) {
@@ -2292,9 +2590,14 @@ function renderKanbanCard(deal) {
   const failedBanner = isFailed ? `
     <div class="flex items-center gap-1.5 text-[10px] font-bold text-rose-800 bg-rose-100 border border-rose-300 px-2 py-0.5 rounded-md w-fit shadow-xs">
       <i data-lucide="x-circle" class="w-3 h-3 text-rose-600 flex-shrink-0"></i>
-      <span>❌ Закрыто: Не удачно (Отказ)</span>
+      <span>❌ Завершено: Не удачно (В архиве)</span>
     </div>
-  ` : '';
+  ` : (isCompletedSuccess ? `
+    <div class="flex items-center gap-1.5 text-[10px] font-bold text-emerald-800 bg-emerald-100 border border-emerald-300 px-2 py-0.5 rounded-md w-fit shadow-xs">
+      <i data-lucide="check-circle-2" class="w-3 h-3 text-emerald-600 flex-shrink-0"></i>
+      <span>✅ Сделка завершена удачно</span>
+    </div>
+  ` : '');
 
   const lockBadge = isLocked ? `
     <span class="inline-flex items-center gap-1 text-[10px] font-bold text-amber-800 bg-amber-100 border border-amber-300 px-1.5 py-0.2 rounded" title="Сделка заблокирована для редактирования (только для Администратора)">
@@ -2368,7 +2671,7 @@ function renderKanbanCard(deal) {
       </div>
 
       <div class="flex items-center justify-between pt-1 text-xs">
-        <span class="font-bold text-blue-600 font-mono">${formatMoney(deal.amount)}</span>
+        <span class="font-bold ${isFailed ? 'text-rose-700' : (isCompletedSuccess ? 'text-emerald-700' : 'text-blue-600')} font-mono">${formatMoney(deal.amount, dealCurr)}</span>
         <div class="flex items-center gap-1.5 flex-wrap justify-end">
           ${deal.deal_type === 'sales' ? '' : `<span class="bg-amber-50 text-amber-700 border border-amber-200 text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold shrink-0" title="Сумма продажи списанных запчастей: ${formatMoney(deal.parts_selling_total || 0)}">${Number(deal.parts_count || 0)} з/ч • ${formatMoney(deal.parts_selling_total || 0)}</span>`}
           <span class="text-[10px] text-slate-600 font-medium truncate max-w-[150px]" title="${escapeHtml(deal.responsible || '')}">${escapeHtml(deal.responsible || '')}</span>
@@ -2424,43 +2727,13 @@ async function handleDrop(e, newStage) {
 
   const deal = state.deals.find(d => Number(d.id) === Number(dealId));
   if (deal && deal.stage !== newStage) {
-    deal.stage = newStage;
-    crmStore.saveItem('deals', deal);
-    renderDeals();
-    highlightMovedCard(dealId);
-
-    // Send real-time notification to FastAPI WebSocket
-    if (fastApiWs && fastApiWs.readyState === WebSocket.OPEN) {
-      try {
-        fastApiWs.send(JSON.stringify({
-          type: 'deal_stage_updated',
-          deal_id: dealId,
-          stage: newStage
-        }));
-      } catch (e) {}
-    }
-
-    try {
-      let res = await fetch(`/api/deals/${dealId}/stage`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stage: newStage })
+    if (newStage === 'completed') {
+      promptDealCompletionOutcome(deal, (outcome) => {
+        executeDealStageUpdate(dealId, 'completed', outcome);
       });
-      if (!res.ok) {
-        res = await fetch(`/api/deals/${dealId}/stage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ stage: newStage })
-        });
-      }
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка обновления стадии');
-      showToast(`Статус наряда изменен на «${KANBAN_STAGES.find(s=>s.id===newStage)?.label}»`, 'info');
-      loadDashboard();
-    } catch (err) {
-      console.warn('Handle drop warning:', err);
-      showToast(`Статус наряда сохранен: «${KANBAN_STAGES.find(s=>s.id===newStage)?.label}»`, 'info');
+      return;
     }
+    await executeDealStageUpdate(dealId, newStage, 'success');
   }
 }
 
@@ -3483,6 +3756,16 @@ function setDealModalType(type) {
     } else {
       stageSelect.value = stages[0]?.id || 'new';
     }
+    stageSelect.onchange = function() {
+      if (this.value === 'completed') {
+        const titleVal = document.getElementById('deal-title')?.value || 'Сделка';
+        const dId = document.getElementById('deal-id')?.value || 'НОВАЯ';
+        promptDealCompletionOutcome({ id: dId, title: titleVal }, (outcome) => {
+          const outcomeSelect = document.getElementById('deal-closing-outcome');
+          if (outcomeSelect) outcomeSelect.value = outcome;
+        });
+      }
+    };
   }
 
   // Requirement 3.1: Hide "Тип заказ-наряда" in Sales Department ("Отдел продаж")
@@ -3524,11 +3807,28 @@ function setDealModalType(type) {
     }
   }
 
+  // Requirements 1.3, 1.4, 1.5, 1.6:
+  // In Sales Dept ("Отдел продаж"):
+  // - Hide "Доп.услуги/предпродажка" (#deal-labor-cost-group)
+  // - Hide "Себестоимость" (#deal-cost-group)
+  // - Show Currency (AMD, USD, EUR), Subtotal, and Discount (#deal-sales-finance-row)
+  // - Auto-calculate "Сумма после скидки" (#deal-amount)
+  const costGroup = document.getElementById('deal-cost-group');
+  const salesFinanceRow = document.getElementById('deal-sales-finance-row');
+  const stdFinanceGrid = document.getElementById('deal-standard-finance-grid');
+  const amountLabel = document.getElementById('deal-amount-label');
+  const cur = normalizeDealCurrency(document.getElementById('deal-currency')?.value || 'AMD');
+
+  if (laborCostGroup) laborCostGroup.classList.toggle('hidden', isSales);
+  if (costGroup) costGroup.classList.toggle('hidden', isSales);
+  if (salesFinanceRow) salesFinanceRow.classList.toggle('hidden', !isSales);
+
   if (isSales) {
-    if (costLabel) costLabel.textContent = 'Себестоимость (AMD)';
-    if (partsSellingInput) partsSellingInput.classList.add('hidden');
-    if (costInput) costInput.classList.remove('hidden');
+    if (stdFinanceGrid) stdFinanceGrid.className = 'grid grid-cols-1 gap-4';
+    if (amountLabel) amountLabel.textContent = `Итого сумма после скидки (${cur})`;
   } else {
+    if (stdFinanceGrid) stdFinanceGrid.className = 'grid grid-cols-1 md:grid-cols-3 gap-4';
+    if (amountLabel) amountLabel.textContent = 'Сумма клиенту (AMD)';
     if (costLabel) costLabel.textContent = 'Сумма продажи з/ч (AMD)';
     if (partsSellingInput) partsSellingInput.classList.remove('hidden');
     if (costInput) costInput.classList.add('hidden');
@@ -3735,14 +4035,24 @@ async function openDealModal(dealId = null, defaultStage = 'new', defaultType = 
       document.getElementById('deal-title').value = deal.title;
       document.getElementById('deal-client').value = deal.client_id || '';
       await handleDealClientChange(deal.client_id, deal.equipment_id);
-      if (deal.deal_type === 'sales') {
-        setDealSalesEquipmentSelection(deal.sales_equipment_id, deal.sales_equipment_name || deal.equipment_name || '');
-      }
       document.getElementById('deal-stage').value = deal.stage;
       const laborCostEl = document.getElementById('deal-labor-cost');
       if (laborCostEl) laborCostEl.value = deal.labor_cost || 0;
       document.getElementById('deal-amount').value = deal.amount;
       document.getElementById('deal-cost').value = deal.cost;
+
+      // Sales Department multi-items, currency & discount initialization (Requirements 1.1-1.6)
+      const currSelect = document.getElementById('deal-currency');
+      if (currSelect) currSelect.value = normalizeDealCurrency(deal.currency || 'AMD');
+      const discountInput = document.getElementById('deal-discount');
+      if (discountInput) discountInput.value = Number(deal.discount || 0);
+      handleDealCurrencyChange(currSelect ? currSelect.value : 'AMD', false);
+
+      if (deal.deal_type === 'sales') {
+        initDealSalesItemsFromDeal(deal);
+      } else {
+        state.currentDealSalesItems = [];
+      }
       document.getElementById('deal-priority').value = deal.priority;
       setDealResponsibles(deal.responsible || '');
       document.getElementById('deal-deadline').value = deal.deadline || '';
@@ -3793,7 +4103,16 @@ async function openDealModal(dealId = null, defaultStage = 'new', defaultType = 
       showToast('Ошибка загрузки сделки', 'error');
     }
   } else {
+    state.currentDealSalesItems = [];
+    const currSelect = document.getElementById('deal-currency');
+    if (currSelect) currSelect.value = 'AMD';
+    const discountInput = document.getElementById('deal-discount');
+    if (discountInput) discountInput.value = '0';
+    const subtotalInput = document.getElementById('deal-sales-subtotal');
+    if (subtotalInput) subtotalInput.value = '0';
     setDealModalType(targetType);
+    handleDealCurrencyChange('AMD', false);
+    renderDealSalesItemsList();
     document.getElementById('deal-stage').value = defaultStage || 'new';
     const defaultResp = state.currentUser?.full_name || (state.users && state.users[0] ? state.users[0].full_name : '');
     setDealResponsibles(defaultResp);
@@ -4475,35 +4794,55 @@ async function saveDeal(e) {
   }
 
   let eqId = dealType === 'sales' ? null : (parseInt(eqSelect.value) || null);
-  let salesEqId = dealType === 'sales' ? (parseInt(document.getElementById('deal-sales-eq-id')?.value || document.getElementById('deal-sales-eq-select')?.value) || null) : null;
+  let salesEqId = null;
   let salesEqName = '';
+  let salesItemsToSave = [];
 
-  // Requirement 3.3: For Sales Dept deals, get selected sales equipment or auto-create if new name typed
+  // Requirements 1.1-1.6 & 3.3: For Sales Dept deals, gather all added products (and auto-add any typed/selected product not yet in list)
   if (dealType === 'sales') {
+    if (!Array.isArray(state.currentDealSalesItems)) state.currentDealSalesItems = [];
     const typedSalesEq = (document.getElementById('deal-sales-eq-search')?.value || '').trim();
-    const matchedSalesEq = salesEqId
-      ? (state.salesEquipment || []).find(item => Number(item.id) === Number(salesEqId))
-      : (state.salesEquipment || []).find(item => (item.name || '').trim().toLowerCase() === typedSalesEq.toLowerCase());
+    const pickedId = parseInt(document.getElementById('deal-sales-eq-id')?.value || document.getElementById('deal-sales-eq-select')?.value) || null;
 
-    if (matchedSalesEq) {
-      salesEqId = matchedSalesEq.id;
-      salesEqName = matchedSalesEq.name;
-    } else if (typedSalesEq) {
-      if (confirm(`Модель «${typedSalesEq}» отсутствует в базе техники для продажи. Добавить новый товар в базу автоматически?`)) {
-        const createdSe = await createSalesEquipmentAutoFromDeal(null, typedSalesEq);
-        if (createdSe && createdSe.id) {
-          salesEqId = createdSe.id;
-          salesEqName = createdSe.name;
+    if (state.currentDealSalesItems.length === 0 && (pickedId || typedSalesEq)) {
+      const matchedSalesEq = pickedId
+        ? (state.salesEquipment || []).find(item => Number(item.id) === Number(pickedId))
+        : (state.salesEquipment || []).find(item => (item.name || '').trim().toLowerCase() === typedSalesEq.toLowerCase());
+      if (matchedSalesEq) {
+        addDealSalesItemFromCatalog(matchedSalesEq, 1);
+      } else if (typedSalesEq) {
+        if (confirm(`Модель «${typedSalesEq}» отсутствует в базе техники для продажи. Добавить новый товар в базу автоматически?`)) {
+          const createdSe = await createSalesEquipmentAutoFromDeal(null, typedSalesEq);
+          if (createdSe && createdSe.id) {
+            // createSalesEquipmentAutoFromDeal automatically adds the item to state.currentDealSalesItems
+          } else {
+            addCustomDealSalesItem(typedSalesEq, 0);
+          }
         } else {
-          salesEqName = typedSalesEq;
+          addCustomDealSalesItem(typedSalesEq, 0);
         }
-      } else {
-        salesEqName = typedSalesEq;
       }
+    }
+
+    salesItemsToSave = state.currentDealSalesItems.map(it => ({
+      sales_equipment_id: it.sales_equipment_id || null,
+      name: it.name || 'Спецтехника',
+      category: normalizeSalesEqCategoryJS(it.category),
+      quantity: Math.max(0.01, parsePartNumberInput(it.quantity, 1)),
+      price: Math.max(0, parsePartNumberInput(it.price, 0)),
+      vat_rate: Number(it.vat_rate ?? 20) === 0 ? 0 : 20,
+      vat_mode: it.vat_mode || 'included',
+    }));
+
+    if (salesItemsToSave.length > 0) {
+      salesEqId = salesItemsToSave[0].sales_equipment_id || null;
+      salesEqName = salesItemsToSave.map(it => Number(it.quantity || 1) !== 1 ? `${it.name} (${it.quantity} шт.)` : it.name).join(', ');
     }
   }
 
   const responsibleVal = getDealResponsibles() || document.getElementById('deal-responsible')?.value || 'Мастер-приемщик';
+  const dealCurrency = dealType === 'sales' ? normalizeDealCurrency(document.getElementById('deal-currency')?.value || 'AMD') : 'AMD';
+  const dealDiscount = dealType === 'sales' ? Math.max(0, parsePartNumberInput(document.getElementById('deal-discount')?.value, 0)) : 0.0;
 
   const payload = {
     title: document.getElementById('deal-title').value.trim(),
@@ -4512,10 +4851,13 @@ async function saveDeal(e) {
     equipment_id: eqId,
     sales_equipment_id: salesEqId,
     sales_equipment_name: salesEqName,
+    sales_items: salesItemsToSave,
+    currency: dealCurrency,
+    discount: dealDiscount,
     stage: document.getElementById('deal-stage').value,
-    labor_cost: parseFloat(document.getElementById('deal-labor-cost')?.value) || 0.0,
+    labor_cost: dealType === 'sales' ? 0.0 : (parseFloat(document.getElementById('deal-labor-cost')?.value) || 0.0),
     amount: parseFloat(document.getElementById('deal-amount').value) || 0.0,
-    cost: parseFloat(document.getElementById('deal-cost').value) || 0.0,
+    cost: dealType === 'sales' ? 0.0 : (parseFloat(document.getElementById('deal-cost').value) || 0.0),
     priority: document.getElementById('deal-priority').value,
     responsible: responsibleVal,
     deadline: document.getElementById('deal-deadline').value || null,
@@ -6214,6 +6556,19 @@ async function loadWhatsAppLogs() {
 
 // ================= SALES EQUIPMENT CATALOG (БАЗА ТЕХНИКИ ДЛЯ ПРОДАЖИ) =================
 
+const SALES_EQ_CATEGORIES = [
+  'Строительная и коммунальная техника',
+  'Сельскохозяйственная техника'
+];
+
+function normalizeSalesEqCategoryJS(cat) {
+  const s = String(cat || '').trim().toLowerCase();
+  if (s.includes('сельхоз') || s.includes('сельскохоз') || s.includes('трактор') || s.includes('комбайн') || s.includes('агро')) {
+    return 'Сельскохозяйственная техника';
+  }
+  return 'Строительная и коммунальная техника';
+}
+
 function formatSalesEqVatBadge(item) {
   const rate = Number(item?.vat_rate ?? 20) === 0 ? 0 : 20;
   const mode = item?.vat_mode === 'added' ? 'added' : 'included';
@@ -6244,24 +6599,51 @@ function computeSalesEqPriceWithVat(price, vatRate, vatMode) {
   return { basePrice: base, vatAmount, finalPrice: base, rate, mode };
 }
 
+function switchSalesCatalogCategoryTab(catVal) {
+  const val = catVal || 'all';
+  state.salesCatalogCategory = val;
+  const select = document.getElementById('sales-eq-category-filter');
+  if (select && select.value !== val) {
+    select.value = val;
+  }
+
+  const tabAll = document.getElementById('sales-cat-tab-all');
+  const tabConstr = document.getElementById('sales-cat-tab-construction');
+  const tabAgri = document.getElementById('sales-cat-tab-agriculture');
+
+  const activeCls = 'px-3.5 py-2 rounded-lg text-xs font-bold bg-white text-indigo-900 shadow-xs transition-all flex items-center gap-2';
+  const inactiveCls = 'px-3.5 py-2 rounded-lg text-xs font-semibold text-slate-600 hover:text-slate-900 transition-all flex items-center gap-2';
+
+  if (tabAll) tabAll.className = (val === 'all') ? activeCls : inactiveCls;
+  if (tabConstr) tabConstr.className = (val === 'Строительная и коммунальная техника') ? activeCls : inactiveCls;
+  if (tabAgri) tabAgri.className = (val === 'Сельскохозяйственная техника') ? activeCls : inactiveCls;
+
+  renderSalesEquipmentTable();
+}
+
 async function loadSalesEquipment(searchQuery = null) {
   const searchInput = document.getElementById('sales-eq-search');
   const q = typeof searchQuery === 'string' ? searchQuery.trim() : (searchInput ? searchInput.value.trim() : '');
-  const category = document.getElementById('sales-eq-category-filter')?.value || 'all';
 
   try {
     const params = new URLSearchParams();
-    if (category && category !== 'all') params.set('category', category);
     if (q) params.set('q', q);
     const url = params.toString() ? `/api/sales-equipment?${params.toString()}` : '/api/sales-equipment';
     const res = await fetch(url);
     if (res.ok) {
       const data = await res.json();
-      state.salesEquipment = crmStore.mergeWithServer('sales_equipment', data);
+      const normalized = (Array.isArray(data) ? data : []).map(item => ({
+        ...item,
+        category: normalizeSalesEqCategoryJS(item.category)
+      }));
+      state.salesEquipment = crmStore.mergeWithServer('sales_equipment', normalized);
     }
   } catch (err) {
     console.error('Error loading sales equipment catalog:', err);
-    state.salesEquipment = crmStore.getList('sales_equipment');
+    state.salesEquipment = crmStore.getList('sales_equipment').map(item => ({
+      ...item,
+      category: normalizeSalesEqCategoryJS(item.category)
+    }));
   }
   renderSalesEquipmentTable();
   updateSidebarCounters();
@@ -6270,16 +6652,48 @@ async function loadSalesEquipment(searchQuery = null) {
 function renderSalesEquipmentTable() {
   const tbody = document.getElementById('sales-equipment-table-body');
   if (!tbody) return;
-  const list = Array.isArray(state.salesEquipment) ? state.salesEquipment : [];
+  const allList = (Array.isArray(state.salesEquipment) ? state.salesEquipment : []).map(item => ({
+    ...item,
+    category: normalizeSalesEqCategoryJS(item.category)
+  }));
+
+  // Update category tab counters
+  const constrCount = allList.filter(i => i.category === 'Строительная и коммунальная техника').length;
+  const agriCount = allList.filter(i => i.category === 'Сельскохозяйственная техника').length;
+  const cAllEl = document.getElementById('sales-cat-count-all');
+  const cConEl = document.getElementById('sales-cat-count-construction');
+  const cAgrEl = document.getElementById('sales-cat-count-agriculture');
+  if (cAllEl) cAllEl.textContent = String(allList.length);
+  if (cConEl) cConEl.textContent = String(constrCount);
+  if (cAgrEl) cAgrEl.textContent = String(agriCount);
+
+  const selectedCat = document.getElementById('sales-eq-category-filter')?.value || state.salesCatalogCategory || 'all';
+  const searchQ = (document.getElementById('sales-eq-search')?.value || '').trim().toLowerCase();
+
+  const list = allList.filter(item => {
+    if (selectedCat !== 'all' && item.category !== selectedCat) return false;
+    if (!searchQ) return true;
+    return (
+      (item.name || '').toLowerCase().includes(searchQ) ||
+      (item.sku_code || '').toLowerCase().includes(searchQ) ||
+      (item.category || '').toLowerCase().includes(searchQ) ||
+      (item.notes || '').toLowerCase().includes(searchQ)
+    );
+  });
 
   if (list.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-slate-400 text-xs">В базе техники для продажи пока нет моделей. Нажмите «+ Добавить модель техники».</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="p-8 text-center text-slate-400 text-xs">В выбранной категории пока нет моделей техники. Нажмите «+ Добавить модель техники».</td></tr>';
     return;
   }
 
   tbody.innerHTML = list.map(item => {
     const calc = computeSalesEqPriceWithVat(item.selling_price, item.vat_rate, item.vat_mode);
     const hasPrice = calc.basePrice > 0;
+    const isAgri = item.category === 'Сельскохозяйственная техника';
+    const catBadge = isAgri
+      ? '<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200 text-[11px] font-semibold">🌾 Сельскохозяйственная техника</span>'
+      : '<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200 text-[11px] font-semibold">🏗️ Строительная и коммунальная техника</span>';
+
     return `
       <tr class="hover:bg-slate-50/80 transition-colors">
         <td class="p-3.5">
@@ -6289,7 +6703,7 @@ function renderSalesEquipmentTable() {
           </div>
           ${item.notes ? `<div class="text-[11px] text-slate-400 mt-0.5">${escapeHtml(item.notes)}</div>` : ''}
         </td>
-        <td class="p-3.5 text-xs text-slate-600 font-medium">${escapeHtml(item.category || 'Спецтехника')}</td>
+        <td class="p-3.5 text-xs">${catBadge}</td>
         <td class="p-3.5 text-xs font-mono text-slate-600">${escapeHtml(item.sku_code || '—')}</td>
         <td class="p-3.5 text-xs font-mono text-right ${hasPrice ? 'font-bold text-slate-800' : 'text-slate-400 italic'}">
           ${hasPrice ? formatMoney(calc.basePrice) : 'Не указана'}
@@ -6357,7 +6771,7 @@ function openSalesEquipmentModal(itemId = null) {
     if (item) {
       document.getElementById('sales-eq-id').value = item.id;
       document.getElementById('sales-eq-name').value = item.name || '';
-      document.getElementById('sales-eq-category').value = item.category || 'Спецтехника';
+      document.getElementById('sales-eq-category').value = normalizeSalesEqCategoryJS(item.category);
       document.getElementById('sales-eq-sku').value = item.sku_code || '';
       document.getElementById('sales-eq-price').value = Number(item.selling_price || 0) > 0 ? item.selling_price : '';
       document.getElementById('sales-eq-vat-rate').value = String(item.vat_rate ?? 20);
@@ -6366,6 +6780,12 @@ function openSalesEquipmentModal(itemId = null) {
     }
   } else {
     document.getElementById('modal-sales-eq-title').textContent = 'Новая модель техники для продажи';
+    const currentTabCat = state.salesCatalogCategory;
+    if (currentTabCat && currentTabCat !== 'all') {
+      document.getElementById('sales-eq-category').value = normalizeSalesEqCategoryJS(currentTabCat);
+    } else {
+      document.getElementById('sales-eq-category').value = 'Строительная и коммунальная техника';
+    }
     document.getElementById('sales-eq-vat-rate').value = '20';
     document.getElementById('sales-eq-vat-mode').value = 'included';
   }
@@ -6380,7 +6800,7 @@ async function saveSalesEquipment(e) {
   const itemId = document.getElementById('sales-eq-id').value;
   const payload = {
     name: document.getElementById('sales-eq-name').value.trim(),
-    category: document.getElementById('sales-eq-category').value,
+    category: normalizeSalesEqCategoryJS(document.getElementById('sales-eq-category').value),
     sku_code: document.getElementById('sales-eq-sku').value.trim(),
     selling_price: parsePartNumberInput(document.getElementById('sales-eq-price').value, 0),
     vat_rate: parseInt(document.getElementById('sales-eq-vat-rate').value, 10) === 0 ? 0 : 20,
@@ -6412,7 +6832,10 @@ async function saveSalesEquipment(e) {
     await loadSalesEquipment();
     await loadSalesEquipmentOptions();
     if (!itemId && data.id) {
-      selectDealSalesEquipment(data.id);
+      const modalDeal = document.getElementById('modal-deal');
+      if (modalDeal && !modalDeal.classList.contains('hidden')) {
+        selectDealSalesEquipment(data.id);
+      }
     }
   } catch (err) {
     showToast(err.message, 'error');
@@ -6454,14 +6877,284 @@ async function loadSalesEquipmentOptions() {
   }
   const select = document.getElementById('deal-sales-eq-select');
   if (!select) return;
-  const list = Array.isArray(state.salesEquipment) ? state.salesEquipment : [];
-  select.innerHTML = '<option value="">— Выберите модель из базы техники для продажи —</option>' + list.map(item => {
+  const list = (Array.isArray(state.salesEquipment) ? state.salesEquipment : []).map(item => ({
+    ...item,
+    category: normalizeSalesEqCategoryJS(item.category)
+  }));
+
+  const constrList = list.filter(i => i.category === 'Строительная и коммунальная техника');
+  const agriList = list.filter(i => i.category === 'Сельскохозяйственная техника');
+
+  const renderOpts = (arr) => arr.map(item => {
     const calc = computeSalesEqPriceWithVat(item.selling_price, item.vat_rate, item.vat_mode);
     const priceText = calc.basePrice > 0
       ? ` • ${formatMoney(calc.finalPrice)} (${calc.rate === 0 ? 'НДС 0%' : (calc.mode === 'added' ? '+НДС 20%' : 'НДС 20% вкл.')})`
       : ' • Цена по запросу';
     return `<option value="${item.id}">${escapeHtml(item.name)}${priceText}</option>`;
   }).join('');
+
+  select.innerHTML =
+    '<option value="">— Выберите модель из каталога —</option>' +
+    (constrList.length > 0 ? `<optgroup label="🏗️ Строительная и коммунальная техника">${renderOpts(constrList)}</optgroup>` : '') +
+    (agriList.length > 0 ? `<optgroup label="🌾 Сельскохозяйственная техника">${renderOpts(agriList)}</optgroup>` : '');
+}
+
+// ================= MULTI-ITEM SALES DEAL MANAGEMENT (Requirements 1.1 - 1.6) =================
+
+function initDealSalesItemsFromDeal(deal) {
+  if (Array.isArray(deal.sales_items) && deal.sales_items.length > 0) {
+    state.currentDealSalesItems = deal.sales_items.map(it => ({
+      sales_equipment_id: it.sales_equipment_id || null,
+      name: it.name || 'Спецтехника',
+      category: normalizeSalesEqCategoryJS(it.category),
+      quantity: Math.max(0.01, parsePartNumberInput(it.quantity, 1)),
+      price: Math.max(0, parsePartNumberInput(it.price, 0)),
+      vat_rate: Number(it.vat_rate ?? 20) === 0 ? 0 : 20,
+      vat_mode: it.vat_mode || 'included',
+    }));
+  } else if (deal.sales_equipment_id || deal.sales_equipment_name || deal.equipment_name) {
+    const eqItem = deal.sales_equipment_id
+      ? (state.salesEquipment || []).find(x => Number(x.id) === Number(deal.sales_equipment_id))
+      : null;
+    const baseAmount = Number(deal.amount || 0) + Number(deal.discount || 0);
+    state.currentDealSalesItems = [{
+      sales_equipment_id: deal.sales_equipment_id || (eqItem ? eqItem.id : null),
+      name: deal.sales_equipment_name || (eqItem ? eqItem.name : '') || deal.equipment_name || deal.title || 'Спецтехника',
+      category: normalizeSalesEqCategoryJS(eqItem ? eqItem.category : 'Строительная и коммунальная техника'),
+      quantity: 1,
+      price: baseAmount > 0 ? baseAmount : (eqItem ? computeSalesEqPriceWithVat(eqItem.selling_price, eqItem.vat_rate, eqItem.vat_mode).finalPrice : 0),
+      vat_rate: eqItem ? (Number(eqItem.vat_rate ?? 20) === 0 ? 0 : 20) : 20,
+      vat_mode: eqItem ? (eqItem.vat_mode || 'included') : 'included',
+    }];
+  } else {
+    state.currentDealSalesItems = [];
+  }
+  renderDealSalesItemsList();
+  recalcSalesDealTotals(false);
+}
+
+function handleDealCurrencyChange(newCurrency, shouldRecalc = true) {
+  const cur = normalizeDealCurrency(newCurrency);
+  const sel = document.getElementById('deal-currency');
+  if (sel && sel.value !== cur) sel.value = cur;
+
+  const subLabel = document.getElementById('deal-sales-subtotal-label');
+  if (subLabel) subLabel.textContent = `Сумма товаров (${cur})`;
+
+  const discLabel = document.getElementById('deal-discount-label');
+  if (discLabel) discLabel.textContent = `Скидка (${cur})`;
+
+  const isSales = (document.getElementById('deal-type')?.value || state.dealModalType) === 'sales';
+  const amountLabel = document.getElementById('deal-amount-label');
+  if (amountLabel && isSales) {
+    amountLabel.textContent = `Итого сумма после скидки (${cur})`;
+  }
+
+  renderDealSalesItemsList();
+  if (shouldRecalc) recalcSalesDealTotals();
+}
+
+function recalcSalesDealTotals(overwriteAmount = true) {
+  const items = Array.isArray(state.currentDealSalesItems) ? state.currentDealSalesItems : [];
+  const subtotal = items.reduce((sum, it) => {
+    const q = Math.max(0, parsePartNumberInput(it.quantity, 1));
+    const p = Math.max(0, parsePartNumberInput(it.price, 0));
+    return sum + Math.round(q * p * 100) / 100;
+  }, 0);
+
+  const subEl = document.getElementById('deal-sales-subtotal');
+  if (subEl) subEl.value = Math.round(subtotal * 100) / 100;
+
+  const discountVal = Math.max(0, parsePartNumberInput(document.getElementById('deal-discount')?.value, 0));
+  const finalAmount = Math.max(0, Math.round((subtotal - discountVal) * 100) / 100);
+
+  const amountEl = document.getElementById('deal-amount');
+  if (amountEl && (overwriteAmount || items.length > 0 || discountVal > 0)) {
+    amountEl.value = finalAmount;
+  }
+}
+
+function renderDealSalesItemsList() {
+  const container = document.getElementById('deal-sales-items-list');
+  const countBadge = document.getElementById('deal-sales-items-count-badge');
+  if (!container) return;
+
+  const items = Array.isArray(state.currentDealSalesItems) ? state.currentDealSalesItems : [];
+  const cur = normalizeDealCurrency(document.getElementById('deal-currency')?.value || 'AMD');
+  const isLocked = Boolean(document.getElementById('deal-title')?.disabled);
+
+  if (countBadge) {
+    const totalUnits = items.reduce((s, it) => s + Number(it.quantity || 1), 0);
+    countBadge.textContent = `${items.length} поз. (${totalUnits} ед.)`;
+  }
+
+  if (items.length === 0) {
+    container.innerHTML = '<div class="text-xs text-slate-400 text-center py-3">Товары еще не добавлены. Выберите модель из базы техники для продажи выше.</div>';
+    return;
+  }
+
+  container.innerHTML = items.map((it, idx) => {
+    const qty = Math.max(0.01, parsePartNumberInput(it.quantity, 1));
+    const price = Math.max(0, parsePartNumberInput(it.price, 0));
+    const lineTotal = Math.round(qty * price * 100) / 100;
+    const isAgri = normalizeSalesEqCategoryJS(it.category) === 'Сельскохозяйственная техника';
+    const catPill = isAgri ? '🌾 Сельхоз' : '🏗️ Строит./комм.';
+
+    return `
+      <div class="p-2.5 rounded-lg bg-slate-50/90 border border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs">
+        <div class="min-w-[180px] flex-1">
+          <div class="font-bold text-slate-900 flex items-center gap-1.5 flex-wrap">
+            <span>${idx + 1}. ${escapeHtml(it.name)}</span>
+            <span class="px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-800 border border-indigo-200 text-[10px] font-semibold">${catPill}</span>
+          </div>
+          <div class="text-[11px] text-slate-500 mt-0.5">
+            Ставка НДС: ${Number(it.vat_rate ?? 20) === 0 ? '0% (Без НДС)' : (it.vat_mode === 'added' ? '20% (+ к цене)' : '20% (включен)')}
+          </div>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2">
+          <!-- Quantity control -->
+          <div class="flex items-center">
+            <span class="text-[10px] text-slate-500 font-semibold mr-1">Кол-во:</span>
+            <div class="inline-flex items-center border border-slate-300 rounded-lg bg-white overflow-hidden">
+              <button type="button" ${isLocked ? 'disabled' : ''} onclick="stepDealSalesItemQty(${idx}, -1)" class="px-2 py-1 text-slate-600 hover:bg-slate-100 font-bold leading-none">−</button>
+              <input type="number" step="any" min="0.01" value="${qty}" ${isLocked ? 'disabled' : ''} oninput="updateDealSalesItemQty(${idx}, this.value)" class="w-14 text-center font-mono font-bold text-xs py-1 outline-none border-x border-slate-200 bg-white">
+              <button type="button" ${isLocked ? 'disabled' : ''} onclick="stepDealSalesItemQty(${idx}, 1)" class="px-2 py-1 text-slate-600 hover:bg-slate-100 font-bold leading-none">+</button>
+            </div>
+          </div>
+
+          <!-- Unit Price control -->
+          <div class="flex items-center">
+            <span class="text-[10px] text-slate-500 font-semibold mr-1">Цена (${cur}):</span>
+            <input type="number" step="any" min="0" value="${price}" ${isLocked ? 'disabled' : ''} oninput="updateDealSalesItemPrice(${idx}, this.value)" class="w-28 border border-slate-300 rounded-lg px-2 py-1 text-xs font-mono font-bold text-slate-900 bg-white outline-none focus:border-indigo-500 text-right">
+          </div>
+
+          <!-- Line Total -->
+          <div class="min-w-[105px] text-right font-mono font-bold text-indigo-700" id="deal-sales-item-line-total-${idx}">
+            ${formatMoney(lineTotal, cur)}
+          </div>
+
+          ${isLocked ? '' : `
+          <button type="button" onclick="removeDealSalesItem(${idx})" class="p-1 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded" title="Удалить товар из сделки">
+            <i data-lucide="trash-2" class="w-4 h-4"></i>
+          </button>`}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  if (window.lucide) lucide.createIcons();
+}
+
+function addDealSalesItemFromCatalog(item, quantity = 1) {
+  if (!item) return;
+  if (!Array.isArray(state.currentDealSalesItems)) state.currentDealSalesItems = [];
+  const calc = computeSalesEqPriceWithVat(item.selling_price, item.vat_rate, item.vat_mode);
+  const existingIdx = state.currentDealSalesItems.findIndex(x => Number(x.sales_equipment_id) === Number(item.id));
+  if (existingIdx >= 0) {
+    state.currentDealSalesItems[existingIdx].quantity = Math.round((Number(state.currentDealSalesItems[existingIdx].quantity || 1) + Number(quantity || 1)) * 100) / 100;
+  } else {
+    state.currentDealSalesItems.push({
+      sales_equipment_id: item.id,
+      name: item.name,
+      category: normalizeSalesEqCategoryJS(item.category),
+      quantity: Number(quantity || 1),
+      price: calc.finalPrice > 0 ? Math.round(calc.finalPrice * 100) / 100 : 0,
+      vat_rate: Number(item.vat_rate ?? 20) === 0 ? 0 : 20,
+      vat_mode: item.vat_mode || 'included',
+    });
+  }
+
+  const titleEl = document.getElementById('deal-title');
+  if (titleEl && !titleEl.value.trim()) {
+    titleEl.value = `Продажа: ${item.name}`;
+  }
+
+  renderDealSalesItemsList();
+  recalcSalesDealTotals();
+}
+
+function addCustomDealSalesItem(name, price = 0, category = 'Строительная и коммунальная техника') {
+  if (!name) return;
+  if (!Array.isArray(state.currentDealSalesItems)) state.currentDealSalesItems = [];
+  state.currentDealSalesItems.push({
+    sales_equipment_id: null,
+    name: name.trim(),
+    category: normalizeSalesEqCategoryJS(category),
+    quantity: 1,
+    price: Math.max(0, parsePartNumberInput(price, 0)),
+    vat_rate: 20,
+    vat_mode: 'included',
+  });
+  renderDealSalesItemsList();
+  recalcSalesDealTotals();
+}
+
+function stepDealSalesItemQty(idx, delta) {
+  if (!Array.isArray(state.currentDealSalesItems) || !state.currentDealSalesItems[idx]) return;
+  const cur = parsePartNumberInput(state.currentDealSalesItems[idx].quantity, 1);
+  const next = Math.max(1, Math.round((cur + delta) * 100) / 100);
+  state.currentDealSalesItems[idx].quantity = next;
+  renderDealSalesItemsList();
+  recalcSalesDealTotals();
+}
+
+function updateDealSalesItemQty(idx, val) {
+  if (!Array.isArray(state.currentDealSalesItems) || !state.currentDealSalesItems[idx]) return;
+  const qty = Math.max(0.01, parsePartNumberInput(val, 1));
+  state.currentDealSalesItems[idx].quantity = qty;
+  const price = Math.max(0, parsePartNumberInput(state.currentDealSalesItems[idx].price, 0));
+  const cur = normalizeDealCurrency(document.getElementById('deal-currency')?.value || 'AMD');
+  const lineEl = document.getElementById(`deal-sales-item-line-total-${idx}`);
+  if (lineEl) lineEl.textContent = formatMoney(Math.round(qty * price * 100) / 100, cur);
+  recalcSalesDealTotals();
+}
+
+function updateDealSalesItemPrice(idx, val) {
+  if (!Array.isArray(state.currentDealSalesItems) || !state.currentDealSalesItems[idx]) return;
+  const price = Math.max(0, parsePartNumberInput(val, 0));
+  state.currentDealSalesItems[idx].price = price;
+  const qty = Math.max(0.01, parsePartNumberInput(state.currentDealSalesItems[idx].quantity, 1));
+  const cur = normalizeDealCurrency(document.getElementById('deal-currency')?.value || 'AMD');
+  const lineEl = document.getElementById(`deal-sales-item-line-total-${idx}`);
+  if (lineEl) lineEl.textContent = formatMoney(Math.round(qty * price * 100) / 100, cur);
+  recalcSalesDealTotals();
+}
+
+function removeDealSalesItem(idx) {
+  if (!Array.isArray(state.currentDealSalesItems)) return;
+  state.currentDealSalesItems.splice(idx, 1);
+  renderDealSalesItemsList();
+  recalcSalesDealTotals();
+}
+
+function handleDealSalesEqSelectPick(itemId) {
+  if (!itemId) return;
+  selectDealSalesEquipment(itemId);
+  const select = document.getElementById('deal-sales-eq-select');
+  if (select) select.value = '';
+}
+
+function addSelectedSalesEquipmentToDeal() {
+  const select = document.getElementById('deal-sales-eq-select');
+  const searchInput = document.getElementById('deal-sales-eq-search');
+  const selectedId = select?.value || document.getElementById('deal-sales-eq-id')?.value;
+  if (selectedId) {
+    selectDealSalesEquipment(selectedId);
+    if (select) select.value = '';
+    return;
+  }
+  const typed = (searchInput?.value || '').trim();
+  if (!typed) {
+    showToast('Выберите модель из списка или введите наименование техники', 'info');
+    return;
+  }
+  const matched = (state.salesEquipment || []).find(x => (x.name || '').trim().toLowerCase() === typed.toLowerCase());
+  if (matched) {
+    selectDealSalesEquipment(matched.id);
+  } else {
+    createSalesEquipmentAutoFromDeal(null, typed);
+  }
 }
 
 function setDealSalesEquipmentSelection(itemId, fallbackName = '') {
@@ -6473,19 +7166,11 @@ function setDealSalesEquipmentSelection(itemId, fallbackName = '') {
 
   const item = itemId ? (state.salesEquipment || []).find(x => Number(x.id) === Number(itemId)) : null;
   if (item) {
-    if (idInput) idInput.value = item.id;
-    if (select) select.value = String(item.id);
-    if (searchInput) searchInput.value = item.name;
-    if (clearBtn) clearBtn.classList.remove('hidden');
-    if (badge) {
-      const calc = computeSalesEqPriceWithVat(item.selling_price, item.vat_rate, item.vat_mode);
-      if (calc.basePrice > 0) {
-        badge.innerHTML = `Выбрано: <b>${escapeHtml(item.name)}</b> • Итого с НДС: <b class="font-mono">${formatMoney(calc.finalPrice)}</b> (${calc.rate === 0 ? 'НДС 0%' : (calc.mode === 'added' ? 'цена ' + formatMoney(calc.basePrice) + ' + НДС 20%' : 'НДС 20% включен в цену')})`;
-      } else {
-        badge.innerHTML = `Выбрано: <b>${escapeHtml(item.name)}</b> • Цена продажи в каталоге не указана (НДС ${calc.rate}%)`;
-      }
-      badge.classList.remove('hidden');
-    }
+    if (idInput) idInput.value = '';
+    if (select) select.value = '';
+    if (searchInput) searchInput.value = '';
+    if (clearBtn) clearBtn.classList.add('hidden');
+    if (badge) badge.classList.add('hidden');
   } else {
     if (idInput) idInput.value = '';
     if (select) select.value = '';
@@ -6505,16 +7190,8 @@ function selectDealSalesEquipment(itemId) {
   const item = (state.salesEquipment || []).find(x => Number(x.id) === Number(itemId));
   if (!item) return;
 
-  setDealSalesEquipmentSelection(item.id, item.name);
-  const calc = computeSalesEqPriceWithVat(item.selling_price, item.vat_rate, item.vat_mode);
-  const amountEl = document.getElementById('deal-amount');
-  if (amountEl && calc.finalPrice > 0) {
-    amountEl.value = Math.round(calc.finalPrice);
-  }
-  const titleEl = document.getElementById('deal-title');
-  if (titleEl && !titleEl.value.trim()) {
-    titleEl.value = `Продажа: ${item.name}`;
-  }
+  addDealSalesItemFromCatalog(item, 1);
+  setDealSalesEquipmentSelection(null, '');
 }
 
 function clearDealSalesEqSearch() {
@@ -6553,14 +7230,15 @@ function handleDealSalesEqSearch(query) {
 
   const matchesHtml = matches.slice(0, 12).map(item => {
     const calc = computeSalesEqPriceWithVat(item.selling_price, item.vat_rate, item.vat_mode);
+    const normCat = normalizeSalesEqCategoryJS(item.category);
     return `
       <div onclick="selectDealSalesEquipment(${item.id})" class="p-2.5 hover:bg-indigo-50 cursor-pointer transition-colors">
         <div class="flex items-center justify-between text-xs font-bold text-slate-800">
-          <span>${escapeHtml(item.name)}</span>
+          <span>+ ${escapeHtml(item.name)}</span>
           <span class="font-mono text-indigo-700">${calc.basePrice > 0 ? formatMoney(calc.finalPrice) : 'Цена по запросу'}</span>
         </div>
         <div class="text-[11px] text-slate-500 flex items-center justify-between mt-0.5">
-          <span>${escapeHtml(item.category || 'Спецтехника')}${item.sku_code ? ' • ' + escapeHtml(item.sku_code) : ''}</span>
+          <span>${escapeHtml(normCat)}${item.sku_code ? ' • ' + escapeHtml(item.sku_code) : ''}</span>
           <span>${calc.rate === 0 ? 'НДС 0%' : (calc.mode === 'added' ? '+ НДС 20%' : 'НДС 20% вкл.')}</span>
         </div>
       </div>
@@ -6573,8 +7251,14 @@ function handleDealSalesEqSearch(query) {
         <i data-lucide="plus-circle" class="w-3.5 h-3.5 text-indigo-600 shrink-0"></i>
         <span>${matches.length === 0 ? `Модель «<b>${escapeHtml(rawTrimmed)}</b>» не найдена в базе.` : `Нет точного совпадения для «<b>${escapeHtml(rawTrimmed)}</b>».`} Добавить новый товар автоматически?</span>
       </div>
-      <div class="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
-        <input type="text" inputmode="decimal" id="quick-new-sales-eq-price" placeholder="Цена (AMD, необяз.)" class="border border-indigo-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none font-mono">
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+        <select id="quick-new-sales-eq-category" class="border border-indigo-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none font-semibold">
+          <option value="Строительная и коммунальная техника">🏗️ Строительная и коммунальная</option>
+          <option value="Сельскохозяйственная техника">🌾 Сельскохозяйственная</option>
+        </select>
+        <input type="text" inputmode="decimal" id="quick-new-sales-eq-price" placeholder="Цена (необязательно)" class="border border-indigo-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none font-mono">
+      </div>
+      <div class="grid grid-cols-2 gap-1.5">
         <select id="quick-new-sales-eq-vat-rate" class="border border-indigo-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none font-semibold">
           <option value="20">НДС 20%</option>
           <option value="0">НДС 0%</option>
@@ -6586,7 +7270,7 @@ function handleDealSalesEqSearch(query) {
       </div>
       <button type="button" onclick="createSalesEquipmentAutoFromDeal(event)" class="w-full py-1.5 px-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-lg shadow-xs flex items-center justify-center gap-1.5 transition-colors">
         <i data-lucide="plus" class="w-3.5 h-3.5"></i>
-        <span>+ Добавить новый товар «${escapeHtml(rawTrimmed)}» автоматически</span>
+        <span>+ Добавить новый товар «${escapeHtml(rawTrimmed)}» в базу и сделку</span>
       </button>
     </div>
   ` : '';
@@ -6607,6 +7291,7 @@ async function createSalesEquipmentAutoFromDeal(event = null, directName = null)
     showToast('Введите наименование модели техники', 'error');
     return null;
   }
+  const categoryVal = normalizeSalesEqCategoryJS(document.getElementById('quick-new-sales-eq-category')?.value || 'Строительная и коммунальная техника');
   const priceVal = parsePartNumberInput(document.getElementById('quick-new-sales-eq-price')?.value, 0);
   const vatRate = parseInt(document.getElementById('quick-new-sales-eq-vat-rate')?.value || '20', 10) === 0 ? 0 : 20;
   const vatMode = document.getElementById('quick-new-sales-eq-vat-mode')?.value || 'included';
@@ -6617,7 +7302,7 @@ async function createSalesEquipmentAutoFromDeal(event = null, directName = null)
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         name: nameVal,
-        category: 'Спецтехника',
+        category: categoryVal,
         sku_code: '',
         selling_price: priceVal,
         vat_rate: vatRate,
@@ -6634,7 +7319,7 @@ async function createSalesEquipmentAutoFromDeal(event = null, directName = null)
 
     await loadSalesEquipmentOptions();
     selectDealSalesEquipment(data.id);
-    showToast(`Новый товар «${nameVal}» автоматически добавлен в базу техники для продажи!`);
+    showToast(`Новый товар «${nameVal}» добавлен в базу (${categoryVal}) и в сделку!`);
     return data;
   } catch (err) {
     showToast(err.message || 'Ошибка автодобавления техники', 'error');

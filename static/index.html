@@ -11,7 +11,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Lucide Icons CDN -->
   <script src="https://unpkg.com/lucide@latest"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=1.2.4.5">
+  <link rel="stylesheet" href="/static/styles.css?v=1.2.4.6">
   <script>
     tailwind.config = {
       theme: {
@@ -496,6 +496,83 @@
           </div>
         </div>
 
+        <!-- Sales Department Equipment Revenue Analytics by Category (Requirement #4) -->
+        <div id="dash-card-sales-revenue" class="bg-white p-5 rounded-xl border border-indigo-200/90 bg-gradient-to-br from-white via-indigo-50/20 to-slate-50 shadow-sm space-y-4">
+          <div class="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-indigo-100">
+            <div class="flex items-center gap-3">
+              <span class="p-2.5 rounded-xl bg-indigo-100 text-indigo-700 shadow-2xs">
+                <i data-lucide="tractor" class="w-6 h-6"></i>
+              </span>
+              <div>
+                <h3 class="text-sm font-extrabold uppercase tracking-wider text-indigo-950">Выручка: Отдел продаж спецтехники</h3>
+                <p class="text-xs text-slate-500">Расчет выручки всей проданной спецтехники или отдельно по категориям</p>
+              </div>
+            </div>
+            <!-- Category Filter Pills -->
+            <div class="flex flex-wrap items-center gap-1.5 bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs">
+              <button type="button" id="dash-sales-cat-btn-all" onclick="setDashboardSalesCategory('all')" class="px-3 py-1.5 rounded-lg font-bold bg-indigo-600 text-white shadow-xs transition-all">
+                🚜 Вся спецтехника
+              </button>
+              <button type="button" id="dash-sales-cat-btn-construction" onclick="setDashboardSalesCategory('construction')" class="px-3 py-1.5 rounded-lg font-semibold text-slate-700 hover:bg-white transition-all">
+                🏗️ Строительная и коммунальная техника
+              </button>
+              <button type="button" id="dash-sales-cat-btn-agriculture" onclick="setDashboardSalesCategory('agriculture')" class="px-3 py-1.5 rounded-lg font-semibold text-slate-700 hover:bg-white transition-all">
+                🌾 Сельскохозяйственная техника
+              </button>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <!-- Selected Category Main Metric -->
+            <div class="p-4 rounded-xl bg-indigo-50/60 border border-indigo-200/80 flex flex-col justify-between">
+              <div>
+                <div class="flex items-center justify-between text-xs text-indigo-800 font-bold uppercase mb-1">
+                  <span id="stat-sales-selected-label">Выручка (Вся спецтехника)</span>
+                  <span id="stat-sales-completed-count" class="px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-900 font-mono text-[11px]">0 сделок</span>
+                </div>
+                <div id="stat-sales-revenue" class="text-2xl font-black text-indigo-950 font-mono mt-1">0 AMD</div>
+                <div id="stat-sales-currency-breakdown" class="text-xs font-mono text-indigo-700 font-semibold mt-1">AMD: 0 • USD: 0 • EUR: 0</div>
+              </div>
+              <div class="mt-3 pt-2.5 border-t border-indigo-200/60 flex items-center justify-between text-xs text-slate-600">
+                <span>Продано единиц техники: <strong id="stat-sales-units-sold" class="font-mono text-indigo-900">0 ед.</strong></span>
+                <span id="stat-sales-active-info" class="font-mono text-[11px] text-slate-500">В работе: 0</span>
+              </div>
+            </div>
+
+            <!-- Category 1: Construction & Municipal -->
+            <div onclick="setDashboardSalesCategory('construction')" class="p-4 rounded-xl bg-white border border-slate-200 hover:border-indigo-400 cursor-pointer transition-all flex flex-col justify-between">
+              <div>
+                <div class="flex items-center justify-between text-xs font-bold text-slate-700 mb-1">
+                  <span>🏗️ Строительная и коммунальная техника</span>
+                  <span id="stat-sales-constr-units" class="px-2 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 font-mono text-[11px]">0 ед.</span>
+                </div>
+                <div id="stat-sales-constr-revenue" class="text-xl font-black text-slate-900 font-mono mt-1">0 AMD</div>
+                <div id="stat-sales-constr-currencies" class="text-[11px] font-mono text-slate-500 mt-1">AMD: 0</div>
+              </div>
+              <div class="mt-3 pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
+                <span>Успешных сделок: <strong id="stat-sales-constr-deals" class="text-slate-800 font-mono">0</strong></span>
+                <span>В работе: <strong id="stat-sales-constr-active" class="text-indigo-600 font-mono">0</strong></span>
+              </div>
+            </div>
+
+            <!-- Category 2: Agricultural -->
+            <div onclick="setDashboardSalesCategory('agriculture')" class="p-4 rounded-xl bg-white border border-slate-200 hover:border-emerald-400 cursor-pointer transition-all flex flex-col justify-between">
+              <div>
+                <div class="flex items-center justify-between text-xs font-bold text-slate-700 mb-1">
+                  <span>🌾 Сельскохозяйственная техника</span>
+                  <span id="stat-sales-agri-units" class="px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200 font-mono text-[11px]">0 ед.</span>
+                </div>
+                <div id="stat-sales-agri-revenue" class="text-xl font-black text-slate-900 font-mono mt-1">0 AMD</div>
+                <div id="stat-sales-agri-currencies" class="text-[11px] font-mono text-slate-500 mt-1">AMD: 0</div>
+              </div>
+              <div class="mt-3 pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
+                <span>Успешных сделок: <strong id="stat-sales-agri-deals" class="text-slate-800 font-mono">0</strong></span>
+                <span>В работе: <strong id="stat-sales-agri-active" class="text-emerald-600 font-mono">0</strong></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Revenue Timeline & Stage Breakdown -->
         <div id="dash-charts-row" class="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <!-- Monthly Chart -->
@@ -712,6 +789,12 @@
               <span id="realtime-status-text">WebSockets Live</span>
             </div>
 
+            <button id="btn-toggle-failed-archive" type="button" onclick="toggleFailedDealsArchive()" class="bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-200 text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-2xs transition-colors" title="Открыть архив неудачных сделок">
+              <i data-lucide="archive" class="w-4 h-4 text-rose-600"></i>
+              <span id="btn-failed-archive-text">Архив неудачных</span>
+              <span id="badge-failed-archive-count" class="px-1.5 py-0.2 rounded-full bg-rose-200/80 text-rose-900 font-mono text-[10px] font-bold">0</span>
+            </button>
+
             <button id="btn-open-sales-catalog-shortcut" type="button" onclick="switchTab('sales_catalog')" class="hidden bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-2xs transition-colors" title="Открыть базу моделей техники для продажи">
               <i data-lucide="tractor" class="w-4 h-4 text-indigo-600"></i>
               <span>База техники для продажи</span>
@@ -735,19 +818,19 @@
         <div id="deals-list-view" class="hidden flex-1 overflow-hidden flex flex-col space-y-3 pb-6">
           <!-- Requirement #3: Sticky, permanently visible horizontal and vertical scrollbar -->
           <div id="deals-table-scroll-container" class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-x-auto overflow-y-auto max-h-[calc(100vh-270px)] sticky-horizontal-scroll">
-            <table class="w-full text-left border-collapse text-sm">
+            <table id="deals-bitrix-list-table" class="w-full text-left border-collapse text-sm deals-resizable-table">
               <thead class="sticky top-0 bg-slate-50 z-10 shadow-xs">
                 <tr class="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 font-semibold uppercase tracking-wider">
-                  <th class="p-3.5">ID / Наряд</th>
-                  <th class="p-3.5">Клиент / Контакт</th>
-                  <th class="p-3.5">Техника / VIN</th>
-                  <th class="p-3.5 min-w-[360px]">Стадия наряда (Воронка Bitrix24)</th>
-                  <th class="p-3.5 text-right font-mono">Сумма (AMD)</th>
-                  <th id="deals-table-col-cost-header" class="p-3.5 text-right font-mono text-slate-500 col-deal-cost">Сумма з/ч (AMD)</th>
-                  <th class="p-3.5">Ответственный</th>
-                  <th class="p-3.5">Дедлайн</th>
-                  <th class="p-3.5 whitespace-nowrap">Дата регистрации</th>
-                  <th class="p-3.5 text-right">Действия</th>
+                  <th data-col-key="id_title" class="p-3.5"><span>ID / Наряд</span><span class="col-resizer" onmousedown="initDealsColumnResize(event, this)" title="Потяните для изменения ширины столбца"></span></th>
+                  <th data-col-key="client" class="p-3.5"><span>Клиент / Контакт</span><span class="col-resizer" onmousedown="initDealsColumnResize(event, this)" title="Потяните для изменения ширины столбца"></span></th>
+                  <th data-col-key="equipment" class="p-3.5"><span>Техника / Товары</span><span class="col-resizer" onmousedown="initDealsColumnResize(event, this)" title="Потяните для изменения ширины столбца"></span></th>
+                  <th data-col-key="stage" class="p-3.5 min-w-[380px]"><span>Стадия сделки (Воронка Bitrix24)</span><span class="col-resizer" onmousedown="initDealsColumnResize(event, this)" title="Потяните для изменения ширины столбца"></span></th>
+                  <th data-col-key="amount" id="deals-table-col-amount-header" class="p-3.5 text-right font-mono"><span>Сумма</span><span class="col-resizer" onmousedown="initDealsColumnResize(event, this)" title="Потяните для изменения ширины столбца"></span></th>
+                  <th data-col-key="cost" id="deals-table-col-cost-header" class="p-3.5 text-right font-mono text-slate-500 col-deal-cost"><span>Сумма з/ч (AMD)</span><span class="col-resizer" onmousedown="initDealsColumnResize(event, this)" title="Потяните для изменения ширины столбца"></span></th>
+                  <th data-col-key="responsible" class="p-3.5"><span>Ответственный</span><span class="col-resizer" onmousedown="initDealsColumnResize(event, this)" title="Потяните для изменения ширины столбца"></span></th>
+                  <th data-col-key="deadline" class="p-3.5"><span>Дедлайн</span><span class="col-resizer" onmousedown="initDealsColumnResize(event, this)" title="Потяните для изменения ширины столбца"></span></th>
+                  <th data-col-key="created" class="p-3.5 whitespace-nowrap"><span>Дата регистрации</span><span class="col-resizer" onmousedown="initDealsColumnResize(event, this)" title="Потяните для изменения ширины столбца"></span></th>
+                  <th data-col-key="actions" class="p-3.5 text-right"><span>Действия</span></th>
                 </tr>
               </thead>
               <tbody id="deals-table-body" class="divide-y divide-slate-100">
@@ -857,19 +940,13 @@
         <div class="flex flex-wrap items-center justify-between gap-4 pb-3 border-b border-slate-200">
           <div>
             <h2 class="text-xl font-bold text-slate-900">База техники для продажи (Отдел продаж)</h2>
-            <p class="text-xs text-slate-500">Каталог продаваемых моделей спецтехники с необязательной ценой продажи и ставкой НДС (0% или 20%, включен в цену или добавить к цене)</p>
+            <p class="text-xs text-slate-500">Каталог продаваемых моделей спецтехники: Строительная и коммунальная техника • Сельскохозяйственная техника</p>
           </div>
           <div class="flex flex-wrap items-center gap-3">
-            <select id="sales-eq-category-filter" onchange="loadSalesEquipment()" class="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs outline-none focus:border-indigo-500">
-              <option value="all">Все категории</option>
-              <option value="Экскаваторы-погрузчики">Экскаваторы-погрузчики</option>
-              <option value="Экскаваторы">Экскаваторы</option>
-              <option value="Погрузчики">Погрузчики</option>
-              <option value="Тракторы / Сельхозтехника">Тракторы / Сельхозтехника</option>
-              <option value="Дорожная техника">Дорожная техника</option>
-              <option value="Спецтехника">Спецтехника</option>
-              <option value="Навесное оборудование">Навесное оборудование</option>
-              <option value="Другое">Другое</option>
+            <select id="sales-eq-category-filter" onchange="switchSalesCatalogCategoryTab(this.value)" class="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs outline-none focus:border-indigo-500 font-semibold">
+              <option value="all">Все категории спецтехники</option>
+              <option value="Строительная и коммунальная техника">🏗️ Строительная и коммунальная техника</option>
+              <option value="Сельскохозяйственная техника">🌾 Сельскохозяйственная техника</option>
             </select>
             <input type="text" id="sales-eq-search" oninput="loadSalesEquipment(this.value)" placeholder="Поиск по модели, коду, категории..." class="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs outline-none focus:border-indigo-500 w-64">
             <button onclick="openSalesEquipmentModal()" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 shadow-sm">
@@ -877,6 +954,22 @@
               <span>+ Добавить модель техники</span>
             </button>
           </div>
+        </div>
+
+        <!-- 3 Category Tabs for Sales Equipment Catalog (Requirement #3) -->
+        <div class="flex flex-wrap items-center gap-2 bg-slate-100 p-1.5 rounded-xl border border-slate-200 w-fit">
+          <button type="button" id="sales-cat-tab-all" onclick="switchSalesCatalogCategoryTab('all')" class="px-3.5 py-2 rounded-lg text-xs font-bold bg-white text-indigo-900 shadow-xs transition-all flex items-center gap-2">
+            <span>🚜 Вся спецтехника</span>
+            <span id="sales-cat-count-all" class="px-1.5 py-0.2 rounded-full bg-indigo-100 text-indigo-800 font-mono text-[11px]">0</span>
+          </button>
+          <button type="button" id="sales-cat-tab-construction" onclick="switchSalesCatalogCategoryTab('Строительная и коммунальная техника')" class="px-3.5 py-2 rounded-lg text-xs font-semibold text-slate-600 hover:text-slate-900 transition-all flex items-center gap-2">
+            <span>🏗️ Строительная и коммунальная техника</span>
+            <span id="sales-cat-count-construction" class="px-1.5 py-0.2 rounded-full bg-slate-200 text-slate-700 font-mono text-[11px]">0</span>
+          </button>
+          <button type="button" id="sales-cat-tab-agriculture" onclick="switchSalesCatalogCategoryTab('Сельскохозяйственная техника')" class="px-3.5 py-2 rounded-lg text-xs font-semibold text-slate-600 hover:text-slate-900 transition-all flex items-center gap-2">
+            <span>🌾 Сельскохозяйственная техника</span>
+            <span id="sales-cat-count-agriculture" class="px-1.5 py-0.2 rounded-full bg-slate-200 text-slate-700 font-mono text-[11px]">0</span>
+          </button>
         </div>
 
         <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
@@ -2031,41 +2124,89 @@
             </select>
           </div>
 
-          <!-- Sales Equipment Catalog Column (for Отдел продаж спецтехники) -->
-          <div id="deal-sales-equipment-col" class="hidden space-y-1.5">
-            <div class="flex items-center justify-between">
-              <label class="block text-xs font-bold text-indigo-900 uppercase">🚜 Техника для продажи *</label>
-              <button type="button" onclick="openSalesEquipmentModal()" class="text-[11px] text-indigo-600 hover:underline font-semibold">+ В каталог</button>
+          <!-- Sales Equipment Catalog Multi-Item Section (for Отдел продаж спецтехники: Requirements 1.1 & 1.2) -->
+          <div id="deal-sales-equipment-col" class="hidden md:col-span-2 p-3.5 bg-indigo-50/50 border border-indigo-200 rounded-xl space-y-3">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <label class="block text-xs font-bold text-indigo-950 uppercase flex items-center gap-1.5">
+                <i data-lucide="tractor" class="w-4 h-4 text-indigo-600"></i>
+                <span>Товары / Спецтехника для продажи (можно добавить несколько товаров) *</span>
+              </label>
+              <button type="button" onclick="openSalesEquipmentModal()" class="text-xs text-indigo-600 hover:underline font-bold">+ Новая модель в каталог</button>
             </div>
             <input type="hidden" id="deal-sales-eq-id" value="">
-            <div class="relative" id="deal-sales-eq-search-wrapper">
-              <input type="text" id="deal-sales-eq-search" autocomplete="off"
-                     placeholder="Поиск модели в базе или ввод новой..."
-                     oninput="handleDealSalesEqSearch(this.value)"
-                     onfocus="handleDealSalesEqSearch(this.value)"
-                     class="w-full border border-indigo-300 rounded-lg pl-8 pr-7 py-2 text-xs outline-none focus:border-indigo-600 bg-white shadow-2xs">
-              <i data-lucide="tractor" class="w-3.5 h-3.5 text-indigo-500 absolute left-2.5 top-2.5 pointer-events-none"></i>
-              <button type="button" id="deal-sales-eq-clear" onclick="clearDealSalesEqSearch()" class="hidden absolute right-2 top-2 text-slate-400 hover:text-slate-600">
-                <i data-lucide="x" class="w-4 h-4"></i>
-              </button>
-              <div id="deal-sales-eq-results" class="hidden absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-2xl z-50 max-h-64 overflow-y-auto divide-y divide-slate-100"></div>
+
+            <div class="grid grid-cols-1 md:grid-cols-12 gap-2 items-center">
+              <div class="md:col-span-6 relative" id="deal-sales-eq-search-wrapper">
+                <input type="text" id="deal-sales-eq-search" autocomplete="off"
+                       placeholder="Поиск модели в базе или ввод нового товара..."
+                       oninput="handleDealSalesEqSearch(this.value)"
+                       onfocus="handleDealSalesEqSearch(this.value)"
+                       class="w-full border border-indigo-300 rounded-lg pl-8 pr-7 py-2 text-xs outline-none focus:border-indigo-600 bg-white shadow-2xs">
+                <i data-lucide="search" class="w-3.5 h-3.5 text-indigo-500 absolute left-2.5 top-2.5 pointer-events-none"></i>
+                <button type="button" id="deal-sales-eq-clear" onclick="clearDealSalesEqSearch()" class="hidden absolute right-2 top-2 text-slate-400 hover:text-slate-600">
+                  <i data-lucide="x" class="w-4 h-4"></i>
+                </button>
+                <div id="deal-sales-eq-results" class="hidden absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-2xl z-50 max-h-64 overflow-y-auto divide-y divide-slate-100"></div>
+              </div>
+
+              <div class="md:col-span-4">
+                <select id="deal-sales-eq-select" onchange="handleDealSalesEqSelectPick(this.value)" class="w-full border border-indigo-200 rounded-lg px-2.5 py-2 text-xs outline-none focus:border-indigo-500 bg-white">
+                  <!-- Populated from state.salesEquipment -->
+                </select>
+              </div>
+
+              <div class="md:col-span-2">
+                <button type="button" id="btn-add-deal-sales-item" onclick="addSelectedSalesEquipmentToDeal()" class="w-full py-2 px-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-lg shadow-xs flex items-center justify-center gap-1 transition-colors">
+                  <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+                  <span>Добавить</span>
+                </button>
+              </div>
             </div>
-            <select id="deal-sales-eq-select" onchange="selectDealSalesEquipment(this.value)" class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs outline-none focus:border-indigo-500 bg-white">
-              <!-- Populated from state.salesEquipment -->
-            </select>
+
             <div id="deal-sales-eq-vat-badge" class="hidden text-[11px] px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-800 border border-indigo-200 font-medium"></div>
+
+            <!-- Added Sales Products Table / List (Requirements 1.1 & 1.2) -->
+            <div class="bg-white rounded-xl border border-indigo-200/80 overflow-hidden shadow-2xs">
+              <div class="px-3 py-2 bg-indigo-100/60 border-b border-indigo-200/70 flex items-center justify-between text-[11px] font-bold text-indigo-950 uppercase">
+                <span>Список товаров в сделке</span>
+                <span id="deal-sales-items-count-badge" class="font-mono text-indigo-700">0 поз.</span>
+              </div>
+              <div id="deal-sales-items-list" class="divide-y divide-slate-100 p-2 space-y-1.5">
+                <div class="text-xs text-slate-400 text-center py-3">Товары еще не добавлены. Выберите модель выше, чтобы добавить товар в сделку.</div>
+              </div>
+            </div>
           </div>
         </div>
 
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <!-- Sales Department Financial Row: Currency, Subtotal, Discount, Auto-Total (Requirements 1.3, 1.4, 1.5, 1.6) -->
+        <div id="deal-sales-finance-row" class="hidden p-3.5 bg-slate-50 border border-slate-200 rounded-xl grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Валюта сделки</label>
+            <select id="deal-currency" onchange="handleDealCurrencyChange(this.value)" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm font-bold outline-none focus:border-indigo-500 bg-white font-mono">
+              <option value="AMD">AMD (Драм ֏)</option>
+              <option value="USD">USD (Доллар $)</option>
+              <option value="EUR">EUR (Евро €)</option>
+            </select>
+          </div>
+          <div>
+            <label id="deal-sales-subtotal-label" class="block text-xs font-bold text-slate-700 uppercase mb-1">Сумма товаров (AMD)</label>
+            <input type="number" id="deal-sales-subtotal" readonly value="0" class="w-full border border-slate-200 bg-slate-100 rounded-lg px-3 py-2 text-sm outline-none font-mono font-bold text-slate-700">
+          </div>
+          <div>
+            <label id="deal-discount-label" class="block text-xs font-bold text-rose-700 uppercase mb-1">Скидка (AMD)</label>
+            <input type="number" id="deal-discount" step="any" min="0" value="0" placeholder="0" oninput="recalcSalesDealTotals()" class="w-full border border-rose-300 bg-white rounded-lg px-3 py-2 text-sm outline-none focus:border-rose-500 font-mono font-bold text-rose-700">
+          </div>
+        </div>
+
+        <div id="deal-standard-finance-grid" class="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div id="deal-labor-cost-group">
             <label id="deal-labor-cost-label" class="block text-xs font-bold text-slate-700 uppercase mb-1">Стоимость работы (AMD)</label>
             <input type="number" id="deal-labor-cost" step="any" min="0" placeholder="0" oninput="handleDealLaborCostInput()" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-mono" title="Стоимость выполненных работ по заказ-наряду">
           </div>
 
-          <div>
-            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Сумма клиенту (AMD)</label>
-            <input type="number" id="deal-amount" step="any" min="0" placeholder="0" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-mono">
+          <div id="deal-amount-group">
+            <label id="deal-amount-label" class="block text-xs font-bold text-slate-700 uppercase mb-1">Сумма клиенту (AMD)</label>
+            <input type="number" id="deal-amount" step="any" min="0" placeholder="0" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-mono font-bold">
           </div>
 
           <div id="deal-cost-group">
@@ -2434,15 +2575,9 @@
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Категория</label>
-            <select id="sales-eq-category" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-indigo-500 bg-white">
-              <option value="Экскаваторы-погрузчики">Экскаваторы-погрузчики</option>
-              <option value="Экскаваторы">Экскаваторы</option>
-              <option value="Погрузчики">Погрузчики</option>
-              <option value="Тракторы / Сельхозтехника">Тракторы / Сельхозтехника</option>
-              <option value="Дорожная техника">Дорожная техника</option>
-              <option value="Спецтехника">Спецтехника</option>
-              <option value="Навесное оборудование">Навесное оборудование</option>
-              <option value="Другое">Другое</option>
+            <select id="sales-eq-category" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-indigo-500 bg-white font-semibold">
+              <option value="Строительная и коммунальная техника">🏗️ Строительная и коммунальная техника</option>
+              <option value="Сельскохозяйственная техника">🌾 Сельскохозяйственная техника</option>
             </select>
           </div>
           <div>
@@ -2887,6 +3022,54 @@
     </div>
   </div>
 
+  <!-- Modal: Complete Deal Outcome Prompt (Удачно / Не удачно — Requirement 2.3) -->
+  <div id="modal-complete-deal-outcome" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4 modal-overlay">
+    <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 modal-box space-y-4">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-100">
+        <div class="flex items-center gap-2.5">
+          <div class="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold">
+            <i data-lucide="flag" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <h3 class="font-bold text-slate-900 text-base">Завершить сделку</h3>
+            <p id="complete-deal-modal-subtitle" class="text-xs text-slate-500">Выберите результат завершения сделки</p>
+          </div>
+        </div>
+        <button type="button" onclick="cancelCompleteDealOutcomePrompt()" class="text-slate-400 hover:text-slate-600">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <p class="text-sm text-slate-700 font-medium">
+        Сделка завершена <strong>удачно</strong> или <strong>не удачно</strong>?
+      </p>
+
+      <div class="grid grid-cols-1 gap-3 pt-1">
+        <button type="button" onclick="confirmCompleteDealOutcome('success')" class="w-full p-3.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm shadow-md flex items-center justify-between transition-all group">
+          <span class="flex items-center gap-2.5">
+            <i data-lucide="check-circle-2" class="w-5 h-5 text-emerald-100"></i>
+            <span>✅ Сделка завершена УДАЧНО</span>
+          </span>
+          <span class="text-xs bg-emerald-700/80 px-2.5 py-1 rounded-lg font-mono">Зеленый цвет</span>
+        </button>
+
+        <button type="button" onclick="confirmCompleteDealOutcome('failed')" class="w-full p-3.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-sm shadow-md flex items-center justify-between transition-all group">
+          <span class="flex items-center gap-2.5">
+            <i data-lucide="x-circle" class="w-5 h-5 text-rose-100"></i>
+            <span>❌ Сделка завершена НЕ УДАЧНО</span>
+          </span>
+          <span class="text-xs bg-rose-700/80 px-2.5 py-1 rounded-lg font-mono">В архив неудачных</span>
+        </button>
+      </div>
+
+      <div class="flex justify-end pt-2 border-t border-slate-100">
+        <button type="button" onclick="cancelCompleteDealOutcomePrompt()" class="px-4 py-1.5 border border-slate-300 rounded-lg text-xs text-slate-600 hover:bg-slate-100 font-medium">
+          Отмена
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- Toast Container -->
   <div id="toast-container"></div>
 
@@ -2895,6 +3078,6 @@
   <script src="/static/app/core/router.js?v=1.0.0"></script>
   <script src="/static/app/core/api.js?v=1.0.0"></script>
   <script src="/static/app/pages/index.js?v=1.0.0"></script>
-  <script src="/static/app.js?v=1.2.4.5"></script>
+  <script src="/static/app.js?v=1.2.4.6"></script>
 </body>
 </html>

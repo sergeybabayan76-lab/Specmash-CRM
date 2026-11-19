@@ -254,6 +254,9 @@ class DealCreate(BaseModel):
     equipment_id: Optional[int] = None
     sales_equipment_id: Optional[int] = None
     sales_equipment_name: Optional[str] = ""
+    sales_items: Optional[List[Dict[str, Any]]] = None
+    currency: Optional[str] = "AMD"
+    discount: Optional[float] = 0.0
     deal_type: Optional[str] = "service"
     service_type: Optional[str] = "service"
     closing_outcome: Optional[str] = "success"
@@ -723,9 +726,7 @@ async def update_deal_stage(
             detail="Изменение стадии закрытых/оплаченных сделок разрешено только Администратору"
         )
 
-    res = database.update_deal_stage(deal_id, update.stage)
-    if update.closing_outcome:
-        database.update_deal(deal_id, {"closing_outcome": update.closing_outcome})
+    res = database.update_deal_stage(deal_id, update.stage, closing_outcome=update.closing_outcome)
     await manager.broadcast({
         "type": "deal_stage_updated",
         "deal_id": deal_id,
