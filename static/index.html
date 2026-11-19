@@ -11,7 +11,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Lucide Icons CDN -->
   <script src="https://unpkg.com/lucide@latest"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=1.2.4.4">
+  <link rel="stylesheet" href="/static/styles.css?v=1.2.4.5">
   <script>
     tailwind.config = {
       theme: {
@@ -185,8 +185,14 @@
 
       <a href="#equipment" onclick="switchTab('equipment')" id="nav-equipment" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
         <i data-lucide="truck" class="w-4 h-4"></i>
-        <span>База техники</span>
+        <span>База техники (СТО)</span>
         <span id="badge-equipment-count" class="ml-auto bg-slate-800 text-slate-300 text-xs px-2 py-0.5 rounded-full font-mono">0</span>
+      </a>
+
+      <a href="#sales_catalog" onclick="switchTab('sales_catalog')" id="nav-sales_catalog" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
+        <i data-lucide="tractor" class="w-4 h-4 text-amber-400"></i>
+        <span>Техника для продажи</span>
+        <span id="badge-sales-catalog-count" class="ml-auto bg-slate-800 text-slate-300 text-xs px-2 py-0.5 rounded-full font-mono">0</span>
       </a>
 
       <a href="#warehouse" onclick="switchTab('warehouse')" id="nav-warehouse" class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-slate-400 hover:text-white hover:bg-slate-800">
@@ -706,6 +712,11 @@
               <span id="realtime-status-text">WebSockets Live</span>
             </div>
 
+            <button id="btn-open-sales-catalog-shortcut" type="button" onclick="switchTab('sales_catalog')" class="hidden bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-2xs transition-colors" title="Открыть базу моделей техники для продажи">
+              <i data-lucide="tractor" class="w-4 h-4 text-indigo-600"></i>
+              <span>База техники для продажи</span>
+            </button>
+
             <button onclick="openDealModal(null, null, state.dealsDepartment)" class="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-sm transition-colors">
               <i data-lucide="plus" class="w-4 h-4"></i>
               <span id="btn-create-deal-text">Создать наряд</span>
@@ -835,6 +846,53 @@
               </tr>
             </thead>
             <tbody id="equipment-table-body" class="divide-y divide-slate-100">
+              <!-- Populated via JS -->
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ================= 4B. TAB: SALES EQUIPMENT CATALOG (БАЗА ТЕХНИКИ ДЛЯ ПРОДАЖИ) ================= -->
+      <section id="tab-sales_catalog" class="hidden space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-4 pb-3 border-b border-slate-200">
+          <div>
+            <h2 class="text-xl font-bold text-slate-900">База техники для продажи (Отдел продаж)</h2>
+            <p class="text-xs text-slate-500">Каталог продаваемых моделей спецтехники с необязательной ценой продажи и ставкой НДС (0% или 20%, включен в цену или добавить к цене)</p>
+          </div>
+          <div class="flex flex-wrap items-center gap-3">
+            <select id="sales-eq-category-filter" onchange="loadSalesEquipment()" class="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs outline-none focus:border-indigo-500">
+              <option value="all">Все категории</option>
+              <option value="Экскаваторы-погрузчики">Экскаваторы-погрузчики</option>
+              <option value="Экскаваторы">Экскаваторы</option>
+              <option value="Погрузчики">Погрузчики</option>
+              <option value="Тракторы / Сельхозтехника">Тракторы / Сельхозтехника</option>
+              <option value="Дорожная техника">Дорожная техника</option>
+              <option value="Спецтехника">Спецтехника</option>
+              <option value="Навесное оборудование">Навесное оборудование</option>
+              <option value="Другое">Другое</option>
+            </select>
+            <input type="text" id="sales-eq-search" oninput="loadSalesEquipment(this.value)" placeholder="Поиск по модели, коду, категории..." class="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs outline-none focus:border-indigo-500 w-64">
+            <button onclick="openSalesEquipmentModal()" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 shadow-sm">
+              <i data-lucide="plus" class="w-4 h-4"></i>
+              <span>+ Добавить модель техники</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <table class="w-full text-left border-collapse text-sm">
+            <thead>
+              <tr class="bg-slate-50 border-b border-slate-200 text-xs text-slate-500 font-semibold uppercase tracking-wider">
+                <th class="p-3.5">Модель / Наименование техники</th>
+                <th class="p-3.5">Категория</th>
+                <th class="p-3.5">Код / Комплектация</th>
+                <th class="p-3.5 text-right font-mono">Цена продажи (AMD)</th>
+                <th class="p-3.5">Ставка и учет НДС</th>
+                <th class="p-3.5 text-right font-mono">Итого с НДС (AMD)</th>
+                <th class="p-3.5 text-right">Действия</th>
+              </tr>
+            </thead>
+            <tbody id="sales-equipment-table-body" class="divide-y divide-slate-100">
               <!-- Populated via JS -->
             </tbody>
           </table>
@@ -1859,9 +1917,9 @@
           </button>
         </div>
 
-        <!-- Deal Service Type & Closing Outcome (Requirement #13, #14) -->
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs">
-          <div>
+        <!-- Deal Service Type & Closing Outcome (Requirement #13, #14; Service Type hidden for Sales Dept) -->
+        <div id="deal-top-meta-grid" class="grid grid-cols-1 md:grid-cols-2 gap-3 p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs">
+          <div id="deal-service-type-group">
             <label class="block font-bold text-slate-700 uppercase text-[10px] mb-1">Тип заказ-наряда (Сервис / Предпродажка / Гарантия) *</label>
             <select id="deal-service-type" class="w-full border border-slate-300 rounded-lg p-2 font-medium bg-white outline-none focus:border-blue-500">
               <option value="service">🛠️ Сервис (Обычный ремонт / ТО)</option>
@@ -1869,7 +1927,7 @@
               <option value="warranty">🛡️ Гарантия (Гарантийный случай)</option>
             </select>
           </div>
-          <div>
+          <div id="deal-closing-outcome-group">
             <label class="block font-bold text-slate-700 uppercase text-[10px] mb-1">Исход сделки (Успешно / Не успешно) *</label>
             <select id="deal-closing-outcome" class="w-full border border-slate-300 rounded-lg p-2 font-medium bg-white outline-none focus:border-blue-500">
               <option value="success">✅ Успешно (Оплачено / Выдано)</option>
@@ -1954,11 +2012,13 @@
                 <span>Карточка клиента</span>
               </button>
             </div>
-            <select id="deal-client" required onchange="handleDealClientChange(this.value)" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white">
+            <select id="deal-client" onchange="handleDealClientChange(this.value)" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white">
               <!-- Populated dynamically -->
             </select>
           </div>
-          <div>
+
+          <!-- Service Equipment Column (for СТО & Запчасти) -->
+          <div id="deal-service-equipment-col">
             <div class="flex items-center justify-between mb-1">
               <label class="block text-xs font-bold text-slate-700 uppercase">Техника заказчика</label>
               <button type="button" id="btn-deal-view-equipment" onclick="openEquipmentCardFromDeal(document.getElementById('deal-equipment').value, event)" class="hidden text-[11px] text-blue-600 hover:text-blue-800 hover:underline font-semibold flex items-center gap-1" title="Открыть карточку техники для просмотра">
@@ -1969,6 +2029,31 @@
             <select id="deal-equipment" onchange="updateDealEquipmentViewBtn(this.value)" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white">
               <!-- Filtered by selected client -->
             </select>
+          </div>
+
+          <!-- Sales Equipment Catalog Column (for Отдел продаж спецтехники) -->
+          <div id="deal-sales-equipment-col" class="hidden space-y-1.5">
+            <div class="flex items-center justify-between">
+              <label class="block text-xs font-bold text-indigo-900 uppercase">🚜 Техника для продажи *</label>
+              <button type="button" onclick="openSalesEquipmentModal()" class="text-[11px] text-indigo-600 hover:underline font-semibold">+ В каталог</button>
+            </div>
+            <input type="hidden" id="deal-sales-eq-id" value="">
+            <div class="relative" id="deal-sales-eq-search-wrapper">
+              <input type="text" id="deal-sales-eq-search" autocomplete="off"
+                     placeholder="Поиск модели в базе или ввод новой..."
+                     oninput="handleDealSalesEqSearch(this.value)"
+                     onfocus="handleDealSalesEqSearch(this.value)"
+                     class="w-full border border-indigo-300 rounded-lg pl-8 pr-7 py-2 text-xs outline-none focus:border-indigo-600 bg-white shadow-2xs">
+              <i data-lucide="tractor" class="w-3.5 h-3.5 text-indigo-500 absolute left-2.5 top-2.5 pointer-events-none"></i>
+              <button type="button" id="deal-sales-eq-clear" onclick="clearDealSalesEqSearch()" class="hidden absolute right-2 top-2 text-slate-400 hover:text-slate-600">
+                <i data-lucide="x" class="w-4 h-4"></i>
+              </button>
+              <div id="deal-sales-eq-results" class="hidden absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-2xl z-50 max-h-64 overflow-y-auto divide-y divide-slate-100"></div>
+            </div>
+            <select id="deal-sales-eq-select" onchange="selectDealSalesEquipment(this.value)" class="w-full border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs outline-none focus:border-indigo-500 bg-white">
+              <!-- Populated from state.salesEquipment -->
+            </select>
+            <div id="deal-sales-eq-vat-badge" class="hidden text-[11px] px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-800 border border-indigo-200 font-medium"></div>
           </div>
         </div>
 
@@ -2324,6 +2409,94 @@
           </table>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- Modal: Sales Equipment Catalog Item (База техники для продажи) -->
+  <div id="modal-sales-equipment" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4 modal-overlay">
+    <div class="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-100 modal-box">
+      <div class="flex items-center justify-between pb-4 border-b border-slate-100">
+        <div>
+          <h3 id="modal-sales-eq-title" class="font-bold text-slate-900 text-lg">Модель техники для продажи</h3>
+          <p class="text-xs text-slate-500">Регистрация продаваемой модели спецтехники в каталоге Отдела продаж</p>
+        </div>
+        <button onclick="closeModal('modal-sales-equipment')" class="text-slate-400 hover:text-slate-600"><i data-lucide="x" class="w-5 h-5"></i></button>
+      </div>
+
+      <form id="form-sales-equipment" onsubmit="saveSalesEquipment(event)" class="mt-4 space-y-4">
+        <input type="hidden" id="sales-eq-id">
+
+        <div>
+          <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Наименование / Модель техники *</label>
+          <input type="text" id="sales-eq-name" required placeholder="Например: Экскаватор-погрузчик CASE 570SV" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-indigo-500">
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Категория</label>
+            <select id="sales-eq-category" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-indigo-500 bg-white">
+              <option value="Экскаваторы-погрузчики">Экскаваторы-погрузчики</option>
+              <option value="Экскаваторы">Экскаваторы</option>
+              <option value="Погрузчики">Погрузчики</option>
+              <option value="Тракторы / Сельхозтехника">Тракторы / Сельхозтехника</option>
+              <option value="Дорожная техника">Дорожная техника</option>
+              <option value="Спецтехника">Спецтехника</option>
+              <option value="Навесное оборудование">Навесное оборудование</option>
+              <option value="Другое">Другое</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Код модели / Комплектация</label>
+            <input type="text" id="sales-eq-sku" placeholder="CASE-570SV-STD" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-indigo-500 font-mono">
+          </div>
+        </div>
+
+        <div class="p-3.5 bg-indigo-50/60 border border-indigo-200 rounded-xl space-y-3">
+          <div class="text-xs font-bold text-indigo-950 uppercase flex items-center gap-1.5">
+            <i data-lucide="calculator" class="w-3.5 h-3.5 text-indigo-600"></i>
+            <span>Стоимость и параметры НДС (цена необязательна)</span>
+          </div>
+
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Цена продажи (AMD) — необязательно</label>
+            <input type="text" inputmode="decimal" id="sales-eq-price" oninput="updateSalesEqVatPreview()" placeholder="Оставьте пустым или укажите цену в AMD" class="w-full border border-slate-300 bg-white rounded-lg px-3 py-2 text-sm outline-none focus:border-indigo-500 font-mono">
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Ставка НДС</label>
+              <select id="sales-eq-vat-rate" onchange="updateSalesEqVatPreview()" class="w-full border border-slate-300 bg-white rounded-lg px-3 py-2 text-xs font-semibold outline-none focus:border-indigo-500">
+                <option value="20">20% (Стандартный НДС)</option>
+                <option value="0">0% (Без НДС / 0%)</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Учет НДС в цене</label>
+              <select id="sales-eq-vat-mode" onchange="updateSalesEqVatPreview()" class="w-full border border-slate-300 bg-white rounded-lg px-3 py-2 text-xs font-semibold outline-none focus:border-indigo-500">
+                <option value="included">Включен в цену</option>
+                <option value="added">Добавить к цене</option>
+              </select>
+            </div>
+          </div>
+
+          <div id="sales-eq-vat-preview" class="text-xs bg-white border border-indigo-200 rounded-lg px-3 py-2 text-slate-700 font-medium">
+            Цена продажи не указана (будет определяться индивидуально в сделке)
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Описание / Характеристики</label>
+          <textarea id="sales-eq-notes" rows="2" placeholder="Двигатель, мощность, ковш, гарантия..." class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-indigo-500"></textarea>
+        </div>
+
+        <div class="flex items-center justify-between pt-4 border-t border-slate-100">
+          <button type="button" id="btn-delete-sales-eq" onclick="deleteSalesEquipment()" class="text-xs text-rose-600 hover:underline font-semibold hidden">Удалить модель</button>
+          <div class="flex gap-2 ml-auto">
+            <button type="button" onclick="closeModal('modal-sales-equipment')" class="px-4 py-2 border border-slate-300 rounded-lg text-sm text-slate-700 hover:bg-slate-100">Отмена</button>
+            <button type="submit" class="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg text-sm shadow-md">Сохранить</button>
+          </div>
+        </div>
+      </form>
     </div>
   </div>
 
@@ -2722,6 +2895,6 @@
   <script src="/static/app/core/router.js?v=1.0.0"></script>
   <script src="/static/app/core/api.js?v=1.0.0"></script>
   <script src="/static/app/pages/index.js?v=1.0.0"></script>
-  <script src="/static/app.js?v=1.2.4.4"></script>
+  <script src="/static/app.js?v=1.2.4.5"></script>
 </body>
 </html>

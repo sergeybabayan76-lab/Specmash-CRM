@@ -4,6 +4,7 @@
     'kanban',
     'clients',
     'equipment',
+    'sales_catalog',
     'warehouse',
     'tasks',
     'users',

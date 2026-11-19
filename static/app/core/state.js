@@ -13,6 +13,7 @@
     },
     clients: [],
     equipment: [],
+    salesEquipment: [],
     parts: [],
     deals: [],
     tasks: [],

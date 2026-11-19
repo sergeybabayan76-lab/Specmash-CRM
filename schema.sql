@@ -171,6 +171,22 @@ CREATE TABLE IF NOT EXISTS public.whatsapp_logs (
 );
 
 -- =====================================================================
+-- 11. ТАБЛИЦА БАЗЫ ТЕХНИКИ ДЛЯ ПРОДАЖИ (SALES_EQUIPMENT)
+-- Каталог продаваемых моделей спецтехники для Отдела продаж (цены и НДС)
+-- =====================================================================
+CREATE TABLE IF NOT EXISTS public.sales_equipment (
+    id integer PRIMARY KEY,
+    name text NOT NULL,
+    category text NOT NULL DEFAULT 'Спецтехника',
+    sku_code text NOT NULL DEFAULT '',
+    selling_price numeric(14, 2) NOT NULL DEFAULT 0,
+    vat_rate integer NOT NULL DEFAULT 20,
+    vat_mode text NOT NULL DEFAULT 'included',
+    notes text NOT NULL DEFAULT '',
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- =====================================================================
 -- ИНДЕКСЫ ДЛЯ ПОВЫШЕНИЯ ПРОИЗВОДИТЕЛЬНОСТИ
 -- =====================================================================
 CREATE INDEX IF NOT EXISTS equipment_client_id_idx ON public.equipment(client_id);

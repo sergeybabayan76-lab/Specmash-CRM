@@ -207,7 +207,7 @@ class FullSettingsUpdate(BaseModel):
 class ClientCreate(BaseModel):
     name: str
     company: Optional[str] = ""
-    phone: str
+    phone: Optional[str] = ""
     email: Optional[str] = ""
     address: Optional[str] = ""
     notes: Optional[str] = ""
@@ -223,6 +223,15 @@ class EquipmentCreate(BaseModel):
     year: Optional[int] = None
     operating_hours: Optional[str] = ""
     status: Optional[str] = "Исправна"
+    notes: Optional[str] = ""
+
+class SalesEquipmentCreate(BaseModel):
+    name: str
+    category: Optional[str] = "Спецтехника"
+    sku_code: Optional[str] = ""
+    selling_price: Optional[Any] = 0.0
+    vat_rate: Optional[int] = 20
+    vat_mode: Optional[str] = "included"
     notes: Optional[str] = ""
 
 class PartCreate(BaseModel):
@@ -243,6 +252,8 @@ class DealCreate(BaseModel):
     title: str
     client_id: Optional[int] = None
     equipment_id: Optional[int] = None
+    sales_equipment_id: Optional[int] = None
+    sales_equipment_name: Optional[str] = ""
     deal_type: Optional[str] = "service"
     service_type: Optional[str] = "service"
     closing_outcome: Optional[str] = "success"
@@ -598,7 +609,17 @@ def update_client(client_id: int, client: ClientCreate):
 
 @app.delete("/api/clients/{client_id}")
 @app.post("/api/clients/{client_id}/delete")
-def delete_client(client_id: int):
+def delete_client(
+    client_id: int,
+    x_user_role: Optional[str] = Header(None, alias="X-User-Role"),
+    role: Optional[str] = None
+):
+    effective_role = check_effective_role(x_user_role, role)
+    if effective_role != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Удаление сохраненных клиентов разрешено только Администратору"
+        )
     return database.delete_client(client_id)
 
 # ----------------- Equipment (База техники) -----------------
@@ -627,6 +648,35 @@ def update_equipment(eq_id: int, eq: EquipmentCreate):
 @app.post("/api/equipment/{eq_id}/delete")
 def delete_equipment(eq_id: int):
     return database.delete_equipment(eq_id)
+
+# ----------------- Sales Equipment Catalog (База техники для продажи) -----------------
+
+@app.get("/api/sales-equipment")
+def list_sales_equipment(q: Optional[str] = None, category: Optional[str] = None):
+    return database.list_sales_equipment(q=q, category=category)
+
+@app.post("/api/sales-equipment")
+def create_sales_equipment(item: SalesEquipmentCreate):
+    if not item.name or not item.name.strip():
+        raise HTTPException(status_code=400, detail="Укажите наименование / модель техники")
+    return database.create_sales_equipment(item.model_dump())
+
+@app.get("/api/sales-equipment/{item_id}")
+def get_sales_equipment_detail(item_id: int):
+    try:
+        return database.get_sales_equipment(item_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Модель техники не найдена")
+
+@app.put("/api/sales-equipment/{item_id}")
+@app.post("/api/sales-equipment/{item_id}")
+def update_sales_equipment(item_id: int, item: SalesEquipmentCreate):
+    return database.update_sales_equipment(item_id, item.model_dump())
+
+@app.delete("/api/sales-equipment/{item_id}")
+@app.post("/api/sales-equipment/{item_id}/delete")
+def delete_sales_equipment(item_id: int):
+    return database.delete_sales_equipment(item_id)
 
 # ----------------- Deals / Kanban & List Pipeline -----------------
 

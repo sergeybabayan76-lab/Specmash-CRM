@@ -4,6 +4,7 @@
     kanban: () => window.loadDeals(),
     clients: () => window.loadClients(),
     equipment: () => window.loadEquipment(),
+    sales_catalog: () => window.loadSalesEquipment(),
     warehouse: () => window.loadParts(),
     tasks: () => window.loadTasks(),
     users: () => window.loadUsers(),
