@@ -2245,9 +2245,85 @@ function syncFailedArchiveButtonUI() {
   }
 }
 
+function parseDealTimestamp(dateStr) {
+  if (!dateStr) return 0;
+  const s = String(dateStr).trim();
+  const mRu = s.match(/^(\d{2})\.(\d{2})\.(\d{4})/);
+  if (mRu) {
+    const t = new Date(`${mRu[3]}-${mRu[2]}-${mRu[1]}T00:00:00`).getTime();
+    return isNaN(t) ? 0 : t;
+  }
+  const t = new Date(s).getTime();
+  return isNaN(t) ? 0 : t;
+}
+
+function getDealsSortOrder() {
+  const select = document.getElementById('deals-sort-order');
+  return (select && select.value) || state.dealsSortOrder || 'date_desc';
+}
+
+function syncDealsSortUI() {
+  const order = getDealsSortOrder();
+  state.dealsSortOrder = order;
+  const select = document.getElementById('deals-sort-order');
+  if (select && select.value !== order) {
+    select.value = order;
+  }
+  const ind = document.getElementById('deals-created-sort-indicator');
+  if (ind) {
+    if (order === 'date_desc') {
+      ind.textContent = '↓';
+      ind.className = 'text-blue-600 font-bold text-xs';
+    } else if (order === 'date_asc') {
+      ind.textContent = '↑';
+      ind.className = 'text-blue-600 font-bold text-xs';
+    } else {
+      ind.textContent = '⇅';
+      ind.className = 'text-slate-400 font-normal text-xs';
+    }
+  }
+}
+
+function setDealsSortOrder(order) {
+  state.dealsSortOrder = order || 'date_desc';
+  syncDealsSortUI();
+  renderDeals();
+}
+
+function toggleDealsCreatedSort(event) {
+  if (event) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  const current = getDealsSortOrder();
+  const next = current === 'date_desc' ? 'date_asc' : 'date_desc';
+  setDealsSortOrder(next);
+}
+
+function sortDealsByOrder(dealsList) {
+  if (!Array.isArray(dealsList)) return [];
+  const order = getDealsSortOrder();
+  return dealsList.slice().sort((a, b) => {
+    if (order === 'date_asc') {
+      const diff = parseDealTimestamp(a.created_at) - parseDealTimestamp(b.created_at);
+      return diff !== 0 ? diff : (Number(a.id || 0) - Number(b.id || 0));
+    }
+    if (order === 'id_asc') {
+      return Number(a.id || 0) - Number(b.id || 0);
+    }
+    if (order === 'id_desc') {
+      return Number(b.id || 0) - Number(a.id || 0);
+    }
+    // Default: 'date_desc' (newest registration date first)
+    const diff = parseDealTimestamp(b.created_at) - parseDealTimestamp(a.created_at);
+    return diff !== 0 ? diff : (Number(b.id || 0) - Number(a.id || 0));
+  });
+}
+
 function renderDeals() {
   updateSidebarCounters();
   syncFailedArchiveButtonUI();
+  syncDealsSortUI();
 
   if (state.dealsViewMode === 'list') {
     renderDealsList();
@@ -2307,8 +2383,10 @@ function renderKanban() {
     );
   });
 
+  const sortedDeals = sortDealsByOrder(filteredDeals);
+
   wrapper.innerHTML = activeStages.map(stage => {
-    const stageDeals = filteredDeals.filter(d => d.stage === stage.id);
+    const stageDeals = sortedDeals.filter(d => d.stage === stage.id);
     const stageTotal = stageDeals.reduce((sum, d) => sum + (d.amount || 0), 0);
 
     return `
@@ -2403,13 +2481,15 @@ function renderDealsList() {
     if (eqSpan) eqSpan.textContent = isSalesDept ? 'Банк' : 'Техника / VIN';
   }
 
-  const totalAmount = filteredDeals.reduce((sum, d) => sum + (d.amount || 0), 0);
+  const sortedDeals = sortDealsByOrder(filteredDeals);
+
+  const totalAmount = sortedDeals.reduce((sum, d) => sum + (d.amount || 0), 0);
   const totalCountEl = document.getElementById('deals-list-total-count');
   const totalAmountEl = document.getElementById('deals-list-total-amount');
-  if (totalCountEl) totalCountEl.textContent = filteredDeals.length;
+  if (totalCountEl) totalCountEl.textContent = sortedDeals.length;
   if (totalAmountEl) totalAmountEl.textContent = formatMoney(totalAmount);
 
-  if (filteredDeals.length === 0) {
+  if (sortedDeals.length === 0) {
     let emptyMsg = 'Заказ-наряды не найдены по заданным условиям';
     if (stageFilter === 'failed_archive') emptyMsg = 'В архиве неудачных сделок пока нет записей';
     else if (isPartsDept) emptyMsg = 'Продажи запчастей не найдены по заданным условиям';
@@ -2418,7 +2498,7 @@ function renderDealsList() {
     return;
   }
 
-  tbody.innerHTML = filteredDeals.map(deal => {
+  tbody.innerHTML = sortedDeals.map(deal => {
     let priorityBadge = '';
     if (deal.priority === 'urgent') priorityBadge = '<span class="badge-urgent text-[10px] font-bold px-1.5 py-0.5 rounded">🔥 Срочно</span>';
     else if (deal.priority === 'high') priorityBadge = '<span class="badge-high text-[10px] font-bold px-1.5 py-0.5 rounded">Высокий</span>';

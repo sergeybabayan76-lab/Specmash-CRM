@@ -11,7 +11,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Lucide Icons CDN -->
   <script src="https://unpkg.com/lucide@latest"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=1.2.4.8">
+  <link rel="stylesheet" href="/static/styles.css?v=1.2.4.9">
   <script>
     tailwind.config = {
       theme: {
@@ -793,6 +793,14 @@
               <option value="warranty">🛡️ Гарантия</option>
             </select>
 
+            <!-- Sort by Registration Date -->
+            <select id="deals-sort-order" onchange="setDealsSortOrder(this.value)" class="bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs outline-none focus:border-blue-500 font-medium cursor-pointer" title="Упорядочить список сделок по дате регистрации">
+              <option value="date_desc" selected>📅 По дате рег. (сначала новые ↓)</option>
+              <option value="date_asc">📅 По дате рег. (сначала старые ↑)</option>
+              <option value="id_desc">🔢 По номеру ID (убывание ↓)</option>
+              <option value="id_asc">🔢 По номеру ID (возрастание ↑)</option>
+            </select>
+
             <input type="text" id="kanban-filter" oninput="renderDeals()" placeholder="Поиск по сделке, клиенту, технике CASE..." class="bg-white border border-slate-300 rounded-lg px-3 py-1.5 text-xs outline-none focus:border-blue-500 w-56">
 
             <div id="realtime-status-pill" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-medium transition-all" title="Синхронизация карточек в реальном времени активна">
@@ -840,7 +848,13 @@
                   <th data-col-key="cost" id="deals-table-col-cost-header" class="p-3.5 text-right font-mono text-slate-500 col-deal-cost"><span>Сумма з/ч (AMD)</span><span class="col-resizer" onmousedown="initDealsColumnResize(event, this)" title="Потяните для изменения ширины столбца"></span></th>
                   <th data-col-key="responsible" class="p-3.5"><span>Ответственный</span><span class="col-resizer" onmousedown="initDealsColumnResize(event, this)" title="Потяните для изменения ширины столбца"></span></th>
                   <th data-col-key="deadline" class="p-3.5"><span>Дедлайн</span><span class="col-resizer" onmousedown="initDealsColumnResize(event, this)" title="Потяните для изменения ширины столбца"></span></th>
-                  <th data-col-key="created" class="p-3.5 whitespace-nowrap"><span>Дата регистрации</span><span class="col-resizer" onmousedown="initDealsColumnResize(event, this)" title="Потяните для изменения ширины столбца"></span></th>
+                  <th data-col-key="created" id="deals-table-col-created-header" class="p-3.5 whitespace-nowrap select-none">
+                    <button type="button" onclick="toggleDealsCreatedSort(event)" class="inline-flex items-center gap-1 uppercase font-semibold tracking-wider text-slate-600 hover:text-blue-600 transition-colors cursor-pointer" title="Нажмите, чтобы упорядочить по дате регистрации">
+                      <span>Дата регистрации</span>
+                      <span id="deals-created-sort-indicator" class="text-blue-600 font-bold text-xs">↓</span>
+                    </button>
+                    <span class="col-resizer" onmousedown="initDealsColumnResize(event, this)" title="Потяните для изменения ширины столбца"></span>
+                  </th>
                   <th data-col-key="actions" class="p-3.5 text-right"><span>Действия</span></th>
                 </tr>
               </thead>
@@ -3099,9 +3113,9 @@
 
   <!-- Scripts -->
   <script src="/static/app/core/state.js?v=1.0.0"></script>
-  <script src="/static/app/core/router.js?v=1.2.4.8"></script>
+  <script src="/static/app/core/router.js?v=1.2.4.9"></script>
   <script src="/static/app/core/api.js?v=1.0.0"></script>
   <script src="/static/app/pages/index.js?v=1.0.0"></script>
-  <script src="/static/app.js?v=1.2.4.8"></script>
+  <script src="/static/app.js?v=1.2.4.9"></script>
 </body>
 </html>
