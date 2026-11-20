@@ -257,6 +257,8 @@ class DealCreate(BaseModel):
     sales_items: Optional[List[Dict[str, Any]]] = None
     currency: Optional[str] = "AMD"
     discount: Optional[float] = 0.0
+    bank_name: Optional[str] = ""
+    created_at: Optional[str] = None
     deal_type: Optional[str] = "service"
     service_type: Optional[str] = "service"
     closing_outcome: Optional[str] = "success"

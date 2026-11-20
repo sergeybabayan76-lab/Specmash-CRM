@@ -694,7 +694,7 @@ def list_clients(q: Optional[str] = None) -> List[Dict[str, Any]]:
         return []
     with get_database_client() as client:
         params = {
-            "select": "*,equipment(id),deals(id,amount,stage)",
+            "select": "*",
             "order": "id.desc"
         }
         if q:
@@ -705,12 +705,62 @@ def list_clients(q: Optional[str] = None) -> List[Dict[str, Any]]:
         if r.status_code != 200:
             return []
 
+        # Load equipment and deals once to accurately hydrate each client's fleet, deals count, and revenue
+        eq_r = client.get("/equipment", params={"select": "*", "order": "id.desc"})
+        all_equipment = eq_r.json() if eq_r.status_code == 200 else []
+        eq_by_id: Dict[int, Dict[str, Any]] = {}
+        eq_by_client: Dict[int, List[Dict[str, Any]]] = {}
+        for eq in all_equipment:
+            eid = eq.get("id")
+            if eid is not None:
+                eq_by_id[int(eid)] = eq
+            cid = eq.get("client_id")
+            if cid is not None:
+                eq_by_client.setdefault(int(cid), []).append({
+                    "id": eq.get("id"),
+                    "name": eq.get("name") or "",
+                    "category": eq.get("category") or "Спецтехника",
+                    "serial_vin": eq.get("serial_vin") or "",
+                    "status": eq.get("status") or "Исправна",
+                    "operating_hours": eq.get("operating_hours") or "",
+                })
+
+        dl_r = client.get("/deals", params={"select": "*"})
+        all_deals = dl_r.json() if dl_r.status_code == 200 else []
+        deals_by_client: Dict[int, List[Dict[str, Any]]] = {}
+        for d in all_deals:
+            cid = d.get("client_id")
+            if cid is not None:
+                deals_by_client.setdefault(int(cid), []).append(d)
+
+        closed_stages = {"completed", "ready", "paid", "issued", "parts_paid", "parts_shipped", "sales_delivered"}
         clients = []
         for c in r.json():
-            eq_count = len(c.get("equipment") or [])
-            deals = c.get("deals") or []
-            deals_count = len(deals)
-            total_rev = sum(d.get("amount", 0) for d in deals if d.get("stage") == "completed")
+            cid = int(c["id"]) if c.get("id") is not None else 0
+            client_eq_list = list(eq_by_client.get(cid, []))
+            seen_eq_ids = {int(e["id"]) for e in client_eq_list if e.get("id") is not None}
+
+            client_deals = deals_by_client.get(cid, [])
+            total_rev = 0.0
+            for d in client_deals:
+                # Also include STO equipment linked to this client through deals if not already in client_eq_list
+                deq_id = d.get("equipment_id")
+                if deq_id is not None and int(deq_id) in eq_by_id and int(deq_id) not in seen_eq_ids:
+                    eq_obj = eq_by_id[int(deq_id)]
+                    seen_eq_ids.add(int(deq_id))
+                    client_eq_list.append({
+                        "id": eq_obj.get("id"),
+                        "name": eq_obj.get("name") or "",
+                        "category": eq_obj.get("category") or "Спецтехника",
+                        "serial_vin": eq_obj.get("serial_vin") or "",
+                        "status": eq_obj.get("status") or "Исправна",
+                        "operating_hours": eq_obj.get("operating_hours") or "",
+                    })
+                raw_desc = d.get("description") or ""
+                _, _, _, outcome = parse_deal_description(raw_desc, d.get("title") or "")
+                if d.get("stage") in closed_stages and outcome != "failed":
+                    total_rev += _to_float(d.get("amount"), 0.0)
+
             item = dict(c)
             item.pop("equipment", None)
             item.pop("deals", None)
@@ -719,9 +769,10 @@ def list_clients(q: Optional[str] = None) -> List[Dict[str, Any]]:
             item["inn"] = inn
             item["bank_name"] = bank_name
             item["bank_account"] = bank_account
-            item["equipment_count"] = eq_count
-            item["deals_count"] = deals_count
-            item["total_revenue"] = total_rev
+            item["equipment_count"] = len(client_eq_list)
+            item["equipment_list"] = client_eq_list
+            item["deals_count"] = len(client_deals)
+            item["total_revenue"] = round(total_rev, 2)
             clients.append(item)
         return clients
 
@@ -754,6 +805,10 @@ def create_client(client_data: Dict[str, Any]) -> Dict[str, Any]:
         item["bank_name"] = client_data.get("bank_name") or ""
         item["bank_account"] = client_data.get("bank_account") or ""
         item["notes"] = (client_data.get("notes") or "").strip()
+        item["equipment_count"] = 0
+        item["equipment_list"] = []
+        item["deals_count"] = 0
+        item["total_revenue"] = 0.0
         item["message"] = "Клиент успешно добавлен"
         return item
 
@@ -771,16 +826,32 @@ def get_crm_client(client_id: int) -> Dict[str, Any]:
         c["bank_account"] = bank_account
 
         eq_r = client.get("/equipment", params={"client_id": f"eq.{client_id}", "order": "id.desc"})
-        c["equipment"] = eq_r.json() if eq_r.status_code == 200 else []
+        client_eq = list(eq_r.json() if eq_r.status_code == 200 else [])
+        seen_eq_ids = {int(e["id"]) for e in client_eq if e.get("id") is not None}
 
-        dl_r = client.get("/deals", params={"client_id": f"eq.{client_id}", "select": "*,equipment(name)", "order": "id.desc"})
+        dl_r = client.get("/deals", params={"client_id": f"eq.{client_id}", "select": "*,equipment(*)", "order": "id.desc"})
         deals = []
         if dl_r.status_code == 200:
             for d in dl_r.json():
                 eq = d.get("equipment") or {}
-                d["equipment_name"] = eq.get("name", "")
+                if eq and eq.get("id") is not None and int(eq["id"]) not in seen_eq_ids:
+                    seen_eq_ids.add(int(eq["id"]))
+                    client_eq.append(eq)
+                raw_desc = d.get("description") or ""
+                clean_d_desc, dtype, stype, outcome = parse_deal_description(raw_desc, d.get("title") or "")
+                _, s_eq_name = extract_deal_sales_equipment(raw_desc)
+                sales_extra = extract_deal_sales_extra(raw_desc)
+                summary_name = format_sales_items_summary(sales_extra["sales_items"], s_eq_name)
+                d["description"] = clean_d_desc
+                d["deal_type"] = dtype
+                d["service_type"] = stype
+                d["closing_outcome"] = outcome
+                d["currency"] = sales_extra["currency"]
+                d["bank_name"] = sales_extra["bank_name"]
+                d["equipment_name"] = summary_name if (dtype == "sales" and summary_name) else eq.get("name", "")
                 d.pop("equipment", None)
                 deals.append(d)
+        c["equipment"] = client_eq
         c["deals"] = deals
 
         tsk_r = client.get("/tasks", params={"client_id": f"eq.{client_id}", "order": "due_date.asc"})
@@ -1268,12 +1339,13 @@ def extract_deal_sales_equipment(raw_description: str) -> tuple[Optional[int], s
     return s_id, s_name
 
 def extract_deal_sales_extra(raw_description: str) -> Dict[str, Any]:
-    """Extracts currency, discount, and sales_items from deal description metadata."""
+    """Extracts currency, discount, bank_name, and sales_items from deal description metadata."""
     currency = "AMD"
     discount = 0.0
+    bank_name = ""
     sales_items: List[Dict[str, Any]] = []
     if not raw_description:
-        return {"currency": currency, "discount": discount, "sales_items": sales_items}
+        return {"currency": currency, "discount": discount, "bank_name": bank_name, "sales_items": sales_items}
 
     m_curr = re.search(r'\[CURRENCY:(.*?)\]', raw_description, flags=re.DOTALL)
     if m_curr:
@@ -1284,6 +1356,10 @@ def extract_deal_sales_extra(raw_description: str) -> Dict[str, Any]:
     m_disc = re.search(r'\[DISCOUNT:(.*?)\]', raw_description, flags=re.DOTALL)
     if m_disc:
         discount = round(_to_float(m_disc.group(1).strip(), 0.0), 2)
+
+    m_bank = re.search(r'\[BANK_NAME:(.*?)\]', raw_description, flags=re.DOTALL)
+    if m_bank:
+        bank_name = m_bank.group(1).strip()
 
     m_items = re.search(r'\[SALES_ITEMS:(.*?)\](?=\s*(?:\[|$))', raw_description, flags=re.DOTALL)
     if not m_items:
@@ -1319,7 +1395,7 @@ def extract_deal_sales_extra(raw_description: str) -> Dict[str, Any]:
                 "vat_mode": "included",
             })
 
-    return {"currency": currency, "discount": discount, "sales_items": sales_items}
+    return {"currency": currency, "discount": discount, "bank_name": bank_name, "sales_items": sales_items}
 
 def format_sales_items_summary(sales_items: List[Dict[str, Any]], fallback_name: str = "") -> str:
     if not sales_items:
@@ -1347,6 +1423,7 @@ def serialize_deal_description(
     currency: Optional[str] = "AMD",
     discount: Optional[float] = None,
     sales_items: Optional[List[Dict[str, Any]]] = None,
+    bank_name: Optional[str] = None,
 ) -> str:
     clean_desc = (description or "").strip()
     clean_desc = re.sub(r'\[DEAL_TYPE:.*?\]', '', clean_desc, flags=re.DOTALL).strip()
@@ -1357,6 +1434,7 @@ def serialize_deal_description(
     clean_desc = re.sub(r'\[SALES_EQ_NAME:.*?\]', '', clean_desc, flags=re.DOTALL).strip()
     clean_desc = re.sub(r'\[CURRENCY:.*?\]', '', clean_desc, flags=re.DOTALL).strip()
     clean_desc = re.sub(r'\[DISCOUNT:.*?\]', '', clean_desc, flags=re.DOTALL).strip()
+    clean_desc = re.sub(r'\[BANK_NAME:.*?\]', '', clean_desc, flags=re.DOTALL).strip()
     clean_desc = re.sub(r'\[SALES_ITEMS:\[.*?\]\]', '', clean_desc, flags=re.DOTALL).strip()
     tags = []
     dtype = (deal_type or "service").strip().lower()
@@ -1375,6 +1453,8 @@ def serialize_deal_description(
         tags.append(f"[CURRENCY:{curr_clean}]")
     if discount is not None and _to_float(discount, 0.0) > 0:
         tags.append(f"[DISCOUNT:{round(_to_float(discount, 0.0), 2)}]")
+    if bank_name and str(bank_name).strip():
+        tags.append(f"[BANK_NAME:{str(bank_name).strip()}]")
     if sales_items and isinstance(sales_items, list):
         clean_items = []
         for it in sales_items:
@@ -1440,6 +1520,7 @@ def parse_deal_description(raw_description: str, title: str = "") -> tuple[str, 
     clean_desc = re.sub(r'\[SALES_EQ_NAME:.*?\]', '', clean_desc, flags=re.DOTALL).strip()
     clean_desc = re.sub(r'\[CURRENCY:.*?\]', '', clean_desc, flags=re.DOTALL).strip()
     clean_desc = re.sub(r'\[DISCOUNT:.*?\]', '', clean_desc, flags=re.DOTALL).strip()
+    clean_desc = re.sub(r'\[BANK_NAME:.*?\]', '', clean_desc, flags=re.DOTALL).strip()
     clean_desc = re.sub(r'\[SALES_ITEMS:\[.*?\]\]', '', clean_desc, flags=re.DOTALL).strip()
 
     return clean_desc, deal_type, service_type, closing_outcome
@@ -1501,6 +1582,7 @@ def list_deals(stage: Optional[str] = None, q: Optional[str] = None, deal_type: 
             item["sales_equipment_name"] = summary_name
             item["currency"] = sales_extra["currency"]
             item["discount"] = sales_extra["discount"]
+            item["bank_name"] = sales_extra["bank_name"]
             item["sales_items"] = sales_extra["sales_items"]
             item["client_name"] = cl.get("name", "")
             item["client_company"] = cl.get("company", "")
@@ -1530,6 +1612,9 @@ def create_deal(deal_data: Dict[str, Any]) -> Dict[str, Any]:
         if currency not in ("AMD", "USD", "EUR"):
             currency = "AMD"
         discount = round(_to_float(deal_data.get("discount"), 0.0), 2)
+        bank_name = (deal_data.get("bank_name") or "").strip()
+        custom_created_at = (deal_data.get("created_at") or "").strip()
+        created_at_val = custom_created_at if custom_created_at else now_str
         sales_eq_id = int(deal_data["sales_equipment_id"]) if deal_data.get("sales_equipment_id") and int(deal_data.get("sales_equipment_id") or 0) > 0 else None
         sales_eq_name = (deal_data.get("sales_equipment_name") or "").strip()
         if sales_items:
@@ -1553,6 +1638,7 @@ def create_deal(deal_data: Dict[str, Any]) -> Dict[str, Any]:
             currency=currency,
             discount=discount,
             sales_items=sales_items,
+            bank_name=bank_name,
         )
 
         payload = {
@@ -1567,7 +1653,7 @@ def create_deal(deal_data: Dict[str, Any]) -> Dict[str, Any]:
             "responsible": deal_data.get("responsible", "Мастер-приемщик"),
             "description": serialized_desc,
             "deadline": deal_data.get("deadline") or None,
-            "created_at": now_str,
+            "created_at": created_at_val,
             "completed_at": completed_at
         }
         r = client.post("/deals", json=payload)
@@ -1604,6 +1690,7 @@ def create_deal(deal_data: Dict[str, Any]) -> Dict[str, Any]:
             "sales_equipment_name": sales_eq_name,
             "currency": currency,
             "discount": discount,
+            "bank_name": bank_name,
             "sales_items": sales_items,
             "client_name": cl_name,
             "client_company": cl_comp,
@@ -1640,6 +1727,7 @@ def get_deal(deal_id: int) -> Dict[str, Any]:
         d["sales_equipment_name"] = summary_name
         d["currency"] = sales_extra["currency"]
         d["discount"] = sales_extra["discount"]
+        d["bank_name"] = sales_extra["bank_name"]
         d["sales_items"] = sales_extra["sales_items"]
         d["client_name"] = cl.get("name", "")
         d["client_company"] = cl.get("company", "")
@@ -1695,6 +1783,7 @@ def update_deal_stage(deal_id: int, stage: str, closing_outcome: Optional[str] =
                     currency=old_extra["currency"],
                     discount=old_extra["discount"],
                     sales_items=old_extra["sales_items"],
+                    bank_name=old_extra["bank_name"],
                 )
         client.patch(f"/deals?id=eq.{deal_id}", json=patch_payload)
         return {
@@ -1716,11 +1805,13 @@ def update_deal(deal_id: int, deal_data: Dict[str, Any]) -> Dict[str, Any]:
         existing_desc = ""
         existing_title = ""
         existing_completed_at = None
+        existing_created_at = None
         if existing_r.status_code == 200 and existing_r.json():
             row = existing_r.json()[0]
             existing_desc = row.get("description") or ""
             existing_title = row.get("title") or ""
             existing_completed_at = row.get("completed_at")
+            existing_created_at = row.get("created_at")
         old_desc, old_dtype, old_stype, old_outcome = parse_deal_description(existing_desc, existing_title)
         old_labor_cost = extract_deal_labor_cost(existing_desc)
         old_s_eq_id, old_s_eq_name = extract_deal_sales_equipment(existing_desc)
@@ -1733,6 +1824,7 @@ def update_deal(deal_id: int, deal_data: Dict[str, Any]) -> Dict[str, Any]:
         if new_currency not in ("AMD", "USD", "EUR"):
             new_currency = "AMD"
         new_discount = round(_to_float(deal_data.get("discount"), old_extra["discount"]), 2) if "discount" in deal_data and deal_data["discount"] is not None else old_extra["discount"]
+        new_bank_name = str(deal_data.get("bank_name") or "").strip() if "bank_name" in deal_data and deal_data["bank_name"] is not None else old_extra["bank_name"]
         new_sales_items = deal_data.get("sales_items") if "sales_items" in deal_data and isinstance(deal_data.get("sales_items"), list) else old_extra["sales_items"]
         if "sales_equipment_id" in deal_data:
             new_s_eq_id = int(deal_data["sales_equipment_id"]) if deal_data.get("sales_equipment_id") and int(deal_data.get("sales_equipment_id") or 0) > 0 else None
@@ -1764,12 +1856,15 @@ def update_deal(deal_id: int, deal_data: Dict[str, Any]) -> Dict[str, Any]:
             currency=new_currency,
             discount=new_discount,
             sales_items=new_sales_items,
+            bank_name=new_bank_name,
         )
 
         if stage in ("ready", "completed"):
             completed_at = existing_completed_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         else:
             completed_at = None
+
+        custom_created_at = (deal_data.get("created_at") or "").strip()
 
         attached_parts = _get_deal_attached_parts(client, int(deal_id))
         parts_cost_sum = round(float(sum(item["quantity"] * item["purchase_price"] for item in attached_parts)), 2)
@@ -1791,12 +1886,15 @@ def update_deal(deal_id: int, deal_data: Dict[str, Any]) -> Dict[str, Any]:
             "deadline": deal_data.get("deadline") or None,
             "completed_at": completed_at
         }
+        if custom_created_at:
+            payload["created_at"] = custom_created_at
         r = client.patch(f"/deals?id=eq.{deal_id}", json=payload)
         if r.status_code not in (200, 204):
             payload["id"] = deal_id
-            payload["created_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            payload["created_at"] = custom_created_at or str(existing_created_at or datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
             client.post("/deals", json=payload, headers={"Prefer": "resolution=merge-duplicates"})
-        return {"id": deal_id, **payload, "parts_count": parts_qty_sum, "parts_selling_total": parts_selling_sum, "labor_cost": new_labor_cost, "sales_equipment_id": new_s_eq_id, "sales_equipment_name": new_s_eq_name, "currency": new_currency, "discount": new_discount, "sales_items": new_sales_items, "equipment_name": new_s_eq_name if (new_dtype == "sales" and new_s_eq_name) else "", "description": raw_desc, "deal_type": new_dtype, "service_type": new_stype, "closing_outcome": new_outcome, "message": "Сделка обновлена"}
+        final_created_at = payload.get("created_at") or existing_created_at
+        return {"id": deal_id, **payload, "created_at": final_created_at, "parts_count": parts_qty_sum, "parts_selling_total": parts_selling_sum, "labor_cost": new_labor_cost, "sales_equipment_id": new_s_eq_id, "sales_equipment_name": new_s_eq_name, "currency": new_currency, "discount": new_discount, "bank_name": new_bank_name, "sales_items": new_sales_items, "equipment_name": new_s_eq_name if (new_dtype == "sales" and new_s_eq_name) else "", "description": raw_desc, "deal_type": new_dtype, "service_type": new_stype, "closing_outcome": new_outcome, "message": "Сделка обновлена"}
 
 def delete_deal(deal_id: int) -> Dict[str, Any]:
     with get_database_client() as client:

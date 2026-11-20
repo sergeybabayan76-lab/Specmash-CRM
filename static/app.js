@@ -2302,6 +2302,7 @@ function renderKanban() {
       (d.client_name && d.client_name.toLowerCase().includes(filterText)) ||
       (d.client_company && d.client_company.toLowerCase().includes(filterText)) ||
       (d.equipment_name && d.equipment_name.toLowerCase().includes(filterText)) ||
+      (d.bank_name && d.bank_name.toLowerCase().includes(filterText)) ||
       (d.responsible && d.responsible.toLowerCase().includes(filterText))
     );
   });
@@ -2384,16 +2385,22 @@ function renderDealsList() {
       (d.client_name && d.client_name.toLowerCase().includes(filterText)) ||
       (d.client_company && d.client_company.toLowerCase().includes(filterText)) ||
       (d.equipment_name && d.equipment_name.toLowerCase().includes(filterText)) ||
+      (d.bank_name && d.bank_name.toLowerCase().includes(filterText)) ||
       (d.responsible && d.responsible.toLowerCase().includes(filterText))
     );
   });
 
-  // Requirement 2.1: Remove "Себестоимость" column on Bitrix24 List in Sales Department
+  // Requirement 2.1 & 3: In Sales Department, hide "Себестоимость" and replace "Техника / Товары" column with "Банк"
   const colCostHeader = document.getElementById('deals-table-col-cost-header');
   if (colCostHeader) {
     colCostHeader.classList.toggle('hidden', isSalesDept);
     const spanEl = colCostHeader.querySelector('span:first-child');
     if (spanEl) spanEl.textContent = 'Сумма з/ч (AMD)';
+  }
+  const colEqHeader = document.getElementById('deals-table-col-equipment-header');
+  if (colEqHeader) {
+    const eqSpan = colEqHeader.querySelector('span:first-child');
+    if (eqSpan) eqSpan.textContent = isSalesDept ? 'Банк' : 'Техника / VIN';
   }
 
   const totalAmount = filteredDeals.reduce((sum, d) => sum + (d.amount || 0), 0);
@@ -2507,16 +2514,24 @@ function renderDealsList() {
         </td>
 
         <td class="p-3.5 text-xs">
+          ${(isSalesDept || deal.deal_type === 'sales') ? (
+            deal.bank_name ? `
+            <div class="font-bold text-indigo-900 flex items-center gap-1.5">
+              <i data-lucide="landmark" class="w-3.5 h-3.5 text-indigo-600 flex-shrink-0"></i>
+              <span>${escapeHtml(deal.bank_name)}</span>
+            </div>` : `<span class="text-slate-400 font-mono">—</span>`
+          ) : `
           ${(deal.deal_type !== 'parts_sale' && deal.equipment_id) ? `
           <button type="button" onclick="openEquipmentCardFromDeal(${deal.equipment_id}, event)" class="font-bold text-slate-700 hover:text-blue-600 hover:underline flex items-center gap-1.5 text-left transition-colors cursor-pointer" title="Открыть карточку техники для просмотра">
-            <i data-lucide="${deal.deal_type === 'sales' ? 'tractor' : 'truck'}" class="w-3.5 h-3.5 text-blue-600 flex-shrink-0"></i>
+            <i data-lucide="truck" class="w-3.5 h-3.5 text-blue-600 flex-shrink-0"></i>
             <span>${deal.equipment_name || (state.equipment && state.equipment.find(eq => eq.id === deal.equipment_id)?.name) || ('Техника #' + deal.equipment_id)}</span>
           </button>` : `
           <div class="font-bold text-slate-700 flex items-center gap-1.5">
-            <i data-lucide="${deal.deal_type === 'parts_sale' ? 'shopping-cart' : (deal.deal_type === 'sales' ? 'tractor' : 'truck')}" class="w-3.5 h-3.5 text-blue-600"></i>
+            <i data-lucide="${deal.deal_type === 'parts_sale' ? 'shopping-cart' : 'truck'}" class="w-3.5 h-3.5 text-blue-600"></i>
             <span>${deal.deal_type === 'parts_sale' ? 'Продажа со склада' : (deal.equipment_name || (state.equipment && state.equipment.find(eq => eq.id === deal.equipment_id)?.name) || 'Не привязана')}</span>
           </div>`}
           <div class="text-[11px] text-slate-400 font-mono">${deal.equipment_vin ? `VIN: ${deal.equipment_vin}` : 'VIN: —'}</div>
+          `}
         </td>
 
         <td class="p-3.5">
@@ -3000,6 +3015,25 @@ async function loadClients(searchQuery = '') {
   }
 }
 
+function getClientFleetItems(clientObj) {
+  if (!clientObj) return [];
+  const cid = Number(clientObj.id);
+  const map = new Map();
+  if (Array.isArray(clientObj.equipment_list)) {
+    clientObj.equipment_list.forEach(eq => {
+      if (eq && eq.id !== undefined) map.set(Number(eq.id), eq);
+    });
+  }
+  if (Array.isArray(state.equipment)) {
+    state.equipment.forEach(eq => {
+      if (eq && Number(eq.client_id) === cid && eq.id !== undefined) {
+        map.set(Number(eq.id), eq);
+      }
+    });
+  }
+  return Array.from(map.values());
+}
+
 function renderClientsTable() {
   const tbody = document.getElementById('clients-table-body');
   if (!tbody) return;
@@ -3009,7 +3043,20 @@ function renderClientsTable() {
     return;
   }
 
-  tbody.innerHTML = state.clients.map(c => `
+  tbody.innerHTML = state.clients.map(c => {
+    const fleet = getClientFleetItems(c);
+    const eqCount = fleet.length > 0 ? fleet.length : Number(c.equipment_count || 0);
+    const fleetPreviewHtml = fleet.length > 0
+      ? `<div class="mt-1 space-y-0.5 max-w-xs">` + fleet.slice(0, 3).map(eq => `
+          <button type="button" onclick="openEquipmentCardFromDeal(${eq.id}, event)" class="text-[11px] text-slate-700 hover:text-blue-600 hover:underline flex items-center gap-1 truncate text-left" title="${escapeHtml(eq.name)}${eq.serial_vin ? ' • VIN: ' + escapeHtml(eq.serial_vin) : ''}">
+            <i data-lucide="truck" class="w-3 h-3 text-emerald-600 shrink-0"></i>
+            <span class="truncate font-medium">${escapeHtml(eq.name)}</span>
+            ${eq.serial_vin ? `<span class="text-[10px] font-mono text-slate-400 shrink-0">(${escapeHtml(eq.serial_vin)})</span>` : ''}
+          </button>
+        `).join('') + (fleet.length > 3 ? `<div class="text-[10px] text-slate-400 font-medium">+ еще ${fleet.length - 3} ед.</div>` : '') + `</div>`
+      : '';
+
+    return `
     <tr class="hover:bg-slate-50/80 transition-colors">
       <td class="p-3.5">
         <button onclick="viewClientDetails(${c.id})" class="font-bold text-slate-800 hover:text-blue-600 text-left block text-sm">
@@ -3022,16 +3069,17 @@ function renderClientsTable() {
         <div class="text-slate-400 text-[11px]">${c.email || '—'}</div>
       </td>
       <td class="p-3.5 text-xs">
-        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-medium">
+        <button type="button" onclick="viewClientDetails(${c.id})" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full ${eqCount > 0 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-500 border border-slate-200'} font-medium hover:opacity-80 transition-opacity">
           <i data-lucide="truck" class="w-3 h-3"></i>
-          <span>${c.equipment_count} ед. техники</span>
-        </span>
+          <span>${eqCount} ед. техники</span>
+        </button>
+        ${fleetPreviewHtml}
       </td>
       <td class="p-3.5 text-xs font-mono font-medium text-slate-700">
-        ${c.deals_count} нарядов
+        ${c.deals_count || 0} нарядов
       </td>
       <td class="p-3.5 text-xs font-mono font-bold text-emerald-600">
-        ${formatMoney(c.total_revenue)}
+        ${formatMoney(c.total_revenue || 0)}
       </td>
       <td class="p-3.5 text-right space-x-1">
         <button onclick="viewClientDetails(${c.id})" class="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-slate-100 rounded" title="Просмотр">
@@ -3042,7 +3090,8 @@ function renderClientsTable() {
         </button>
       </td>
     </tr>
-  `).join('');
+  `;
+  }).join('');
 
   if (window.lucide) lucide.createIcons();
 }
@@ -3161,6 +3210,7 @@ async function loadEquipment(searchQuery = '') {
     const serverEq = await res.json();
     state.equipment = crmStore.mergeWithServer('equipment', serverEq);
     renderEquipmentTable();
+    renderClientsTable();
     updateSidebarCounters();
   } catch (err) {
     console.error('Error loading equipment:', err);
@@ -4035,17 +4085,26 @@ function setDealModalType(type) {
     };
   }
 
-  // Requirement 3.1: Hide "Тип заказ-наряда" in Sales Department ("Отдел продаж")
+  // Requirement 3.1 & Requirement 2: In Sales Department ("Отдел продаж"):
+  // - Hide "Тип заказ-наряда" (#deal-service-type-group)
+  // - Show "Банк" (#deal-bank-group)
+  // - Allow editing Registration Date (#deal-created-at-input)
   const serviceTypeGroup = document.getElementById('deal-service-type-group');
+  const bankGroup = document.getElementById('deal-bank-group');
   const topMetaGrid = document.getElementById('deal-top-meta-grid');
   if (serviceTypeGroup) {
     serviceTypeGroup.classList.toggle('hidden', isSales);
   }
-  if (topMetaGrid) {
-    topMetaGrid.className = isSales
-      ? 'grid grid-cols-1 gap-3 p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs'
-      : 'grid grid-cols-1 md:grid-cols-2 gap-3 p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs';
+  if (bankGroup) {
+    bankGroup.classList.toggle('hidden', !isSales);
   }
+  if (topMetaGrid) {
+    topMetaGrid.className = 'grid grid-cols-1 md:grid-cols-2 gap-3 p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs';
+  }
+  const dateCreatedSpan = document.getElementById('deal-date-created');
+  const dateCreatedInput = document.getElementById('deal-created-at-input');
+  if (dateCreatedSpan) dateCreatedSpan.classList.toggle('hidden', isSales);
+  if (dateCreatedInput) dateCreatedInput.classList.toggle('hidden', !isSales);
 
   // Requirement 3.3: Toggle between Service Equipment vs Sales Equipment Catalog in deal card
   const serviceEqCol = document.getElementById('deal-service-equipment-col');
@@ -4246,8 +4305,13 @@ async function openDealModal(dealId = null, defaultStage = 'new', defaultType = 
   document.getElementById('btn-delete-deal').classList.add('hidden');
   const datesBanner = document.getElementById('deal-dates-banner');
   if (datesBanner) datesBanner.classList.remove('hidden');
+  const todayIso = new Date().toISOString().slice(0, 10);
   const createdEl = document.getElementById('deal-date-created');
   if (createdEl) createdEl.textContent = new Date().toLocaleDateString('ru-RU');
+  const createdInputEl = document.getElementById('deal-created-at-input');
+  if (createdInputEl) createdInputEl.value = todayIso;
+  const bankInputEl = document.getElementById('deal-bank-name');
+  if (bankInputEl) bankInputEl.value = '';
   const completedEl = document.getElementById('deal-date-completed');
   if (completedEl) completedEl.textContent = 'В работе';
   const laborInput = document.getElementById('deal-labor-cost');
@@ -4255,7 +4319,7 @@ async function openDealModal(dealId = null, defaultStage = 'new', defaultType = 
   const lockedBanner = document.getElementById('deal-locked-banner');
   if (lockedBanner) lockedBanner.classList.add('hidden');
 
-  const fieldsToUnlock = ['deal-title', 'deal-client', 'deal-equipment', 'deal-stage', 'deal-labor-cost', 'deal-amount', 'deal-cost', 'deal-priority', 'deal-responsible', 'deal-responsible-btn', 'deal-deadline', 'deal-description', 'deal-service-type', 'deal-closing-outcome'];
+  const fieldsToUnlock = ['deal-title', 'deal-client', 'deal-equipment', 'deal-stage', 'deal-labor-cost', 'deal-amount', 'deal-cost', 'deal-priority', 'deal-responsible', 'deal-responsible-btn', 'deal-deadline', 'deal-description', 'deal-service-type', 'deal-closing-outcome', 'deal-bank-name', 'deal-created-at-input'];
   fieldsToUnlock.forEach(fId => {
     const el = document.getElementById(fId);
     if (el) el.disabled = false;
@@ -4289,13 +4353,20 @@ async function openDealModal(dealId = null, defaultStage = 'new', defaultType = 
         }
       }
 
-      // Requirement #4: Display deal registration and closing dates
+      // Requirement #4 & #2: Display deal registration (and populate editable date input for Sales Dept) and closing dates
       if (datesBanner) {
         datesBanner.classList.remove('hidden');
-        document.getElementById('deal-date-created').textContent = deal.created_at || '—';
+        document.getElementById('deal-date-created').textContent = formatDate(deal.created_at) || '—';
+        if (createdInputEl) {
+          const rawDate = String(deal.created_at || '').trim();
+          createdInputEl.value = rawDate.length >= 10 ? rawDate.slice(0, 10) : todayIso;
+        }
         const isClosed = deal.stage === 'completed';
-        const completedText = (isClosed && deal.completed_at) ? deal.completed_at : (isClosed ? 'Закрыта' : 'В работе');
+        const completedText = (isClosed && deal.completed_at) ? formatDate(deal.completed_at) : (isClosed ? 'Закрыта' : 'В работе');
         document.getElementById('deal-date-completed').textContent = completedText;
+      }
+      if (bankInputEl) {
+        bankInputEl.value = deal.bank_name || '';
       }
 
       document.getElementById('deal-id').value = deal.id;
@@ -4338,7 +4409,7 @@ async function openDealModal(dealId = null, defaultStage = 'new', defaultType = 
         else lockedBanner.classList.add('hidden');
       }
 
-      const fieldsToLock = ['deal-title', 'deal-client', 'deal-equipment', 'deal-stage', 'deal-labor-cost', 'deal-amount', 'deal-cost', 'deal-priority', 'deal-responsible', 'deal-responsible-btn', 'deal-deadline', 'deal-description', 'deal-service-type', 'deal-closing-outcome'];
+      const fieldsToLock = ['deal-title', 'deal-client', 'deal-equipment', 'deal-stage', 'deal-labor-cost', 'deal-amount', 'deal-cost', 'deal-priority', 'deal-responsible', 'deal-responsible-btn', 'deal-deadline', 'deal-description', 'deal-service-type', 'deal-closing-outcome', 'deal-bank-name', 'deal-created-at-input'];
       fieldsToLock.forEach(fId => {
         const el = document.getElementById(fId);
         if (el) el.disabled = isLocked;
@@ -5111,6 +5182,9 @@ async function saveDeal(e) {
   const dealCurrency = dealType === 'sales' ? normalizeDealCurrency(document.getElementById('deal-currency')?.value || 'AMD') : 'AMD';
   const dealDiscount = dealType === 'sales' ? Math.max(0, parsePartNumberInput(document.getElementById('deal-discount')?.value, 0)) : 0.0;
 
+  const dealBankName = dealType === 'sales' ? (document.getElementById('deal-bank-name')?.value || '').trim() : '';
+  const dealCreatedAt = dealType === 'sales' ? (document.getElementById('deal-created-at-input')?.value || null) : null;
+
   const payload = {
     title: document.getElementById('deal-title').value.trim(),
     deal_type: dealType,
@@ -5121,6 +5195,8 @@ async function saveDeal(e) {
     sales_items: salesItemsToSave,
     currency: dealCurrency,
     discount: dealDiscount,
+    bank_name: dealBankName,
+    created_at: dealCreatedAt,
     stage: document.getElementById('deal-stage').value,
     labor_cost: dealType === 'sales' ? 0.0 : (parseFloat(document.getElementById('deal-labor-cost')?.value) || 0.0),
     amount: parseFloat(document.getElementById('deal-amount').value) || 0.0,
@@ -5181,6 +5257,8 @@ async function saveDeal(e) {
       client_phone: data.client_phone || (clientObj ? clientObj.phone : ''),
       equipment_name: eqName,
       equipment_vin: eqVin,
+      bank_name: data.bank_name !== undefined ? data.bank_name : dealBankName,
+      created_at: data.created_at || dealCreatedAt || new Date().toISOString(),
       _updated_at: Date.now()
     });
 
@@ -5817,12 +5895,15 @@ async function saveClient(e) {
     if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка сохранения клиента');
 
     const savedId = clientId ? parseInt(clientId) : data.id;
+    const prevClient = state.clients.find(c => Number(c.id) === Number(savedId)) || {};
     crmStore.saveItem('clients', {
+      ...prevClient,
       ...payload,
       id: savedId,
-      equipment_count: 0,
-      deals_count: 0,
-      total_revenue: 0
+      equipment_count: prevClient.equipment_count || 0,
+      equipment_list: prevClient.equipment_list || [],
+      deals_count: prevClient.deals_count || 0,
+      total_revenue: prevClient.total_revenue || 0
     });
 
     showToast(clientId ? 'Клиент обновлен' : 'Клиент добавлен');
@@ -6021,6 +6102,7 @@ async function saveEquipment(e) {
     showToast(eqId ? 'Техника обновлена' : 'Техника зарегистрирована');
     closeModal('modal-equipment');
     await loadEquipment();
+    await loadClients();
     loadDashboard();
   } catch (err) {
     showToast(err.message, 'error');
@@ -6042,6 +6124,7 @@ async function deleteEquipment() {
     showToast(data.message || 'Техника удалена');
     closeModal('modal-equipment');
     await loadEquipment();
+    await loadClients();
     loadDashboard();
   } catch (err) {
     showToast(err.message, 'error');
