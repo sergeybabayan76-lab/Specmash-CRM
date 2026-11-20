@@ -214,6 +214,7 @@ class ClientCreate(BaseModel):
     inn: Optional[str] = ""
     bank_name: Optional[str] = ""
     bank_account: Optional[str] = ""
+    secondary_contact: Optional[str] = ""
 
 class EquipmentCreate(BaseModel):
     client_id: Optional[int] = None

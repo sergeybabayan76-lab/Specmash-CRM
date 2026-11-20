@@ -3143,6 +3143,7 @@ function renderClientsTable() {
           ${c.name}
         </button>
         <span class="text-xs text-slate-400">${c.company || 'Частное лицо'}</span>
+        ${c.secondary_contact ? `<div class="text-[11px] text-slate-500 mt-0.5 flex items-center gap-1"><i data-lucide="user-plus" class="w-3 h-3 text-blue-500 shrink-0"></i><span>Доп. контакт: ${escapeHtml(c.secondary_contact)}</span></div>` : ''}
       </td>
       <td class="p-3.5 text-xs">
         <div class="font-mono text-slate-700">${c.phone}</div>
@@ -3226,6 +3227,8 @@ async function viewClientDetails(clientId) {
     document.getElementById('view-client-name').textContent = client.name;
     document.getElementById('view-client-company').textContent = client.company || 'Частный заказчик';
     document.getElementById('view-client-phone').textContent = client.phone;
+    const secContactViewEl = document.getElementById('view-client-secondary-contact');
+    if (secContactViewEl) secContactViewEl.textContent = client.secondary_contact || 'Не указано';
     document.getElementById('view-client-email').textContent = client.email || 'Не указан';
     document.getElementById('view-client-address').textContent = client.address || 'Не указан';
 
@@ -5899,9 +5902,11 @@ function openClientModal(clientId = null) {
   const innEl = document.getElementById('client-inn');
   const bankNameEl = document.getElementById('client-bank-name');
   const bankAccEl = document.getElementById('client-bank-account');
+  const secContactEl = document.getElementById('client-secondary-contact');
   if (innEl) innEl.value = '';
   if (bankNameEl) bankNameEl.value = '';
   if (bankAccEl) bankAccEl.value = '';
+  if (secContactEl) secContactEl.value = '';
 
   if (clientId) {
     document.getElementById('modal-client-title').textContent = 'Редактировать клиента';
@@ -5915,6 +5920,7 @@ function openClientModal(clientId = null) {
     if (client) {
       document.getElementById('client-id').value = client.id;
       document.getElementById('client-name').value = client.name;
+      if (secContactEl) secContactEl.value = client.secondary_contact || '';
       document.getElementById('client-company').value = client.company || '';
       document.getElementById('client-phone').value = client.phone;
       document.getElementById('client-email').value = client.email || '';
@@ -5937,6 +5943,7 @@ async function saveClient(e) {
   const clientId = document.getElementById('client-id').value;
   const payload = {
     name: document.getElementById('client-name').value.trim(),
+    secondary_contact: (document.getElementById('client-secondary-contact')?.value || '').trim(),
     company: document.getElementById('client-company').value.trim(),
     phone: document.getElementById('client-phone').value.trim(),
     email: document.getElementById('client-email').value.trim(),
