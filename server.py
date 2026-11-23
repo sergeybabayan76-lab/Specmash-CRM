@@ -221,6 +221,7 @@ class EquipmentCreate(BaseModel):
     name: str
     category: str
     serial_vin: Optional[str] = ""
+    license_plate: Optional[str] = ""
     year: Optional[int] = None
     operating_hours: Optional[str] = ""
     status: Optional[str] = "Исправна"

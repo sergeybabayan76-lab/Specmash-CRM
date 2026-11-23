@@ -2611,6 +2611,10 @@ function renderDealsList() {
             <span>${deal.deal_type === 'parts_sale' ? 'Продажа со склада' : (deal.equipment_name || (state.equipment && state.equipment.find(eq => eq.id === deal.equipment_id)?.name) || 'Не привязана')}</span>
           </div>`}
           <div class="text-[11px] text-slate-400 font-mono">${deal.equipment_vin ? `VIN: ${deal.equipment_vin}` : 'VIN: —'}</div>
+          ${(() => {
+            const plate = deal.equipment_license_plate || (deal.equipment_id && state.equipment && state.equipment.find(eq => Number(eq.id) === Number(deal.equipment_id))?.license_plate) || '';
+            return plate ? `<div class="mt-0.5 inline-flex items-center gap-1 text-[10px] font-mono font-bold text-slate-800 bg-slate-100 border border-slate-300 px-1.5 py-0.2 rounded">🚗 Гос. знак: ${escapeHtml(plate)}</div>` : '';
+          })()}
           `}
         </td>
 
@@ -3003,6 +3007,10 @@ function renderKanbanCard(deal) {
         <button type="button" onclick="openEquipmentCardFromDeal(${deal.equipment_id}, event)" class="w-full flex items-center gap-1.5 text-slate-600 hover:text-blue-600 hover:underline truncate text-left transition-colors" title="Открыть карточку техники для просмотра">
           <i data-lucide="truck" class="w-3.5 h-3.5 text-emerald-500 flex-shrink-0"></i>
           <span class="truncate">${deal.equipment_name || (state.equipment && state.equipment.find(eq => eq.id === deal.equipment_id)?.name) || ('Техника #' + deal.equipment_id)}</span>
+          ${(() => {
+            const plate = deal.equipment_license_plate || (state.equipment && state.equipment.find(eq => Number(eq.id) === Number(deal.equipment_id))?.license_plate) || '';
+            return plate ? `<span class="ml-auto shrink-0 font-mono font-bold text-[10px] text-slate-800 bg-slate-100 border border-slate-300 px-1.5 py-0.2 rounded">${escapeHtml(plate)}</span>` : '';
+          })()}
         </button>` : `
         <div class="flex items-center gap-1.5 text-slate-600 truncate">
           <i data-lucide="truck" class="w-3.5 h-3.5 text-emerald-500 flex-shrink-0"></i>
@@ -3212,10 +3220,27 @@ async function openEquipmentCardFromDeal(eqId, event = null) {
   await openEquipmentModal(id);
 }
 
-function updateDealEquipmentViewBtn(eqId) {
+function updateDealEquipmentViewBtn(eqId, fallbackPlate = '') {
+  const hasEq = Boolean(eqId && Number(eqId) > 0);
   const btn = document.getElementById('btn-deal-view-equipment');
   if (btn) {
-    btn.classList.toggle('hidden', !eqId || Number(eqId) <= 0);
+    btn.classList.toggle('hidden', !hasEq);
+  }
+  const plateBadge = document.getElementById('deal-equipment-license-plate-badge');
+  const plateValEl = document.getElementById('deal-equipment-license-plate-value');
+  if (plateBadge && plateValEl) {
+    if (!hasEq) {
+      plateBadge.classList.add('hidden');
+      plateValEl.textContent = '—';
+    } else {
+      const eqObj = (state.equipment || []).find(e => Number(e.id) === Number(eqId));
+      const plate = (eqObj && eqObj.license_plate) ? String(eqObj.license_plate).trim() : String(fallbackPlate || '').trim();
+      plateBadge.classList.remove('hidden');
+      plateValEl.textContent = plate || 'Не указан';
+      plateValEl.className = plate
+        ? 'font-mono font-bold text-slate-900 bg-white px-2 py-0.5 rounded border border-slate-300 tracking-wider shadow-2xs'
+        : 'font-sans font-medium text-slate-400 text-[11px]';
+    }
   }
 }
 
@@ -3325,7 +3350,8 @@ function renderEquipmentTable() {
         <div class="text-slate-400 text-[11px]">${eq.client_phone || ''}</div>
       </td>
       <td class="p-3.5 text-xs font-mono text-slate-700">
-        ${eq.serial_vin || '—'}
+        <div>${eq.serial_vin || '—'}</div>
+        ${eq.license_plate ? `<div class="mt-0.5 inline-block text-[10px] font-bold text-slate-800 bg-slate-100 border border-slate-300 px-1.5 py-0.2 rounded">Гос. знак: ${escapeHtml(eq.license_plate)}</div>` : ''}
       </td>
       <td class="p-3.5 text-xs font-mono text-slate-700">
         <div>${eq.operating_hours || '—'}</div>
@@ -4455,7 +4481,7 @@ async function openDealModal(dealId = null, defaultStage = 'new', defaultType = 
       document.getElementById('deal-id').value = deal.id;
       document.getElementById('deal-title').value = deal.title;
       document.getElementById('deal-client').value = deal.client_id || '';
-      await handleDealClientChange(deal.client_id, deal.equipment_id);
+      await handleDealClientChange(deal.client_id, deal.equipment_id, deal.equipment_license_plate || '');
       document.getElementById('deal-stage').value = deal.stage;
       const laborCostEl = document.getElementById('deal-labor-cost');
       if (laborCostEl) laborCostEl.value = deal.labor_cost || 0;
@@ -4565,7 +4591,7 @@ async function loadClientsListOptions() {
   if (taskClientSelect) taskClientSelect.innerHTML = `<option value="">Не привязан</option>` + clientOptions;
 }
 
-async function handleDealClientChange(clientId, selectedEqId = null) {
+async function handleDealClientChange(clientId, selectedEqId = null, fallbackPlate = '') {
   const eqSelect = document.getElementById('deal-equipment');
   if (!eqSelect) return;
   const defaultOption = '<option value="">(Без привязки к технике / Запчасти / Консультация)</option>';
@@ -4608,16 +4634,23 @@ async function handleDealClientChange(clientId, selectedEqId = null) {
   const otherEq = clientId ? allEq.filter(eq => String(eq.client_id) !== String(clientId)) : allEq;
 
   let optionsHtml = defaultOption;
+  const formatEqOptLabel = (eq, includeClient = false) => {
+    const parts = [];
+    if (eq.license_plate) parts.push(`Гос. знак: ${eq.license_plate}`);
+    parts.push(`VIN: ${eq.serial_vin || 'б/н'}`);
+    if (includeClient && eq.client_name) parts.push(eq.client_name);
+    return `${eq.name} (${parts.join(' • ')})`;
+  };
 
   if (clientEq.length > 0) {
     optionsHtml += `<optgroup label="Техника данного заказчика">` + clientEq.map(eq => `
-      <option value="${eq.id}" ${selectedEqId == eq.id ? 'selected' : ''}>${eq.name} (${eq.serial_vin || 'б/н'})</option>
+      <option value="${eq.id}" ${selectedEqId == eq.id ? 'selected' : ''}>${escapeHtml(formatEqOptLabel(eq, false))}</option>
     `).join('') + `</optgroup>`;
   }
 
   if (otherEq.length > 0) {
     optionsHtml += `<optgroup label="${clientId ? 'Остальная техника СТО' : 'Вся зарегистрированная техника СТО'}">` + otherEq.map(eq => `
-      <option value="${eq.id}" ${selectedEqId == eq.id ? 'selected' : ''}>${eq.name} (${eq.serial_vin || 'б/н'}${eq.client_name ? ' • ' + eq.client_name : ''})</option>
+      <option value="${eq.id}" ${selectedEqId == eq.id ? 'selected' : ''}>${escapeHtml(formatEqOptLabel(eq, true))}</option>
     `).join('') + `</optgroup>`;
   }
 
@@ -4631,7 +4664,7 @@ async function handleDealClientChange(clientId, selectedEqId = null) {
   if (selectedEqId) {
     eqSelect.value = String(selectedEqId);
   }
-  updateDealEquipmentViewBtn(eqSelect.value);
+  updateDealEquipmentViewBtn(eqSelect.value, fallbackPlate);
 }
 
 function renderDealAttachedParts(parts) {
@@ -5328,6 +5361,7 @@ async function saveDeal(e) {
     const selectedOptionText = eqSelect.selectedOptions[0] ? eqSelect.selectedOptions[0].text : '';
     const eqName = data.equipment_name || (eqObj ? eqObj.name : (selectedOptionText.includes('(') ? selectedOptionText.split(' (')[0].trim() : ''));
     const eqVin = data.equipment_vin || (eqObj ? eqObj.serial_vin : '');
+    const eqPlate = data.equipment_license_plate || (eqObj ? eqObj.license_plate : '');
 
     crmStore.saveItem('deals', {
       ...payload,
@@ -5340,6 +5374,7 @@ async function saveDeal(e) {
       client_phone: data.client_phone || (clientObj ? clientObj.phone : ''),
       equipment_name: eqName,
       equipment_vin: eqVin,
+      equipment_license_plate: eqPlate,
       bank_name: data.bank_name !== undefined ? data.bank_name : dealBankName,
       created_at: data.created_at || dealCreatedAt || new Date().toISOString(),
       _updated_at: Date.now()
@@ -5408,6 +5443,7 @@ async function printDealOrder(dealId = null, event = null) {
       equipment_id: formEqId,
       equipment_name: eqObj?.name || dealData.equipment_name || 'Не привязана',
       equipment_vin: eqObj?.serial_vin || dealData.equipment_vin || '—',
+      equipment_license_plate: eqObj?.license_plate || dealData.equipment_license_plate || '',
       equipment_hours: eqObj?.operating_hours || dealData.equipment_hours || '—',
       equipment_year: eqObj?.year || '',
       parts: Array.isArray(state.currentDealAttachedParts) ? state.currentDealAttachedParts : (dealData.parts || [])
@@ -5418,6 +5454,7 @@ async function printDealOrder(dealId = null, event = null) {
     dealData = {
       ...dealData,
       client_inn: clientObj?.inn || '',
+      equipment_license_plate: eqObj?.license_plate || dealData.equipment_license_plate || '',
       equipment_year: eqObj?.year || '',
       parts: Array.isArray(dealData.parts) ? dealData.parts : []
     };
@@ -5705,6 +5742,7 @@ async function printDealOrder(dealId = null, event = null) {
         <h4>Сведения о технике и исполнителе</h4>
         <div class="info-row"><span>Техника:</span><span>${escapeHtml(dealData.equipment_name || 'Не привязана')}</span></div>
         <div class="info-row"><span>VIN / Серийный №:</span><span style="font-family:monospace;">${escapeHtml(dealData.equipment_vin || '—')}</span></div>
+        ${dealData.equipment_license_plate ? `<div class="info-row"><span>Гос. знак автомобиля:</span><span style="font-family:monospace;font-weight:700;">${escapeHtml(dealData.equipment_license_plate)}</span></div>` : ''}
         <div class="info-row"><span>Наработка:</span><span>${escapeHtml(dealData.equipment_hours || '—')}</span></div>
         <div class="info-row"><span>Ответственные:</span><span>${escapeHtml(dealData.responsible || '—')}</span></div>
       </div>
@@ -6116,18 +6154,22 @@ async function openEquipmentModal(eqId = null) {
       document.getElementById('equipment-category').value = eq.category;
       document.getElementById('equipment-status').value = eq.status;
       document.getElementById('equipment-vin').value = eq.serial_vin || '';
+      const plateInput = document.getElementById('equipment-license-plate');
+      if (plateInput) plateInput.value = eq.license_plate || '';
       document.getElementById('equipment-year').value = eq.year || '';
       document.getElementById('equipment-hours').value = eq.operating_hours || '';
       document.getElementById('equipment-notes').value = eq.notes || '';
 
       const subTitle = document.getElementById('modal-equipment-subtitle');
-      if (subTitle) subTitle.textContent = `${eq.name} • ${eq.serial_vin ? 'VIN: ' + eq.serial_vin : 'Без VIN'}`;
+      if (subTitle) subTitle.textContent = `${eq.name} • ${eq.serial_vin ? 'VIN: ' + eq.serial_vin : 'Без VIN'}${eq.license_plate ? ' • Гос. знак: ' + eq.license_plate : ''}`;
     }
     // Load maintenance history and consumed parts (Requirement #15)
     loadEquipmentHistoryAndParts(eqId);
   } else {
     document.getElementById('modal-equipment-title').textContent = 'Регистрация техники';
     if (tabsHeader) tabsHeader.classList.add('hidden');
+    const plateInput = document.getElementById('equipment-license-plate');
+    if (plateInput) plateInput.value = '';
     const subTitle = document.getElementById('modal-equipment-subtitle');
     if (subTitle) subTitle.textContent = 'Добавление новой единицы техники в базу СТО';
   }
@@ -6145,6 +6187,7 @@ async function saveEquipment(e) {
     category: document.getElementById('equipment-category').value,
     status: document.getElementById('equipment-status').value,
     serial_vin: document.getElementById('equipment-vin').value.trim(),
+    license_plate: (document.getElementById('equipment-license-plate')?.value || '').trim(),
     year: parseInt(document.getElementById('equipment-year').value) || null,
     operating_hours: document.getElementById('equipment-hours').value.trim(),
     notes: document.getElementById('equipment-notes').value.trim(),

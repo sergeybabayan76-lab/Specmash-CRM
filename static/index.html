@@ -11,7 +11,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Lucide Icons CDN -->
   <script src="https://unpkg.com/lucide@latest"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=1.2.5.0">
+  <link rel="stylesheet" href="/static/styles.css?v=1.2.5.1">
   <script>
     tailwind.config = {
       theme: {
@@ -2152,6 +2152,13 @@
             <select id="deal-equipment" onchange="updateDealEquipmentViewBtn(this.value)" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 bg-white">
               <!-- Filtered by selected client -->
             </select>
+            <div id="deal-equipment-license-plate-badge" class="hidden mt-1.5 px-2.5 py-1.5 rounded-lg bg-slate-100 border border-slate-300 text-xs flex items-center justify-between gap-2">
+              <span class="text-slate-600 font-medium flex items-center gap-1.5">
+                <i data-lucide="car" class="w-3.5 h-3.5 text-blue-600 shrink-0"></i>
+                <span>Гос. знак автомобиля:</span>
+              </span>
+              <span id="deal-equipment-license-plate-value" class="font-mono font-bold text-slate-900 bg-white px-2 py-0.5 rounded border border-slate-300 tracking-wider">—</span>
+            </div>
           </div>
 
           <!-- Sales Equipment Catalog Multi-Item Section (for Отдел продаж спецтехники: Requirements 1.1 & 1.2) -->
@@ -2505,10 +2512,14 @@
             </select>
           </div>
         </div>
-        <div class="grid grid-cols-3 gap-3">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <div>
             <label class="block text-xs font-bold text-slate-700 uppercase mb-1">VIN / Серийный №</label>
             <input type="text" id="equipment-vin" placeholder="CASE12345..." oninput="checkEquipmentDuplicate()" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-mono">
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Гос. знак автомобиля</label>
+            <input type="text" id="equipment-license-plate" placeholder="01 AA 001 (необяз.)" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-mono uppercase">
           </div>
           <div>
             <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Год выпуска</label>
@@ -3121,9 +3132,9 @@
 
   <!-- Scripts -->
   <script src="/static/app/core/state.js?v=1.0.0"></script>
-  <script src="/static/app/core/router.js?v=1.2.5.0"></script>
+  <script src="/static/app/core/router.js?v=1.2.5.1"></script>
   <script src="/static/app/core/api.js?v=1.0.0"></script>
   <script src="/static/app/pages/index.js?v=1.0.0"></script>
-  <script src="/static/app.js?v=1.2.5.0"></script>
+  <script src="/static/app.js?v=1.2.5.1"></script>
 </body>
 </html>

@@ -730,11 +730,13 @@ def list_clients(q: Optional[str] = None) -> List[Dict[str, Any]]:
                 eq_by_id[int(eid)] = eq
             cid = eq.get("client_id")
             if cid is not None:
+                _, eq_plate = parse_equipment_notes(eq.get("notes") or "")
                 eq_by_client.setdefault(int(cid), []).append({
                     "id": eq.get("id"),
                     "name": eq.get("name") or "",
                     "category": eq.get("category") or "Спецтехника",
                     "serial_vin": eq.get("serial_vin") or "",
+                    "license_plate": eq_plate,
                     "status": eq.get("status") or "Исправна",
                     "operating_hours": eq.get("operating_hours") or "",
                 })
@@ -761,12 +763,14 @@ def list_clients(q: Optional[str] = None) -> List[Dict[str, Any]]:
                 deq_id = d.get("equipment_id")
                 if deq_id is not None and int(deq_id) in eq_by_id and int(deq_id) not in seen_eq_ids:
                     eq_obj = eq_by_id[int(deq_id)]
+                    _, eq_plate = parse_equipment_notes(eq_obj.get("notes") or "")
                     seen_eq_ids.add(int(deq_id))
                     client_eq_list.append({
                         "id": eq_obj.get("id"),
                         "name": eq_obj.get("name") or "",
                         "category": eq_obj.get("category") or "Спецтехника",
                         "serial_vin": eq_obj.get("serial_vin") or "",
+                        "license_plate": eq_plate,
                         "status": eq_obj.get("status") or "Исправна",
                         "operating_hours": eq_obj.get("operating_hours") or "",
                     })
@@ -872,6 +876,10 @@ def get_crm_client(client_id: int) -> Dict[str, Any]:
                 d["equipment_name"] = summary_name if (dtype == "sales" and summary_name) else eq.get("name", "")
                 d.pop("equipment", None)
                 deals.append(d)
+        for eq_item in client_eq:
+            clean_eq_notes, eq_plate = parse_equipment_notes(eq_item.get("notes") or "")
+            eq_item["notes"] = clean_eq_notes
+            eq_item["license_plate"] = eq_plate
         c["equipment"] = client_eq
         c["deals"] = deals
 
@@ -936,6 +944,25 @@ def delete_client(client_id: int) -> Dict[str, Any]:
 
 # ==================== EQUIPMENT ====================
 
+def serialize_equipment_notes(notes: str, license_plate: str = "") -> str:
+    clean_notes = (notes or "").strip()
+    clean_notes = re.sub(r'\[LICENSE_PLATE:.*?\]', '', clean_notes, flags=re.DOTALL).strip()
+    plate = (license_plate or "").strip()
+    if plate:
+        tag = f"[LICENSE_PLATE:{plate}]"
+        return f"{clean_notes}\n{tag}".strip() if clean_notes else tag
+    return clean_notes
+
+def parse_equipment_notes(raw_notes: str) -> tuple[str, str]:
+    if not raw_notes:
+        return "", ""
+    license_plate = ""
+    match = re.search(r'\[LICENSE_PLATE:(.*?)\]', raw_notes, flags=re.DOTALL)
+    if match:
+        license_plate = match.group(1).strip()
+    clean_notes = re.sub(r'\[LICENSE_PLATE:.*?\]', '', raw_notes, flags=re.DOTALL).strip()
+    return clean_notes, license_plate
+
 def list_equipment(q: Optional[str] = None, category: Optional[str] = None) -> List[Dict[str, Any]]:
     if not DATABASE_READY:
         return []
@@ -948,7 +975,7 @@ def list_equipment(q: Optional[str] = None, category: Optional[str] = None) -> L
             params["category"] = f"eq.{category}"
         if q:
             term = q.strip()
-            params["or"] = f"(name.ilike.*{term}*,serial_vin.ilike.*{term}*)"
+            params["or"] = f"(name.ilike.*{term}*,serial_vin.ilike.*{term}*,notes.ilike.*{term}*)"
 
         r = client.get("/equipment", params=params)
         if r.status_code != 200:
@@ -959,6 +986,9 @@ def list_equipment(q: Optional[str] = None, category: Optional[str] = None) -> L
             cl = eq.get("clients") or {}
             item = dict(eq)
             item.pop("clients", None)
+            clean_notes, license_plate = parse_equipment_notes(item.get("notes") or "")
+            item["notes"] = clean_notes
+            item["license_plate"] = license_plate
             item["client_name"] = cl.get("name", "")
             item["client_company"] = cl.get("company", "")
             item["client_phone"] = cl.get("phone", "")
@@ -969,6 +999,9 @@ def create_equipment(eq_data: Dict[str, Any]) -> Dict[str, Any]:
     with get_database_client() as client:
         next_id = get_next_id(client, "equipment")
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        clean_notes = (eq_data.get("notes") or "").strip()
+        license_plate = (eq_data.get("license_plate") or "").strip()
+        serialized_notes = serialize_equipment_notes(clean_notes, license_plate=license_plate)
         payload = {
             "id": next_id,
             "client_id": eq_data.get("client_id") if eq_data.get("client_id") and eq_data.get("client_id") > 0 else None,
@@ -978,7 +1011,7 @@ def create_equipment(eq_data: Dict[str, Any]) -> Dict[str, Any]:
             "year": eq_data.get("year"),
             "operating_hours": (eq_data.get("operating_hours") or "").strip(),
             "status": eq_data.get("status") or "Исправна",
-            "notes": (eq_data.get("notes") or "").strip(),
+            "notes": serialized_notes,
             "created_at": now_str
         }
         r = client.post("/equipment", json=payload)
@@ -986,6 +1019,8 @@ def create_equipment(eq_data: Dict[str, Any]) -> Dict[str, Any]:
             raise Exception(r.text)
         res = r.json()
         item = res[0] if isinstance(res, list) else res
+        item["notes"] = clean_notes
+        item["license_plate"] = license_plate
         item["message"] = "Единица техники успешно зарегистрирована"
         return item
 
@@ -998,6 +1033,9 @@ def get_equipment(eq_id: int) -> Dict[str, Any]:
         eq = rows[0]
         cl = eq.get("clients") or {}
         eq.pop("clients", None)
+        clean_notes, license_plate = parse_equipment_notes(eq.get("notes") or "")
+        eq["notes"] = clean_notes
+        eq["license_plate"] = license_plate
         eq["client_name"] = cl.get("name", "")
         eq["client_company"] = cl.get("company", "")
         eq["client_phone"] = cl.get("phone", "")
@@ -1008,6 +1046,14 @@ def get_equipment(eq_id: int) -> Dict[str, Any]:
 
 def update_equipment(eq_id: int, eq_data: Dict[str, Any]) -> Dict[str, Any]:
     with get_database_client() as client:
+        existing_r = client.get("/equipment", params={"id": f"eq.{eq_id}", "select": "notes"})
+        existing_notes = ""
+        if existing_r.status_code == 200 and existing_r.json():
+            existing_notes = existing_r.json()[0].get("notes") or ""
+        old_clean_notes, old_plate = parse_equipment_notes(existing_notes)
+        clean_notes = (eq_data.get("notes") or "").strip() if "notes" in eq_data and eq_data["notes"] is not None else old_clean_notes
+        license_plate = (eq_data.get("license_plate") or "").strip() if "license_plate" in eq_data and eq_data["license_plate"] is not None else old_plate
+        serialized_notes = serialize_equipment_notes(clean_notes, license_plate=license_plate)
         payload = {
             "client_id": eq_data.get("client_id") if eq_data.get("client_id") and eq_data.get("client_id") > 0 else None,
             "name": eq_data["name"].strip(),
@@ -1016,14 +1062,14 @@ def update_equipment(eq_id: int, eq_data: Dict[str, Any]) -> Dict[str, Any]:
             "year": eq_data.get("year"),
             "operating_hours": (eq_data.get("operating_hours") or "").strip(),
             "status": eq_data.get("status") or "Исправна",
-            "notes": (eq_data.get("notes") or "").strip(),
+            "notes": serialized_notes,
         }
         r = client.patch(f"/equipment?id=eq.{eq_id}", json=payload)
         if r.status_code not in (200, 204):
             payload["id"] = eq_id
             payload["created_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             client.post("/equipment", json=payload, headers={"Prefer": "resolution=merge-duplicates"})
-        return {"id": eq_id, **payload, "message": "Данные по технике обновлены"}
+        return {"id": eq_id, **payload, "notes": clean_notes, "license_plate": license_plate, "message": "Данные по технике обновлены"}
 
 def delete_equipment(eq_id: int) -> Dict[str, Any]:
     with get_database_client() as client:
@@ -1614,11 +1660,13 @@ def list_deals(stage: Optional[str] = None, q: Optional[str] = None, deal_type: 
             item["discount"] = sales_extra["discount"]
             item["bank_name"] = sales_extra["bank_name"]
             item["sales_items"] = sales_extra["sales_items"]
+            _, eq_plate = parse_equipment_notes(eq.get("notes") or "")
             item["client_name"] = cl.get("name", "")
             item["client_company"] = cl.get("company", "")
             item["client_phone"] = cl.get("phone", "")
             item["equipment_name"] = summary_name if (dtype == "sales" and summary_name) else eq.get("name", "")
             item["equipment_vin"] = eq.get("serial_vin", "")
+            item["equipment_license_plate"] = eq_plate
             item["parts_count"] = parts_by_deal.get(int(d["id"]), 0)
             item["parts_selling_total"] = parts_selling_by_deal.get(int(d["id"]), 0.0)
             deals.append(item)
@@ -1703,11 +1751,13 @@ def create_deal(deal_data: Dict[str, Any]) -> Dict[str, Any]:
 
         eq_name = ""
         eq_vin = ""
+        eq_plate = ""
         if eq_id:
             er = client.get("/equipment", params={"id": f"eq.{eq_id}"}).json()
             if er:
                 eq_name = er[0].get("name", "")
                 eq_vin = er[0].get("serial_vin", "")
+                _, eq_plate = parse_equipment_notes(er[0].get("notes") or "")
 
         return {
             **payload,
@@ -1727,6 +1777,7 @@ def create_deal(deal_data: Dict[str, Any]) -> Dict[str, Any]:
             "client_phone": cl_phone,
             "equipment_name": sales_eq_name if (deal_type == "sales" and sales_eq_name) else eq_name,
             "equipment_vin": eq_vin,
+            "equipment_license_plate": eq_plate,
             "parts_count": 0,
             "parts_selling_total": 0.0,
             "message": "Сделка/наряд успешно создан"
@@ -1763,8 +1814,10 @@ def get_deal(deal_id: int) -> Dict[str, Any]:
         d["client_company"] = cl.get("company", "")
         d["client_phone"] = cl.get("phone", "")
         d["client_email"] = cl.get("email", "")
+        _, eq_plate = parse_equipment_notes(eq.get("notes") or "")
         d["equipment_name"] = s_eq_name if (dtype == "sales" and s_eq_name) else eq.get("name", "")
         d["equipment_vin"] = eq.get("serial_vin", "")
+        d["equipment_license_plate"] = eq_plate
         d["equipment_hours"] = eq.get("operating_hours", "")
 
         dpr = client.get("/deal_parts", params={"deal_id": f"eq.{deal_id}", "select": "*,parts(sku,name,category)"})
