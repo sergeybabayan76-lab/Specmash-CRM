@@ -694,6 +694,7 @@ def serialize_client_notes(
     contacts: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     clean_notes = (notes or "").strip()
+    clean_notes = re.sub(r'\[CLIENT_REQUISITES:\{.*\}\]', '', clean_notes, flags=re.DOTALL).strip()
     clean_notes = re.sub(r'\[CLIENT_REQUISITES:.*?\]', '', clean_notes, flags=re.DOTALL).strip()
     meta: Dict[str, Any] = {}
     if inn and str(inn).strip():
@@ -718,7 +719,7 @@ def serialize_client_notes(
 def extract_client_contacts_data(raw_notes: str) -> Dict[str, Any]:
     if not raw_notes:
         return {"position": "", "contacts": [], "secondary_contact": ""}
-    match = re.search(r'\[CLIENT_REQUISITES:(.*?)\]', raw_notes, flags=re.DOTALL)
+    match = re.search(r'\[CLIENT_REQUISITES:(\{.*\})\]', raw_notes, flags=re.DOTALL) or re.search(r'\[CLIENT_REQUISITES:(.*?)\]', raw_notes, flags=re.DOTALL)
     if match:
         try:
             meta = json.loads(match.group(1))
@@ -742,7 +743,7 @@ def parse_client_notes(raw_notes: str) -> tuple[str, str, str, str]:
     if not raw_notes:
         return "", "", "", ""
     inn, bank_name, bank_account = "", "", ""
-    match = re.search(r'\[CLIENT_REQUISITES:(.*?)\]', raw_notes, flags=re.DOTALL)
+    match = re.search(r'\[CLIENT_REQUISITES:(\{.*\})\]', raw_notes, flags=re.DOTALL) or re.search(r'\[CLIENT_REQUISITES:(.*?)\]', raw_notes, flags=re.DOTALL)
     if match:
         try:
             meta = json.loads(match.group(1))
@@ -751,7 +752,8 @@ def parse_client_notes(raw_notes: str) -> tuple[str, str, str, str]:
             bank_account = meta.get("bank_account", "")
         except Exception:
             pass
-        clean_notes = re.sub(r'\[CLIENT_REQUISITES:.*?\]', '', raw_notes, flags=re.DOTALL).strip()
+        clean_notes = re.sub(r'\[CLIENT_REQUISITES:\{.*\}\]', '', raw_notes, flags=re.DOTALL).strip()
+        clean_notes = re.sub(r'\[CLIENT_REQUISITES:.*?\]', '', clean_notes, flags=re.DOTALL).strip()
         return clean_notes, inn, bank_name, bank_account
 
     m_inn = re.search(r'(?:ИНН|TIN)[:\s]+([0-9A-Za-z]+)', raw_notes, re.IGNORECASE)
