@@ -3148,10 +3148,23 @@ function renderClientsTable() {
     <tr class="hover:bg-slate-50/80 transition-colors">
       <td class="p-3.5">
         <button onclick="viewClientDetails(${c.id})" class="font-bold text-slate-800 hover:text-blue-600 text-left block text-sm">
-          ${c.name}
+          ${c.name}${c.position ? `<span class="text-xs font-medium text-blue-700 ml-1.5">(${escapeHtml(c.position)})</span>` : ''}
         </button>
         <span class="text-xs text-slate-400">${c.company || 'Частное лицо'}</span>
-        ${c.secondary_contact ? `<div class="text-[11px] text-slate-500 mt-0.5 flex items-center gap-1"><i data-lucide="user-plus" class="w-3 h-3 text-blue-500 shrink-0"></i><span>Доп. контакт: ${escapeHtml(c.secondary_contact)}</span></div>` : ''}
+        ${(() => {
+          const contacts = getClientContactsList(c);
+          if (contacts.length > 0) {
+            return `<div class="mt-1 space-y-0.5">` + contacts.map(ct => `
+              <div class="text-[11px] text-slate-600 flex items-center gap-1">
+                <i data-lucide="user-plus" class="w-3 h-3 text-blue-500 shrink-0"></i>
+                <span class="font-medium text-slate-700">${escapeHtml(ct.name || 'Контакт')}</span>
+                ${ct.position ? `<span class="text-slate-500">— ${escapeHtml(ct.position)}</span>` : ''}
+                ${ct.phone ? `<span class="font-mono text-slate-400">(${escapeHtml(ct.phone)})</span>` : ''}
+              </div>
+            `).join('') + `</div>`;
+          }
+          return c.secondary_contact ? `<div class="text-[11px] text-slate-500 mt-0.5 flex items-center gap-1"><i data-lucide="user-plus" class="w-3 h-3 text-blue-500 shrink-0"></i><span>Доп. контакт: ${escapeHtml(c.secondary_contact)}</span></div>` : '';
+        })()}
       </td>
       <td class="p-3.5 text-xs">
         <div class="font-mono text-slate-700">${c.phone}</div>
@@ -3249,11 +3262,24 @@ async function viewClientDetails(clientId) {
     const res = await fetch(`/api/clients/${clientId}`);
     const client = await res.json();
 
-    document.getElementById('view-client-name').textContent = client.name;
+    document.getElementById('view-client-name').textContent = client.name + (client.position ? ` (${client.position})` : '');
     document.getElementById('view-client-company').textContent = client.company || 'Частный заказчик';
     document.getElementById('view-client-phone').textContent = client.phone;
     const secContactViewEl = document.getElementById('view-client-secondary-contact');
-    if (secContactViewEl) secContactViewEl.textContent = client.secondary_contact || 'Не указано';
+    if (secContactViewEl) {
+      const contacts = getClientContactsList(client);
+      if (contacts.length > 0) {
+        secContactViewEl.innerHTML = contacts.map(ct => `
+          <div class="text-xs text-slate-800 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1">
+            <div class="font-bold text-slate-900">${escapeHtml(ct.name || 'Контактное лицо')}</div>
+            ${ct.position ? `<div class="text-[11px] text-blue-700 font-medium">${escapeHtml(ct.position)}</div>` : ''}
+            ${ct.phone ? `<div class="text-[11px] font-mono text-slate-500">${escapeHtml(ct.phone)}</div>` : ''}
+          </div>
+        `).join('');
+      } else {
+        secContactViewEl.textContent = client.secondary_contact || 'Не указано';
+      }
+    }
     document.getElementById('view-client-email').textContent = client.email || 'Не указан';
     document.getElementById('view-client-address').textContent = client.address || 'Не указан';
 
@@ -5923,6 +5949,86 @@ function checkClientDuplicate() {
   }
 }
 
+function getClientContactsList(clientObj) {
+  if (!clientObj) return [];
+  if (Array.isArray(clientObj.contacts) && clientObj.contacts.length > 0) {
+    return clientObj.contacts.filter(c => c && (c.name || c.position || c.phone));
+  }
+  const sec = String(clientObj.secondary_contact || '').trim();
+  if (sec) {
+    return [{ name: sec, position: '', phone: '' }];
+  }
+  return [];
+}
+
+function syncClientContactsEmptyState() {
+  const listEl = document.getElementById('client-contacts-list');
+  const emptyEl = document.getElementById('client-contacts-empty');
+  if (!listEl || !emptyEl) return;
+  const hasRows = listEl.querySelectorAll('.client-contact-row').length > 0;
+  emptyEl.classList.toggle('hidden', hasRows);
+}
+
+function addClientContactRow(contact = {}) {
+  const listEl = document.getElementById('client-contacts-list');
+  if (!listEl) return;
+  const row = document.createElement('div');
+  row.className = 'client-contact-row grid grid-cols-1 sm:grid-cols-12 gap-2 items-center bg-white p-2 rounded-lg border border-blue-200 shadow-2xs';
+  row.innerHTML = `
+    <div class="sm:col-span-5">
+      <input type="text" class="client-contact-name w-full border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs outline-none focus:border-blue-500" placeholder="Имя и Фамилия (напр. Петросян Карен)" value="${escapeHtml(contact.name || '')}">
+    </div>
+    <div class="sm:col-span-4">
+      <input type="text" class="client-contact-position w-full border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs outline-none focus:border-blue-500" placeholder="Должность (напр. Гл. инженер)" value="${escapeHtml(contact.position || '')}">
+    </div>
+    <div class="sm:col-span-2">
+      <input type="text" class="client-contact-phone w-full border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs outline-none focus:border-blue-500 font-mono" placeholder="Телефон" value="${escapeHtml(contact.phone || '')}">
+    </div>
+    <div class="sm:col-span-1 flex justify-end">
+      <button type="button" onclick="removeClientContactRow(this)" class="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors" title="Удалить контакт">
+        <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+      </button>
+    </div>
+  `;
+  listEl.appendChild(row);
+  syncClientContactsEmptyState();
+  if (window.lucide) lucide.createIcons();
+}
+
+function removeClientContactRow(btn) {
+  const row = btn && btn.closest('.client-contact-row');
+  if (row) row.remove();
+  syncClientContactsEmptyState();
+}
+
+function collectClientContactsFromForm() {
+  const listEl = document.getElementById('client-contacts-list');
+  if (!listEl) return [];
+  const rows = Array.from(listEl.querySelectorAll('.client-contact-row'));
+  const contacts = [];
+  rows.forEach(r => {
+    const name = (r.querySelector('.client-contact-name')?.value || '').trim();
+    const position = (r.querySelector('.client-contact-position')?.value || '').trim();
+    const phone = (r.querySelector('.client-contact-phone')?.value || '').trim();
+    if (name || position || phone) {
+      contacts.push({ name, position, phone });
+    }
+  });
+  return contacts;
+}
+
+function formatClientContactsSummaryJS(contacts) {
+  if (!Array.isArray(contacts) || contacts.length === 0) return '';
+  return contacts.map(c => {
+    const name = (c.name || '').trim();
+    const details = [c.position, c.phone].map(x => (x || '').trim()).filter(Boolean);
+    if (details.length > 0) {
+      return name ? `${name} (${details.join(', ')})` : details.join(', ');
+    }
+    return name;
+  }).filter(Boolean).join('; ');
+}
+
 // CLIENT MODAL
 function openClientModal(clientId = null) {
   const form = document.getElementById('form-client');
@@ -5936,15 +6042,20 @@ function openClientModal(clientId = null) {
   if (warn) warn.classList.add('hidden');
   if (info) info.innerHTML = '';
 
-  // Clear requisites fields (Requirement #5)
+  // Clear requisites & contacts fields
   const innEl = document.getElementById('client-inn');
   const bankNameEl = document.getElementById('client-bank-name');
   const bankAccEl = document.getElementById('client-bank-account');
+  const posEl = document.getElementById('client-position');
   const secContactEl = document.getElementById('client-secondary-contact');
+  const contactsListEl = document.getElementById('client-contacts-list');
   if (innEl) innEl.value = '';
   if (bankNameEl) bankNameEl.value = '';
   if (bankAccEl) bankAccEl.value = '';
+  if (posEl) posEl.value = '';
   if (secContactEl) secContactEl.value = '';
+  if (contactsListEl) contactsListEl.innerHTML = '';
+  syncClientContactsEmptyState();
 
   if (clientId) {
     document.getElementById('modal-client-title').textContent = 'Редактировать клиента';
@@ -5958,7 +6069,10 @@ function openClientModal(clientId = null) {
     if (client) {
       document.getElementById('client-id').value = client.id;
       document.getElementById('client-name').value = client.name;
+      if (posEl) posEl.value = client.position || '';
       if (secContactEl) secContactEl.value = client.secondary_contact || '';
+      const existingContacts = getClientContactsList(client);
+      existingContacts.forEach(ct => addClientContactRow(ct));
       document.getElementById('client-company').value = client.company || '';
       document.getElementById('client-phone').value = client.phone;
       document.getElementById('client-email').value = client.email || '';
@@ -5979,9 +6093,13 @@ function openClientModal(clientId = null) {
 async function saveClient(e) {
   e.preventDefault();
   const clientId = document.getElementById('client-id').value;
+  const contacts = collectClientContactsFromForm();
+  const secondarySummary = formatClientContactsSummaryJS(contacts);
   const payload = {
     name: document.getElementById('client-name').value.trim(),
-    secondary_contact: (document.getElementById('client-secondary-contact')?.value || '').trim(),
+    position: (document.getElementById('client-position')?.value || '').trim(),
+    contacts,
+    secondary_contact: secondarySummary,
     company: document.getElementById('client-company').value.trim(),
     phone: document.getElementById('client-phone').value.trim(),
     email: document.getElementById('client-email').value.trim(),

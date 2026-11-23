@@ -646,34 +646,97 @@ def get_system_stats() -> Dict[str, Any]:
 
 # ==================== CLIENTS ====================
 
-def serialize_client_notes(notes: str, inn: str = "", bank_name: str = "", bank_account: str = "", secondary_contact: str = "") -> str:
+def normalize_client_contacts(contacts: Any, fallback_secondary: str = "") -> List[Dict[str, str]]:
+    result: List[Dict[str, str]] = []
+    if isinstance(contacts, list):
+        for item in contacts:
+            if isinstance(item, dict):
+                name = str(item.get("name") or "").strip()
+                position = str(item.get("position") or "").strip()
+                phone = str(item.get("phone") or "").strip()
+                if name or position or phone:
+                    result.append({
+                        "name": name,
+                        "position": position,
+                        "phone": phone,
+                    })
+    if not result and fallback_secondary and str(fallback_secondary).strip():
+        result.append({
+            "name": str(fallback_secondary).strip(),
+            "position": "",
+            "phone": "",
+        })
+    return result
+
+def format_client_contacts_summary(contacts: List[Dict[str, str]], fallback_secondary: str = "") -> str:
+    if not contacts:
+        return (fallback_secondary or "").strip()
+    parts = []
+    for c in contacts:
+        name = (c.get("name") or "").strip()
+        pos = (c.get("position") or "").strip()
+        ph = (c.get("phone") or "").strip()
+        label = name
+        details = [x for x in (pos, ph) if x]
+        if details:
+            label = f"{name} ({', '.join(details)})" if name else ", ".join(details)
+        if label:
+            parts.append(label)
+    return "; ".join(parts)
+
+def serialize_client_notes(
+    notes: str,
+    inn: str = "",
+    bank_name: str = "",
+    bank_account: str = "",
+    secondary_contact: str = "",
+    position: str = "",
+    contacts: Optional[List[Dict[str, Any]]] = None,
+) -> str:
     clean_notes = (notes or "").strip()
     clean_notes = re.sub(r'\[CLIENT_REQUISITES:.*?\]', '', clean_notes, flags=re.DOTALL).strip()
-    meta = {}
+    meta: Dict[str, Any] = {}
     if inn and str(inn).strip():
         meta["inn"] = str(inn).strip()
     if bank_name and str(bank_name).strip():
         meta["bank_name"] = str(bank_name).strip()
     if bank_account and str(bank_account).strip():
         meta["bank_account"] = str(bank_account).strip()
-    if secondary_contact and str(secondary_contact).strip():
+    if position and str(position).strip():
+        meta["position"] = str(position).strip()
+    norm_contacts = normalize_client_contacts(contacts, fallback_secondary=secondary_contact)
+    if norm_contacts:
+        meta["contacts"] = norm_contacts
+        meta["secondary_contact"] = format_client_contacts_summary(norm_contacts, secondary_contact)
+    elif secondary_contact and str(secondary_contact).strip():
         meta["secondary_contact"] = str(secondary_contact).strip()
     if meta:
         meta_str = f"[CLIENT_REQUISITES:{json.dumps(meta, ensure_ascii=False)}]"
         return f"{clean_notes}\n{meta_str}".strip() if clean_notes else meta_str
     return clean_notes
 
-def extract_client_secondary_contact(raw_notes: str) -> str:
+def extract_client_contacts_data(raw_notes: str) -> Dict[str, Any]:
     if not raw_notes:
-        return ""
+        return {"position": "", "contacts": [], "secondary_contact": ""}
     match = re.search(r'\[CLIENT_REQUISITES:(.*?)\]', raw_notes, flags=re.DOTALL)
     if match:
         try:
             meta = json.loads(match.group(1))
-            return str(meta.get("secondary_contact") or "").strip()
+            pos = str(meta.get("position") or "").strip()
+            raw_sec = str(meta.get("secondary_contact") or "").strip()
+            norm_contacts = normalize_client_contacts(meta.get("contacts"), fallback_secondary=raw_sec)
+            sec_summary = format_client_contacts_summary(norm_contacts, raw_sec)
+            return {
+                "position": pos,
+                "contacts": norm_contacts,
+                "secondary_contact": sec_summary,
+            }
         except Exception:
             pass
-    return ""
+    return {"position": "", "contacts": [], "secondary_contact": ""}
+
+def extract_client_secondary_contact(raw_notes: str) -> str:
+    return extract_client_contacts_data(raw_notes)["secondary_contact"]
 
 def parse_client_notes(raw_notes: str) -> tuple[str, str, str, str]:
     if not raw_notes:
@@ -784,11 +847,14 @@ def list_clients(q: Optional[str] = None) -> List[Dict[str, Any]]:
             item.pop("deals", None)
             raw_notes_val = item.get("notes") or ""
             clean_notes, inn, bank_name, bank_account = parse_client_notes(raw_notes_val)
+            contacts_data = extract_client_contacts_data(raw_notes_val)
             item["notes"] = clean_notes
             item["inn"] = inn
             item["bank_name"] = bank_name
             item["bank_account"] = bank_account
-            item["secondary_contact"] = extract_client_secondary_contact(raw_notes_val)
+            item["position"] = contacts_data["position"]
+            item["contacts"] = contacts_data["contacts"]
+            item["secondary_contact"] = contacts_data["secondary_contact"]
             item["equipment_count"] = len(client_eq_list)
             item["equipment_list"] = client_eq_list
             item["deals_count"] = len(client_deals)
@@ -800,13 +866,18 @@ def create_client(client_data: Dict[str, Any]) -> Dict[str, Any]:
     with get_database_client() as client:
         next_id = get_next_id(client, "clients")
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        sec_contact = (client_data.get("secondary_contact") or "").strip()
+        pos_val = (client_data.get("position") or "").strip()
+        raw_sec = (client_data.get("secondary_contact") or "").strip()
+        norm_contacts = normalize_client_contacts(client_data.get("contacts"), fallback_secondary=raw_sec)
+        sec_contact = format_client_contacts_summary(norm_contacts, raw_sec)
         serialized_notes = serialize_client_notes(
             client_data.get("notes") or "",
             inn=client_data.get("inn") or "",
             bank_name=client_data.get("bank_name") or "",
             bank_account=client_data.get("bank_account") or "",
-            secondary_contact=sec_contact
+            secondary_contact=sec_contact,
+            position=pos_val,
+            contacts=norm_contacts,
         )
         payload = {
             "id": next_id,
@@ -826,6 +897,8 @@ def create_client(client_data: Dict[str, Any]) -> Dict[str, Any]:
         item["inn"] = client_data.get("inn") or ""
         item["bank_name"] = client_data.get("bank_name") or ""
         item["bank_account"] = client_data.get("bank_account") or ""
+        item["position"] = pos_val
+        item["contacts"] = norm_contacts
         item["secondary_contact"] = sec_contact
         item["notes"] = (client_data.get("notes") or "").strip()
         item["equipment_count"] = 0
@@ -844,11 +917,14 @@ def get_crm_client(client_id: int) -> Dict[str, Any]:
         c = rows[0]
         raw_notes_val = c.get("notes") or ""
         clean_notes, inn, bank_name, bank_account = parse_client_notes(raw_notes_val)
+        contacts_data = extract_client_contacts_data(raw_notes_val)
         c["notes"] = clean_notes
         c["inn"] = inn
         c["bank_name"] = bank_name
         c["bank_account"] = bank_account
-        c["secondary_contact"] = extract_client_secondary_contact(raw_notes_val)
+        c["position"] = contacts_data["position"]
+        c["contacts"] = contacts_data["contacts"]
+        c["secondary_contact"] = contacts_data["secondary_contact"]
 
         eq_r = client.get("/equipment", params={"client_id": f"eq.{client_id}", "order": "id.desc"})
         client_eq = list(eq_r.json() if eq_r.status_code == 200 else [])
@@ -897,12 +973,20 @@ def update_client(client_id: int, client_data: Dict[str, Any]) -> Dict[str, Any]
         if existing_r.status_code == 200 and existing_r.json():
             existing_notes = existing_r.json()[0].get("notes") or ""
         old_clean, old_inn, old_bank, old_acc = parse_client_notes(existing_notes)
-        old_sec = extract_client_secondary_contact(existing_notes)
+        old_contacts_data = extract_client_contacts_data(existing_notes)
 
         new_inn = client_data.get("inn") if "inn" in client_data and client_data["inn"] is not None else old_inn
         new_bank = client_data.get("bank_name") if "bank_name" in client_data and client_data["bank_name"] is not None else old_bank
         new_acc = client_data.get("bank_account") if "bank_account" in client_data and client_data["bank_account"] is not None else old_acc
-        new_sec = client_data.get("secondary_contact") if "secondary_contact" in client_data and client_data["secondary_contact"] is not None else old_sec
+        new_pos = str(client_data.get("position") or "").strip() if "position" in client_data and client_data["position"] is not None else old_contacts_data["position"]
+        raw_sec_in = str(client_data.get("secondary_contact") or "").strip() if "secondary_contact" in client_data and client_data["secondary_contact"] is not None else old_contacts_data["secondary_contact"]
+        if "contacts" in client_data and client_data["contacts"] is not None:
+            new_contacts = normalize_client_contacts(client_data["contacts"], fallback_secondary=raw_sec_in)
+        elif "secondary_contact" in client_data and client_data["secondary_contact"] is not None:
+            new_contacts = normalize_client_contacts([], fallback_secondary=raw_sec_in)
+        else:
+            new_contacts = old_contacts_data["contacts"]
+        new_sec = format_client_contacts_summary(new_contacts, raw_sec_in)
         new_notes_raw = client_data.get("notes") if "notes" in client_data and client_data["notes"] is not None else old_clean
 
         serialized_notes = serialize_client_notes(
@@ -910,7 +994,9 @@ def update_client(client_id: int, client_data: Dict[str, Any]) -> Dict[str, Any]
             inn=new_inn,
             bank_name=new_bank,
             bank_account=new_acc,
-            secondary_contact=new_sec
+            secondary_contact=new_sec,
+            position=new_pos,
+            contacts=new_contacts,
         )
 
         payload = {
@@ -932,6 +1018,8 @@ def update_client(client_id: int, client_data: Dict[str, Any]) -> Dict[str, Any]
             "inn": new_inn,
             "bank_name": new_bank,
             "bank_account": new_acc,
+            "position": new_pos,
+            "contacts": new_contacts,
             "secondary_contact": new_sec,
             "notes": new_notes_raw,
             "message": "Данные клиента обновлены"

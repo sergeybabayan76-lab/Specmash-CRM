@@ -206,6 +206,7 @@ class FullSettingsUpdate(BaseModel):
 
 class ClientCreate(BaseModel):
     name: str
+    position: Optional[str] = ""
     company: Optional[str] = ""
     phone: Optional[str] = ""
     email: Optional[str] = ""
@@ -215,6 +216,7 @@ class ClientCreate(BaseModel):
     bank_name: Optional[str] = ""
     bank_account: Optional[str] = ""
     secondary_contact: Optional[str] = ""
+    contacts: Optional[List[Dict[str, Any]]] = None
 
 class EquipmentCreate(BaseModel):
     client_id: Optional[int] = None
