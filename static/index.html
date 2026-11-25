@@ -11,7 +11,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Lucide Icons CDN -->
   <script src="https://unpkg.com/lucide@latest"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=1.2.5.3">
+  <link rel="stylesheet" href="/static/styles.css?v=1.2.5.4">
   <script>
     tailwind.config = {
       theme: {
@@ -2319,22 +2319,35 @@
               <div id="attach-part-suggestions" class="hidden absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-2xl z-50 max-h-56 overflow-y-auto divide-y divide-slate-100"></div>
             </div>
 
-            <div class="flex items-center gap-2">
-              <select id="attach-part-select" onchange="handleAttachPartSelectChange(this.value)" class="flex-1 text-xs border border-amber-300 rounded-lg px-2.5 py-2 bg-white outline-none">
-                <!-- populated -->
-              </select>
-              <div class="flex items-center gap-1.5 shrink-0">
-                <span id="attach-part-unit-label" class="text-xs text-slate-600 font-medium">Шт:</span>
-                <div class="inline-flex items-center border border-amber-300 rounded-lg bg-white overflow-hidden">
+            <div class="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
+              <div class="sm:col-span-5">
+                <label class="block text-[10px] font-bold text-amber-900 uppercase mb-0.5">Запчасть</label>
+                <select id="attach-part-select" onchange="handleAttachPartSelectChange(this.value)" class="w-full text-xs border border-amber-300 rounded-lg px-2.5 py-2 bg-white outline-none">
+                  <!-- populated -->
+                </select>
+              </div>
+              <div class="sm:col-span-3">
+                <label class="block text-[10px] font-bold text-amber-900 uppercase mb-0.5">Списать со склада *</label>
+                <select id="attach-part-warehouse" class="w-full text-xs border border-amber-300 rounded-lg px-2.5 py-2 bg-white font-semibold text-amber-950 outline-none focus:border-amber-600">
+                  <option value="main">Оснавной</option>
+                  <option value="showcase">Витрина</option>
+                  <option value="dealer1">Дилер 1</option>
+                </select>
+              </div>
+              <div class="sm:col-span-2">
+                <label id="attach-part-unit-label" class="block text-[10px] font-bold text-amber-900 uppercase mb-0.5">Кол-во (Шт):</label>
+                <div class="inline-flex items-center border border-amber-300 rounded-lg bg-white overflow-hidden w-full">
                   <button type="button" onclick="stepAttachPartQty(-1)" class="px-2 py-2 text-amber-800 hover:bg-amber-100 font-bold text-xs leading-none" title="Уменьшить (шаг 0.5 / 1)">−</button>
-                  <input type="text" inputmode="decimal" id="attach-part-qty" value="1" placeholder="0.5" class="w-14 text-xs py-2 font-mono text-center outline-none bg-white font-bold border-x border-amber-200">
+                  <input type="text" inputmode="decimal" id="attach-part-qty" value="1" placeholder="0.5" class="w-full text-xs py-2 font-mono text-center outline-none bg-white font-bold border-x border-amber-200">
                   <button type="button" onclick="stepAttachPartQty(1)" class="px-2 py-2 text-amber-800 hover:bg-amber-100 font-bold text-xs leading-none" title="Увеличить (шаг 0.5 / 1)">+</button>
                 </div>
               </div>
-              <button type="button" onclick="submitAttachPart()" class="bg-amber-600 hover:bg-amber-700 text-white text-xs px-4 py-2 rounded-lg font-bold shadow-sm flex items-center gap-1.5 shrink-0">
-                <i data-lucide="plus" class="w-3.5 h-3.5"></i>
-                <span>Списать</span>
-              </button>
+              <div class="sm:col-span-2 self-end">
+                <button type="button" onclick="submitAttachPart()" class="w-full bg-amber-600 hover:bg-amber-700 text-white text-xs px-3 py-2 rounded-lg font-bold shadow-sm flex items-center justify-center gap-1.5">
+                  <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+                  <span>Списать</span>
+                </button>
+              </div>
             </div>
           </div>
 
@@ -2746,17 +2759,42 @@
           <input type="text" id="part-name" required placeholder="Фильтр масляный CASE (84284102)" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
         </div>
 
+        <!-- Multi-Warehouse Stock Distribution: Оснавной, Витрина, Дилер 1 -->
+        <div class="p-3 bg-blue-50/50 border border-blue-200 rounded-xl space-y-2.5">
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-[11px] font-bold uppercase text-blue-950 flex items-center gap-1.5">
+              <i data-lucide="warehouse" class="w-3.5 h-3.5 text-blue-600"></i>
+              <span>Распределение количества по складам</span>
+            </span>
+            <span id="part-warehouses-unit-hint" class="text-[11px] font-mono font-bold text-blue-800">Ед. изм.: шт</span>
+          </div>
+          <div class="grid grid-cols-3 gap-2.5">
+            <div>
+              <label id="part-qty-main-label" class="block text-[11px] font-bold text-slate-700 uppercase mb-1">Склад: Оснавной</label>
+              <input type="text" inputmode="decimal" id="part-qty-main" value="0" oninput="recalcPartTotalFromWarehouses()" placeholder="0" class="w-full border border-blue-300 bg-white rounded-lg px-2.5 py-1.5 text-sm outline-none focus:border-blue-600 font-mono font-bold text-slate-900">
+            </div>
+            <div>
+              <label id="part-qty-showcase-label" class="block text-[11px] font-bold text-slate-700 uppercase mb-1">Склад: Витрина</label>
+              <input type="text" inputmode="decimal" id="part-qty-showcase" value="0" oninput="recalcPartTotalFromWarehouses()" placeholder="0" class="w-full border border-blue-300 bg-white rounded-lg px-2.5 py-1.5 text-sm outline-none focus:border-blue-600 font-mono font-bold text-slate-900">
+            </div>
+            <div>
+              <label id="part-qty-dealer1-label" class="block text-[11px] font-bold text-slate-700 uppercase mb-1">Склад: Дилер 1</label>
+              <input type="text" inputmode="decimal" id="part-qty-dealer1" value="0" oninput="recalcPartTotalFromWarehouses()" placeholder="0" class="w-full border border-blue-300 bg-white rounded-lg px-2.5 py-1.5 text-sm outline-none focus:border-blue-600 font-mono font-bold text-slate-900">
+            </div>
+          </div>
+        </div>
+
         <div class="grid grid-cols-3 gap-3">
           <div>
-            <label id="part-quantity-label" class="block text-xs font-bold text-slate-700 uppercase mb-1">Количество (шт)</label>
-            <input type="text" inputmode="decimal" id="part-quantity" value="0" placeholder="Например: 0.5" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-mono">
+            <label id="part-quantity-label" class="block text-xs font-bold text-slate-700 uppercase mb-1">Общее кол-во (шт)</label>
+            <input type="text" inputmode="decimal" id="part-quantity" value="0" oninput="handlePartTotalQtyInput(this.value)" placeholder="Например: 0.5" class="w-full border border-slate-300 bg-slate-50 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-mono font-bold">
           </div>
           <div>
             <label id="part-min-threshold-label" class="block text-xs font-bold text-slate-700 uppercase mb-1">Мин. остаток (шт)</label>
             <input type="text" inputmode="decimal" id="part-min-threshold" value="2" placeholder="2" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-mono">
           </div>
           <div>
-            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Склад / Ячейка</label>
+            <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Ячейка / Стеллаж</label>
             <input type="text" id="part-location" placeholder="Стеллаж А-1" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500">
           </div>
         </div>
@@ -2793,9 +2831,18 @@
 
       <form id="form-stock-adjust" onsubmit="saveStockAdjust(event)" class="mt-4 space-y-4">
         <input type="hidden" id="adjust-part-id">
+        <div id="adjust-warehouses-summary" class="p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700"></div>
+        <div>
+          <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Склад (для добавления / списания) *</label>
+          <select id="adjust-warehouse" class="w-full border border-blue-300 bg-blue-50/40 rounded-lg px-3 py-2 text-xs font-bold text-slate-900 outline-none focus:border-blue-600">
+            <option value="main">Оснавной</option>
+            <option value="showcase">Витрина</option>
+            <option value="dealer1">Дилер 1</option>
+          </select>
+        </div>
         <div>
           <label class="block text-xs font-bold text-slate-700 uppercase mb-1">Количество изменения</label>
-          <p class="text-[11px] text-slate-400 mb-1">Положительное — приход (+5), отрицательное — списание (-2)</p>
+          <p class="text-[11px] text-slate-400 mb-1">Положительное — добавление на выбранный склад (+5), отрицательное — списание с выбранного склада (-2)</p>
           <input type="text" inputmode="decimal" id="adjust-quantity" required placeholder="+10, +0.5 или -0.5" class="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-500 font-mono text-center font-bold">
         </div>
         <div>
@@ -3173,9 +3220,9 @@
 
   <!-- Scripts -->
   <script src="/static/app/core/state.js?v=1.0.0"></script>
-  <script src="/static/app/core/router.js?v=1.2.5.3"></script>
+  <script src="/static/app/core/router.js?v=1.2.5.4"></script>
   <script src="/static/app/core/api.js?v=1.0.0"></script>
   <script src="/static/app/pages/index.js?v=1.0.0"></script>
-  <script src="/static/app.js?v=1.2.5.3"></script>
+  <script src="/static/app.js?v=1.2.5.4"></script>
 </body>
 </html>

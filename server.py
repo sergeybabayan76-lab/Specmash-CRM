@@ -244,6 +244,11 @@ class PartCreate(BaseModel):
     name: str
     category: str
     quantity: Any = 0.0
+    qty_main: Optional[Any] = None
+    qty_showcase: Optional[Any] = None
+    qty_dealer1: Optional[Any] = None
+    warehouse_stocks: Optional[Dict[str, Any]] = None
+    warehouse: Optional[str] = "main"
     min_threshold: Any = 2.0
     purchase_price: float = 0.0
     selling_price: float = 0.0
@@ -251,6 +256,7 @@ class PartCreate(BaseModel):
 
 class PartStockAdjust(BaseModel):
     quantity_change: Any
+    warehouse: Optional[str] = "main"
     comment: Optional[str] = "Корректировка остатка"
 
 class DealCreate(BaseModel):
@@ -318,9 +324,11 @@ class UserPermissionsUpdate(BaseModel):
 class DealAttachPart(BaseModel):
     part_id: int
     quantity: Any = 1.0
+    warehouse: Optional[str] = "main"
 
 class DealUpdatePartQty(BaseModel):
     quantity: Any
+    warehouse: Optional[str] = None
 
 class TaskCreate(BaseModel):
     title: str
@@ -823,7 +831,7 @@ async def attach_part_to_deal(
     except KeyError:
         raise HTTPException(status_code=404, detail="Сделка не найдена")
     try:
-        res = database.attach_part_to_deal(deal_id, item.part_id, item.quantity)
+        res = database.attach_part_to_deal(deal_id, item.part_id, item.quantity, warehouse=item.warehouse)
         await manager.broadcast({
             "type": "deal_parts_updated",
             "deal_id": deal_id,
@@ -853,7 +861,7 @@ async def update_deal_part_quantity(
     except KeyError:
         raise HTTPException(status_code=404, detail="Сделка не найдена")
     try:
-        res = database.update_deal_part_quantity(deal_id, deal_part_id, item.quantity)
+        res = database.update_deal_part_quantity(deal_id, deal_part_id, item.quantity, warehouse=item.warehouse)
         await manager.broadcast({
             "type": "deal_parts_updated",
             "deal_id": deal_id,
@@ -919,7 +927,12 @@ def update_part(part_id: int, part: PartCreate):
 @app.post("/api/parts/{part_id}/stock")
 def adjust_part_stock(part_id: int, adjust: PartStockAdjust):
     try:
-        return database.adjust_part_stock(part_id, adjust.quantity_change, adjust.comment or "Корректировка остатка")
+        return database.adjust_part_stock(
+            part_id,
+            adjust.quantity_change,
+            adjust.comment or "Корректировка остатка",
+            warehouse=adjust.warehouse or "main",
+        )
     except KeyError:
         raise HTTPException(status_code=404, detail="Запчасть не найдена")
     except ValueError as e:

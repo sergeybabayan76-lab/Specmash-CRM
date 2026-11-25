@@ -415,15 +415,62 @@ function parsePartNumberInput(val, fallback = 0) {
   return isNaN(num) ? fallback : Math.round(num * 100) / 100;
 }
 
+const PART_WAREHOUSE_LABELS_JS = {
+  main: 'Оснавной',
+  showcase: 'Витрина',
+  dealer1: 'Дилер 1'
+};
+
+function getPartWarehouseStocks(partObj) {
+  if (!partObj) return { main: 0, showcase: 0, dealer1: 0 };
+  const total = parsePartNumberInput(partObj.quantity, 0);
+  const ws = partObj.warehouse_stocks;
+  if (ws && typeof ws === 'object') {
+    return {
+      main: Math.max(0, parsePartNumberInput(ws.main, 0)),
+      showcase: Math.max(0, parsePartNumberInput(ws.showcase, 0)),
+      dealer1: Math.max(0, parsePartNumberInput(ws.dealer1, 0)),
+    };
+  }
+  if (partObj.qty_main !== undefined || partObj.qty_showcase !== undefined || partObj.qty_dealer1 !== undefined) {
+    return {
+      main: Math.max(0, parsePartNumberInput(partObj.qty_main, 0)),
+      showcase: Math.max(0, parsePartNumberInput(partObj.qty_showcase, 0)),
+      dealer1: Math.max(0, parsePartNumberInput(partObj.qty_dealer1, 0)),
+    };
+  }
+  return { main: Math.max(0, total), showcase: 0, dealer1: 0 };
+}
+
+function recalcPartTotalFromWarehouses() {
+  const qMain = Math.max(0, parsePartNumberInput(document.getElementById('part-qty-main')?.value, 0));
+  const qShow = Math.max(0, parsePartNumberInput(document.getElementById('part-qty-showcase')?.value, 0));
+  const qDeal = Math.max(0, parsePartNumberInput(document.getElementById('part-qty-dealer1')?.value, 0));
+  const total = Math.round((qMain + qShow + qDeal) * 100) / 100;
+  const qtyInput = document.getElementById('part-quantity');
+  if (qtyInput) qtyInput.value = String(total);
+}
+
+function handlePartTotalQtyInput(val) {
+  const total = Math.max(0, parsePartNumberInput(val, 0));
+  const qShow = Math.max(0, parsePartNumberInput(document.getElementById('part-qty-showcase')?.value, 0));
+  const qDeal = Math.max(0, parsePartNumberInput(document.getElementById('part-qty-dealer1')?.value, 0));
+  const qMain = Math.max(0, Math.round((total - qShow - qDeal) * 100) / 100);
+  const mainInput = document.getElementById('part-qty-main');
+  if (mainInput) mainInput.value = String(qMain);
+}
+
 function updatePartQuantityUnit(category) {
   const unit = getPartUnit(category);
   const isOil = unit === 'л';
   const qtyLabel = document.getElementById('part-quantity-label');
   const minLabel = document.getElementById('part-min-threshold-label');
+  const whUnitHint = document.getElementById('part-warehouses-unit-hint');
   const qtyInput = document.getElementById('part-quantity');
   const minInput = document.getElementById('part-min-threshold');
-  if (qtyLabel) qtyLabel.textContent = `Количество (${unit})`;
+  if (qtyLabel) qtyLabel.textContent = `Общее кол-во (${unit})`;
   if (minLabel) minLabel.textContent = `Мин. остаток (${unit})`;
+  if (whUnitHint) whUnitHint.textContent = `Ед. изм.: ${unit}`;
   if (qtyInput) {
     qtyInput.step = isOil ? 'any' : '1';
     qtyInput.placeholder = isOil ? 'Например: 0.5' : '0';
@@ -3496,6 +3543,8 @@ function renderPartsTable(searchQuery = null) {
 
   tbody.innerHTML = filteredParts.map(p => {
     const isLow = p.quantity <= p.min_threshold;
+    const unit = getPartUnit(p);
+    const wh = getPartWarehouseStocks(p);
     return `
       <tr class="hover:bg-slate-50/80 transition-colors ${isLow ? 'bg-rose-50/30' : ''}">
         <td class="p-3.5 font-mono text-xs font-bold text-slate-700">
@@ -3512,9 +3561,14 @@ function renderPartsTable(searchQuery = null) {
         </td>
         <td class="p-3.5 text-xs font-mono font-bold">
           <span class="px-2 py-0.5 rounded-full ${isLow ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-800'}">
-            ${p.quantity} ${getPartUnit(p)}
+            Всего: ${p.quantity} ${unit}
           </span>
-          ${isLow ? `<span class="text-[10px] text-rose-500 block font-normal mt-0.5">Дефицит! (мин ${p.min_threshold} ${getPartUnit(p)})</span>` : ''}
+          <div class="mt-1 flex flex-wrap gap-1 font-normal text-[10px]">
+            <span class="px-1.5 py-0.2 rounded bg-blue-50 text-blue-800 border border-blue-200">Оснавной: <b>${wh.main}</b></span>
+            <span class="px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-800 border border-indigo-200">Витрина: <b>${wh.showcase}</b></span>
+            <span class="px-1.5 py-0.2 rounded bg-amber-50 text-amber-800 border border-amber-200">Дилер 1: <b>${wh.dealer1}</b></span>
+          </div>
+          ${isLow ? `<span class="text-[10px] text-rose-500 block font-normal mt-0.5">Дефицит! (мин ${p.min_threshold} ${unit})</span>` : ''}
         </td>
         <td class="p-3.5 text-xs font-mono text-slate-600 col-purchase-price">
           ${formatMoney(p.purchase_price)}
@@ -3523,7 +3577,7 @@ function renderPartsTable(searchQuery = null) {
           ${formatMoney(p.selling_price)}
         </td>
         <td class="p-3.5 text-right space-x-1 whitespace-nowrap">
-          <button onclick="openStockAdjustModal(${p.id}, '${p.name.replace(/'/g, "\\'")}')" class="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs rounded font-medium" title="Оприходовать / Списать">
+          <button onclick="openStockAdjustModal(${p.id}, '${p.name.replace(/'/g, "\\'")}')" class="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs rounded font-medium" title="Оприходовать / Списать со склада">
             ± Кол-во
           </button>
           <button onclick="openPartModal(${p.id})" class="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded" title="Редактировать">
@@ -3542,6 +3596,30 @@ function openStockAdjustModal(partId, partName) {
   document.getElementById('adjust-part-name').textContent = `Приход / расход: ${partName}`;
   document.getElementById('adjust-quantity').value = '';
   document.getElementById('adjust-comment').value = '';
+
+  const partObj = getWarehousePartsCatalog().find(p => Number(p.id) === Number(partId));
+  const unit = partObj ? getPartUnit(partObj) : 'шт';
+  const wh = getPartWarehouseStocks(partObj);
+  const summaryEl = document.getElementById('adjust-warehouses-summary');
+  if (summaryEl) {
+    summaryEl.innerHTML = `
+      <div class="font-bold text-slate-800 mb-1">Текущие остатки по складам (Всего: ${partObj ? partObj.quantity : 0} ${unit}):</div>
+      <div class="grid grid-cols-3 gap-1.5 text-[11px] font-mono">
+        <div class="bg-white border border-slate-200 rounded px-2 py-1">Оснавной: <b>${wh.main} ${unit}</b></div>
+        <div class="bg-white border border-slate-200 rounded px-2 py-1">Витрина: <b>${wh.showcase} ${unit}</b></div>
+        <div class="bg-white border border-slate-200 rounded px-2 py-1">Дилер 1: <b>${wh.dealer1} ${unit}</b></div>
+      </div>
+    `;
+  }
+  const whSelect = document.getElementById('adjust-warehouse');
+  if (whSelect) {
+    whSelect.innerHTML = `
+      <option value="main">Оснавной (в наличии: ${wh.main} ${unit})</option>
+      <option value="showcase">Витрина (в наличии: ${wh.showcase} ${unit})</option>
+      <option value="dealer1">Дилер 1 (в наличии: ${wh.dealer1} ${unit})</option>
+    `;
+    whSelect.value = 'main';
+  }
   openModal('modal-stock-adjust');
 }
 
@@ -3549,6 +3627,7 @@ async function saveStockAdjust(e) {
   e.preventDefault();
   const partId = parseInt(document.getElementById('adjust-part-id').value);
   const qty = parsePartNumberInput(document.getElementById('adjust-quantity').value, 0);
+  const warehouse = document.getElementById('adjust-warehouse')?.value || 'main';
   const comment = document.getElementById('adjust-comment').value || 'Корректировка остатка';
 
   if (isNaN(qty) || qty === 0) {
@@ -3560,17 +3639,28 @@ async function saveStockAdjust(e) {
     const res = await fetch(`/api/parts/${partId}/stock`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ quantity_change: qty, comment: comment })
+      body: JSON.stringify({ quantity_change: qty, warehouse, comment })
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || 'Ошибка');
 
-    const partObj = state.parts.find(p => p.id === partId);
-    if (partObj && typeof data.new_quantity === 'number') {
-      partObj.quantity = data.new_quantity;
-      partObj._updated_at = Date.now();
-      crmStore.saveItem('parts', partObj);
-    }
+    const syncPartList = (list) => {
+      if (!Array.isArray(list)) return;
+      const partObj = list.find(p => Number(p.id) === Number(partId));
+      if (partObj) {
+        if (typeof data.new_quantity === 'number') partObj.quantity = data.new_quantity;
+        if (data.warehouse_stocks) {
+          partObj.warehouse_stocks = data.warehouse_stocks;
+          partObj.qty_main = data.warehouse_stocks.main;
+          partObj.qty_showcase = data.warehouse_stocks.showcase;
+          partObj.qty_dealer1 = data.warehouse_stocks.dealer1;
+        }
+        partObj._updated_at = Date.now();
+        crmStore.saveItem('parts', partObj);
+      }
+    };
+    syncPartList(state.parts);
+    syncPartList(state.allParts);
 
     showToast(data.message);
     closeModal('modal-stock-adjust');
@@ -4762,7 +4852,10 @@ function renderDealAttachedParts(parts) {
     return `
     <div class="flex items-center justify-between gap-2 p-2 rounded-lg bg-slate-50 border border-slate-200 text-xs">
       <div class="min-w-0 flex-1">
-        <div class="font-bold text-slate-800 truncate" title="${escapeHtml(p.part_name)}">${escapeHtml(p.part_name)}</div>
+        <div class="font-bold text-slate-800 truncate flex items-center gap-1.5 flex-wrap" title="${escapeHtml(p.part_name)}">
+          <span class="truncate">${escapeHtml(p.part_name)}</span>
+          <span class="px-1.5 py-0.2 rounded bg-blue-50 text-blue-800 border border-blue-200 text-[10px] font-semibold shrink-0">Склад: ${escapeHtml(p.warehouse_label || PART_WAREHOUSE_LABELS_JS[p.warehouse] || 'Оснавной')}</span>
+        </div>
         <div class="text-[11px] font-mono text-slate-500">${escapeHtml(p.sku)} • ${formatMoney(unitPrice)} / ${unit}</div>
       </div>
       <div class="flex items-center gap-2 shrink-0">
@@ -4827,9 +4920,10 @@ async function loadWarehousePartsOptions(filteredParts = null) {
     const qty = Number(p.quantity || 0);
     const isSel = String(p.id) === String(selectedId);
     const unit = getPartUnit(p);
+    const wh = getPartWarehouseStocks(p);
     return `
       <option value="${p.id}" ${qty <= 0 ? 'disabled' : ''} ${isSel ? 'selected' : ''}>
-        ${escapeHtml(p.name)} [${escapeHtml(p.sku)}] — ост: ${qty} ${unit} (${formatMoney(p.selling_price)})
+        ${escapeHtml(p.name)} [${escapeHtml(p.sku)}] — всего: ${qty} ${unit} (Осн: ${wh.main} | Витр: ${wh.showcase} | Дилер 1: ${wh.dealer1}) • ${formatMoney(p.selling_price)}
       </option>
     `;
   }).join('');
@@ -4878,6 +4972,7 @@ function handleAttachPartSearch(query) {
   suggestionsBox.innerHTML = matches.slice(0, 15).map(p => {
     const qty = Number(p.quantity || 0);
     const isOut = qty <= 0;
+    const wh = getPartWarehouseStocks(p);
     return `
       <div onclick="selectAttachPartSuggestion(${p.id})" class="p-2.5 hover:bg-amber-50 cursor-pointer flex items-center justify-between text-xs transition-colors">
         <div class="min-w-0 pr-2">
@@ -4885,7 +4980,10 @@ function handleAttachPartSearch(query) {
             <span class="truncate">${escapeHtml(p.name)}</span>
             <span class="font-mono text-[10px] bg-slate-100 text-slate-700 px-1.5 py-0.2 rounded border border-slate-200 shrink-0 font-bold">${escapeHtml(p.sku)}</span>
           </div>
-          <div class="text-[11px] text-slate-400 mt-0.5">${p.location ? 'Локация: ' + escapeHtml(p.location) + ' • ' : ''}Категория: ${escapeHtml(p.category || 'Общая')}</div>
+          <div class="text-[11px] text-slate-500 mt-0.5 flex flex-wrap gap-1.5">
+            <span>Оснавной: <b>${wh.main}</b></span>•<span>Витрина: <b>${wh.showcase}</b></span>•<span>Дилер 1: <b>${wh.dealer1}</b></span>
+            ${p.location ? '• Ячейка: ' + escapeHtml(p.location) : ''}
+          </div>
         </div>
         <div class="text-right shrink-0">
           <div class="font-bold ${isOut ? 'text-rose-500' : 'text-emerald-700'} font-mono">${qty} ${getPartUnit(p)}</div>
@@ -4936,9 +5034,31 @@ function handleAttachPartSelectChange(partId) {
     if (searchInput && !searchInput.value) {
       searchInput.placeholder = `Выбрано: [${part.sku}] ${part.name}`;
     }
+    const unit = getPartUnit(part);
     const unitLabel = document.getElementById('attach-part-unit-label');
     if (unitLabel) {
-      unitLabel.textContent = getPartUnit(part) === 'л' ? 'Л:' : 'Шт:';
+      unitLabel.textContent = unit === 'л' ? 'Кол-во (Л):' : 'Кол-во (Шт):';
+    }
+    const wh = getPartWarehouseStocks(part);
+    const whSelect = document.getElementById('attach-part-warehouse');
+    if (whSelect) {
+      const prevVal = whSelect.value;
+      whSelect.innerHTML = `
+        <option value="main">Оснавной (${wh.main} ${unit})</option>
+        <option value="showcase">Витрина (${wh.showcase} ${unit})</option>
+        <option value="dealer1">Дилер 1 (${wh.dealer1} ${unit})</option>
+      `;
+      if (prevVal && Number(wh[prevVal] || 0) > 0) {
+        whSelect.value = prevVal;
+      } else if (Number(wh.main || 0) > 0) {
+        whSelect.value = 'main';
+      } else if (Number(wh.showcase || 0) > 0) {
+        whSelect.value = 'showcase';
+      } else if (Number(wh.dealer1 || 0) > 0) {
+        whSelect.value = 'dealer1';
+      } else {
+        whSelect.value = 'main';
+      }
     }
     const qtyInput = document.getElementById('attach-part-qty');
     const avail = Number(part.quantity || 0);
@@ -5040,6 +5160,8 @@ async function ensureDealSavedForPartWriteOff() {
 async function submitAttachPart() {
   const partSelect = document.getElementById('attach-part-select');
   const partId = parseInt(partSelect?.value);
+  const warehouse = document.getElementById('attach-part-warehouse')?.value || 'main';
+  const whLabel = PART_WAREHOUSE_LABELS_JS[warehouse] || 'Оснавной';
   const rawQty = parsePartNumberInput(document.getElementById('attach-part-qty')?.value, 1);
   const qty = rawQty > 0 ? rawQty : 1;
 
@@ -5050,9 +5172,13 @@ async function submitAttachPart() {
 
   const catalog = getWarehousePartsCatalog();
   const selectedPart = catalog.find(p => Number(p.id) === Number(partId));
-  if (selectedPart && Number(selectedPart.quantity || 0) < qty) {
-    showToast(`Недостаточно на складе! Доступно: ${selectedPart.quantity} ${getPartUnit(selectedPart)}`, 'error');
-    return;
+  if (selectedPart) {
+    const whStocks = getPartWarehouseStocks(selectedPart);
+    const availWh = Number(whStocks[warehouse] || 0);
+    if (availWh < qty) {
+      showToast(`Недостаточно на складе «${whLabel}»! В наличии на этом складе: ${availWh} ${getPartUnit(selectedPart)}`, 'error');
+      return;
+    }
   }
 
   try {
@@ -5063,7 +5189,7 @@ async function submitAttachPart() {
         'Content-Type': 'application/json',
         'X-User-Role': state.currentUser?.role || ''
       },
-      body: JSON.stringify({ part_id: partId, quantity: qty })
+      body: JSON.stringify({ part_id: partId, quantity: qty, warehouse })
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.detail || data.message || 'Ошибка списания запчасти');
@@ -5074,6 +5200,12 @@ async function submitAttachPart() {
       const pObj = list.find(p => Number(p.id) === Number(partId));
       if (pObj) {
         pObj.quantity = typeof data.new_quantity === 'number' ? data.new_quantity : Math.max(0, Number(pObj.quantity || 0) - qty);
+        if (data.warehouse_stocks) {
+          pObj.warehouse_stocks = data.warehouse_stocks;
+          pObj.qty_main = data.warehouse_stocks.main;
+          pObj.qty_showcase = data.warehouse_stocks.showcase;
+          pObj.qty_dealer1 = data.warehouse_stocks.dealer1;
+        }
         pObj._updated_at = Date.now();
         crmStore.saveItem('parts', pObj);
       }
@@ -5154,6 +5286,12 @@ async function changeAttachedPartQty(dealId, dealPartId, newQty) {
         const pObj = list.find(p => Number(p.id) === Number(data.part_id));
         if (pObj) {
           pObj.quantity = data.new_quantity;
+          if (data.warehouse_stocks) {
+            pObj.warehouse_stocks = data.warehouse_stocks;
+            pObj.qty_main = data.warehouse_stocks.main;
+            pObj.qty_showcase = data.warehouse_stocks.showcase;
+            pObj.qty_dealer1 = data.warehouse_stocks.dealer1;
+          }
           pObj._updated_at = Date.now();
           crmStore.saveItem('parts', pObj);
         }
@@ -5228,6 +5366,12 @@ async function removeAttachedPart(dealId, dealPartId) {
         const pObj = list.find(p => Number(p.id) === Number(data.part_id));
         if (pObj) {
           pObj.quantity = data.new_quantity;
+          if (data.warehouse_stocks) {
+            pObj.warehouse_stocks = data.warehouse_stocks;
+            pObj.qty_main = data.warehouse_stocks.main;
+            pObj.qty_showcase = data.warehouse_stocks.showcase;
+            pObj.qty_dealer1 = data.warehouse_stocks.dealer1;
+          }
           pObj._updated_at = Date.now();
           crmStore.saveItem('parts', pObj);
         }
@@ -6414,16 +6558,26 @@ function openPartModal(partId = null) {
   form.reset();
   document.getElementById('part-id').value = '';
   document.getElementById('btn-delete-part').classList.add('hidden');
+  const qMainEl = document.getElementById('part-qty-main');
+  const qShowEl = document.getElementById('part-qty-showcase');
+  const qDealEl = document.getElementById('part-qty-dealer1');
+  if (qMainEl) qMainEl.value = '0';
+  if (qShowEl) qShowEl.value = '0';
+  if (qDealEl) qDealEl.value = '0';
 
   if (partId) {
     document.getElementById('modal-part-title').textContent = 'Редактировать запчасть';
     document.getElementById('btn-delete-part').classList.remove('hidden');
-    const p = state.parts.find(item => item.id === partId);
+    const p = getWarehousePartsCatalog().find(item => Number(item.id) === Number(partId));
     if (p) {
+      const wh = getPartWarehouseStocks(p);
       document.getElementById('part-id').value = p.id;
       document.getElementById('part-sku').value = p.sku;
       document.getElementById('part-category').value = p.category;
       document.getElementById('part-name').value = p.name;
+      if (qMainEl) qMainEl.value = wh.main;
+      if (qShowEl) qShowEl.value = wh.showcase;
+      if (qDealEl) qDealEl.value = wh.dealer1;
       document.getElementById('part-quantity').value = p.quantity;
       document.getElementById('part-min-threshold').value = p.min_threshold;
       document.getElementById('part-location').value = p.location || '';
@@ -6436,20 +6590,32 @@ function openPartModal(partId = null) {
 
   updatePartQuantityUnit(document.getElementById('part-category')?.value || 'Фильтры');
   openModal('modal-part');
+  if (window.lucide) lucide.createIcons();
 }
 
 async function savePart(e) {
   e.preventDefault();
   const partId = document.getElementById('part-id').value;
   const categoryVal = document.getElementById('part-category').value.trim();
-  const isOil = getPartUnit(categoryVal) === 'л';
-  const rawQty = parsePartNumberInput(document.getElementById('part-quantity').value, 0);
+  const qMain = Math.max(0, parsePartNumberInput(document.getElementById('part-qty-main')?.value, 0));
+  const qShow = Math.max(0, parsePartNumberInput(document.getElementById('part-qty-showcase')?.value, 0));
+  const qDeal = Math.max(0, parsePartNumberInput(document.getElementById('part-qty-dealer1')?.value, 0));
+  const rawQty = Math.round((qMain + qShow + qDeal) * 100) / 100;
   const rawMin = parsePartNumberInput(document.getElementById('part-min-threshold').value, 2);
+  const warehouseStocks = {
+    main: qMain,
+    showcase: qShow,
+    dealer1: qDeal,
+  };
   const payload = {
     sku: document.getElementById('part-sku').value.trim(),
     category: categoryVal,
     name: document.getElementById('part-name').value.trim(),
     quantity: rawQty,
+    qty_main: qMain,
+    qty_showcase: qShow,
+    qty_dealer1: qDeal,
+    warehouse_stocks: warehouseStocks,
     min_threshold: rawMin,
     location: document.getElementById('part-location').value.trim(),
     purchase_price: parseFloat(document.getElementById('part-purchase-price').value) || 0.0,
