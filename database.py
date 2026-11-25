@@ -2867,6 +2867,7 @@ def get_dashboard_metrics(year: Optional[str] = None, month: Optional[str] = Non
             inv_cost += qty * p_price
             inv_retail += qty * s_price
             if qty <= min_th:
+                clean_loc, _ = parse_part_location(p.get("location") or "", qty)
                 critical_list.append({
                     "id": p.get("id"),
                     "name": p.get("name") or "Без названия",
@@ -2874,7 +2875,7 @@ def get_dashboard_metrics(year: Optional[str] = None, month: Optional[str] = Non
                     "category": p.get("category") or "",
                     "quantity": int(qty) if qty.is_integer() else round(qty, 2),
                     "min_threshold": int(min_th) if min_th.is_integer() else round(min_th, 2),
-                    "location": p.get("location") or "Склад",
+                    "location": clean_loc or "Оснавной",
                     "purchase_price": round(p_price, 2),
                     "selling_price": round(s_price, 2)
                 })
@@ -2919,49 +2920,62 @@ def get_dashboard_metrics(year: Optional[str] = None, month: Optional[str] = Non
                 "equipment_name": eq.get("name") or "—"
             })
 
-        # Top clients by revenue
-        client_spent: Dict[int, Dict[str, Any]] = {}
+        # Top clients by revenue (STO vs Sales Department)
+        sto_client_spent: Dict[int, Dict[str, Any]] = {}
+        sales_client_spent: Dict[int, Dict[str, Any]] = {}
         for d in deals:
             cid = d.get("client_id")
             if not cid:
+                continue
+            if d.get("closing_outcome") == "failed" or d.get("stage") == "cancelled":
                 continue
             amt = _to_float(d.get("amount"), 0.0)
             cl = d.get("clients") or {}
             c_name = cl.get("name") or f"Клиент #{cid}"
             c_comp = cl.get("company") or ""
-            if cid not in client_spent:
-                client_spent[cid] = {
+            is_sales_deal = d.get("deal_type") == "sales"
+            target_map = sales_client_spent if is_sales_deal else sto_client_spent
+            curr = (d.get("currency") or "AMD").upper()
+            if curr not in ("AMD", "USD", "EUR"):
+                curr = "AMD"
+            if cid not in target_map:
+                target_map[cid] = {
                     "id": cid,
                     "name": c_name,
                     "company": c_comp,
                     "total_spent": 0.0,
+                    "by_currency": {"AMD": 0.0, "USD": 0.0, "EUR": 0.0},
                     "completed_deals": 0,
                     "deals_count": 0
                 }
-            client_spent[cid]["deals_count"] += 1
+            target_map[cid]["deals_count"] += 1
             if d.get("stage") in closed_stages or amt > 0:
-                client_spent[cid]["completed_deals"] += 1
-                client_spent[cid]["total_spent"] += amt
+                target_map[cid]["completed_deals"] += 1
+                target_map[cid]["total_spent"] += amt
+                target_map[cid]["by_currency"][curr] += amt
 
-        top_clients = list(client_spent.values())
-        top_clients.sort(key=lambda x: (x["total_spent"], x["completed_deals"]), reverse=True)
+        top_clients = list(sto_client_spent.values())
+        top_clients.sort(key=lambda x: (x["total_spent"], x["completed_deals"], x["deals_count"]), reverse=True)
         top_clients = top_clients[:5]
 
-        # Monthly chart data (dynamic based on selected period)
+        sales_top_clients = list(sales_client_spent.values())
+        sales_top_clients.sort(key=lambda x: (x["completed_deals"], x["total_spent"], x["deals_count"]), reverse=True)
+        sales_top_clients = sales_top_clients[:5]
+
+        # Monthly chart data (STO and Sales Department)
         month_names = {
             1: "Янв", 2: "Фев", 3: "Мар", 4: "Апр", 5: "Май", 6: "Июн",
             7: "Июл", 8: "Авг", 9: "Сен", 10: "Окт", 11: "Ноя", 12: "Дек"
         }
-        monthly_map = {}
+        monthly_map: Dict[str, Dict[str, Any]] = {}
+        sales_monthly_map: Dict[str, Dict[str, Any]] = {}
         now = datetime.now()
         if filter_year is not None and filter_month is None:
             for m_idx in range(1, 13):
                 k = f"{filter_year}-{m_idx:02d}"
-                monthly_map[k] = {
-                    "month": f"{month_names.get(m_idx, str(m_idx))} {str(filter_year)[2:]}",
-                    "revenue": 0.0,
-                    "cost": 0.0
-                }
+                m_label = f"{month_names.get(m_idx, str(m_idx))} {str(filter_year)[2:]}"
+                monthly_map[k] = {"month": m_label, "revenue": 0.0, "cost": 0.0, "deals_count": 0}
+                sales_monthly_map[k] = {"month": m_label, "revenue": 0.0, "by_currency": {"AMD": 0.0, "USD": 0.0, "EUR": 0.0}, "deals_count": 0, "units_sold": 0}
         elif filter_month is not None:
             ref_year = filter_year or now.year
             for i in range(5, -1, -1):
@@ -2969,51 +2983,64 @@ def get_dashboard_metrics(year: Optional[str] = None, month: Optional[str] = Non
                 y_offset = (filter_month - i - 1) // 12
                 yr = ref_year + y_offset
                 k = f"{yr}-{m_idx:02d}"
-                monthly_map[k] = {
-                    "month": f"{month_names.get(m_idx, str(m_idx))} {str(yr)[2:]}",
-                    "revenue": 0.0,
-                    "cost": 0.0
-                }
+                m_label = f"{month_names.get(m_idx, str(m_idx))} {str(yr)[2:]}"
+                monthly_map[k] = {"month": m_label, "revenue": 0.0, "cost": 0.0, "deals_count": 0}
+                sales_monthly_map[k] = {"month": m_label, "revenue": 0.0, "by_currency": {"AMD": 0.0, "USD": 0.0, "EUR": 0.0}, "deals_count": 0, "units_sold": 0}
         else:
             for i in range(5, -1, -1):
                 m_idx = (now.month - i - 1) % 12 + 1
                 y_offset = (now.month - i - 1) // 12
                 yr = now.year + y_offset
                 k = f"{yr}-{m_idx:02d}"
-                monthly_map[k] = {
-                    "month": f"{month_names.get(m_idx, str(m_idx))} {str(yr)[2:]}",
-                    "revenue": 0.0,
-                    "cost": 0.0
-                }
+                m_label = f"{month_names.get(m_idx, str(m_idx))} {str(yr)[2:]}"
+                monthly_map[k] = {"month": m_label, "revenue": 0.0, "cost": 0.0, "deals_count": 0}
+                sales_monthly_map[k] = {"month": m_label, "revenue": 0.0, "by_currency": {"AMD": 0.0, "USD": 0.0, "EUR": 0.0}, "deals_count": 0, "units_sold": 0}
 
         chart_source_deals = deals if (filter_year is not None or filter_month is not None) else all_deals
         for d in chart_source_deals:
-            if d.get("stage") in closed_stages:
+            if d.get("stage") in closed_stages and d.get("closing_outcome") != "failed":
                 yr, mo = _extract_deal_year_month(d, closed_stages)
                 amt = _to_float(d.get("amount"), 0.0)
                 c_cost = _to_float(d.get("cost"), 0.0)
-                if yr and mo:
-                    k = f"{yr}-{mo:02d}"
-                    if k in monthly_map:
-                        monthly_map[k]["revenue"] += amt
-                        monthly_map[k]["cost"] += c_cost
-                    elif filter_year is None and filter_month is None:
-                        cur_k = f"{now.year}-{now.month:02d}"
-                        if cur_k in monthly_map:
-                            monthly_map[cur_k]["revenue"] += amt
-                            monthly_map[cur_k]["cost"] += c_cost
+                is_sales_deal = d.get("deal_type") == "sales"
+                curr = (d.get("currency") or "AMD").upper()
+                if curr not in ("AMD", "USD", "EUR"):
+                    curr = "AMD"
+                target_k = f"{yr}-{mo:02d}" if (yr and mo) else None
+                if target_k not in monthly_map and filter_year is None and filter_month is None:
+                    cur_fallback = f"{now.year}-{now.month:02d}"
+                    if cur_fallback in monthly_map:
+                        target_k = cur_fallback
+                if target_k and target_k in monthly_map:
+                    if is_sales_deal:
+                        sales_monthly_map[target_k]["revenue"] += amt
+                        sales_monthly_map[target_k]["by_currency"][curr] += amt
+                        sales_monthly_map[target_k]["deals_count"] += 1
+                        s_items = d.get("sales_items") or []
+                        units_cnt = sum(_norm_qty(it.get("quantity"), 1) for it in s_items) if s_items else 1
+                        sales_monthly_map[target_k]["units_sold"] += units_cnt
+                    else:
+                        monthly_map[target_k]["revenue"] += amt
+                        monthly_map[target_k]["cost"] += c_cost
+                        monthly_map[target_k]["deals_count"] += 1
 
         cur_k = f"{filter_year or now.year}-{(filter_month or now.month):02d}"
-        if sum(m["revenue"] for m in monthly_map.values()) == 0 and total_rev > 0 and cur_k in monthly_map:
-            monthly_map[cur_k]["revenue"] = total_rev
-            monthly_map[cur_k]["cost"] = total_cost
+        sto_total_rev = service_rev + parts_rev
+        sto_total_cost = service_cost + parts_cost
+        if sum(m["revenue"] for m in monthly_map.values()) == 0 and sto_total_rev > 0 and cur_k in monthly_map:
+            monthly_map[cur_k]["revenue"] = sto_total_rev
+            monthly_map[cur_k]["cost"] = sto_total_cost
+        if sum(m["revenue"] for m in sales_monthly_map.values()) == 0 and sales_rev > 0 and cur_k in sales_monthly_map:
+            sales_monthly_map[cur_k]["revenue"] = sales_rev
+            sales_monthly_map[cur_k]["deals_count"] = len(sales_completed)
 
         monthly_data = list(monthly_map.values())
+        sales_monthly_data = list(sales_monthly_map.values())
 
-        # Mechanics Revenue Breakdown (supports multiple comma-separated responsible employees)
+        # Employees Revenue & Efficiency Breakdown (supports multiple comma-separated responsible employees)
         mechanics_map: Dict[str, Dict[str, Any]] = {}
         for u in users:
-            if u.get("role") == "mechanic":
+            if u.get("role") in ("mechanic", "sales_manager", "manager", "moderator"):
                 uid = str(u.get("id"))
                 mechanics_map[uid] = {
                     "user_id": u.get("id"),
@@ -3028,8 +3055,6 @@ def get_dashboard_metrics(year: Optional[str] = None, month: Optional[str] = Non
                 }
 
         for d in deals:
-            if d.get("deal_type") == "parts_sale":
-                continue
             resp_raw = (d.get("responsible") or "").strip()
             if not resp_raw:
                 continue
@@ -3133,7 +3158,7 @@ def get_dashboard_metrics(year: Optional[str] = None, month: Optional[str] = Non
             "total_tasks": len(tasks),
             "total_users": len(users),
             "low_stock_parts": low_stock,
-            "critical_parts": critical_list[:25],
+            "critical_parts": critical_list[:100],
             "mechanics_revenue": mechanics_revenue,
             "inventory_cost": round(inv_cost, 2),
             "inventory_retail": round(inv_retail, 2),
@@ -3141,7 +3166,9 @@ def get_dashboard_metrics(year: Optional[str] = None, month: Optional[str] = Non
             "deals_by_stage": stages,
             "recent_deals": recent,
             "top_clients": top_clients,
+            "sales_top_clients": sales_top_clients,
             "monthly_data": monthly_data,
+            "sales_monthly_data": sales_monthly_data,
             "available_years": available_years,
             "selected_year": str(filter_year) if filter_year is not None else "all",
             "selected_month": f"{filter_month:02d}" if filter_month is not None else "all"

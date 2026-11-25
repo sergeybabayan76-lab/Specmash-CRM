@@ -400,11 +400,16 @@ html, body {
    Permission-Based Visibility Restrictions (Revenue & Cost Analytics)
    ========================================================================== */
 body.hide-revenue-analytics .col-purchase-price,
+body.hide-revenue-analytics .col-emp-revenue,
+body.hide-revenue-analytics .revenue-amount-only,
 body.hide-revenue-analytics #deal-cost,
 body.hide-revenue-analytics #part-purchase-price-group,
 body.hide-revenue-analytics #header-finance-block,
 body.hide-revenue-analytics #dash-card-revenue,
-body.hide-revenue-analytics #dash-charts-row,
+body.hide-revenue-analytics #dash-card-parts-revenue,
+body.hide-revenue-analytics #dash-card-service-revenue,
+body.hide-revenue-analytics #dash-card-sales-revenue,
+body.hide-revenue-analytics #dash-card-warehouse-eval,
 body.hide-revenue-analytics #stat-inventory-cost-wrapper {
   display: none !important;
 }

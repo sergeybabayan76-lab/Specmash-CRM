@@ -988,9 +988,12 @@ function applyUserPermissions() {
   setVis('dash-card-revenue', canViewRev);
   setVis('dash-card-parts-revenue', canViewRev);
   setVis('dash-card-service-revenue', canViewRev);
-  setVis('dash-card-sales-revenue', canViewRev || canDealsSales);
-  setVis('dash-charts-row', canViewRev);
-  setVis('dash-mechanics-revenue-section', isAdmin);
+  setVis('dash-card-sales-revenue', canViewRev);
+  setVis('dash-card-warehouse-eval', canViewRev);
+  setVis('stat-active-volume-row', canViewRev);
+  setVis('dash-charts-row', true);
+  setVis('dash-sales-charts-row', true);
+  setVis('dash-mechanics-revenue-section', true);
 
   // Body classes for CSS permission hiding
   document.body.classList.toggle('hide-revenue-analytics', !canViewRev);
@@ -998,6 +1001,16 @@ function applyUserPermissions() {
   document.body.classList.toggle('role-manager', role === 'manager');
   document.body.classList.toggle('role-moderator', role === 'moderator');
   document.body.classList.toggle('role-admin', isAdmin);
+
+  if (state.dashboard) {
+    const d = state.dashboard;
+    renderRevenueChart(d.monthly_data, d.total_revenue, d.total_cost, d.net_profit);
+    renderSalesRevenueChart(d.sales_monthly_data, d.sales_revenue, d.sales_completed_count);
+    renderTopClients(d.top_clients);
+    renderSalesTopClients(d.sales_top_clients);
+    renderMechanicsRevenue(d.mechanics_revenue || []);
+    renderRecentDeals(d.recent_deals);
+  }
 }
 
 function openLoginModal() {
@@ -1737,10 +1750,29 @@ async function loadDashboard() {
     if (statServCount) statServCount.textContent = `${data.service_completed_count || 0} нарядов`;
 
     // Sales Department Revenue Metrics by Category (Requirement #4)
-    renderDashboardSalesAnalytics(data);
+    const canViewRev = hasUserPerm('can_view_revenue');
+    const salesRevCard = document.getElementById('dash-card-sales-revenue');
+    if (salesRevCard) {
+      salesRevCard.classList.toggle('hidden', !canViewRev);
+    }
+    const whEvalCard = document.getElementById('dash-card-warehouse-eval');
+    if (whEvalCard) {
+      whEvalCard.classList.toggle('hidden', !canViewRev);
+    }
+    const activeVolRow = document.getElementById('stat-active-volume-row');
+    if (activeVolRow) {
+      activeVolRow.classList.toggle('hidden', !canViewRev);
+    }
+    if (canViewRev) {
+      renderDashboardSalesAnalytics(data);
+    }
 
     document.getElementById('stat-active-deals').textContent = data.active_deals_count;
     document.getElementById('stat-active-volume').textContent = formatMoney(data.active_deals_volume);
+    const completedCountEl = document.getElementById('stat-completed-deals-count');
+    if (completedCountEl) {
+      completedCountEl.textContent = data.completed_count || 0;
+    }
 
     document.getElementById('stat-inventory-retail').textContent = formatMoney(data.inventory_retail);
     document.getElementById('stat-inventory-cost').textContent = formatMoney(data.inventory_cost);
@@ -1754,8 +1786,10 @@ async function loadDashboard() {
 
     renderRevenueChart(data.monthly_data, data.total_revenue, data.total_cost, data.net_profit);
     renderTopClients(data.top_clients);
+    renderSalesRevenueChart(data.sales_monthly_data, data.sales_revenue, data.sales_completed_count);
+    renderSalesTopClients(data.sales_top_clients);
 
-    // Align row counts between Critical Parts and Recent Deals
+    // Render Critical Parts (full scrollable list) and Recent Deals
     const alignedRowTarget = Math.max(
       Math.min((data.critical_parts || []).length, 6),
       Math.min((data.recent_deals || []).length, 6),
@@ -1764,15 +1798,11 @@ async function loadDashboard() {
     renderCriticalParts(data.critical_parts, alignedRowTarget);
     renderRecentDeals(data.recent_deals, alignedRowTarget);
 
-    // Requirement #8: Mechanics Revenue Breakdown (Strictly for Administrators)
+    // Requirement #8: Employees Revenue & Efficiency Breakdown
     const mechSection = document.getElementById('dash-mechanics-revenue-section');
     if (mechSection) {
-      if (state.currentUser && state.currentUser.role === 'admin') {
-        mechSection.classList.remove('hidden');
-        renderMechanicsRevenue(data.mechanics_revenue || []);
-      } else {
-        mechSection.classList.add('hidden');
-      }
+      mechSection.classList.remove('hidden');
+      renderMechanicsRevenue(data.mechanics_revenue || []);
     }
 
     // Requirement #7: Load Top Sold Parts widget
@@ -1881,24 +1911,25 @@ function renderRevenueChart(monthlyData, totalRev, totalCost, netProfit) {
   const container = document.getElementById('revenue-bars-container');
   if (!container) return;
 
+  const canViewRev = hasUserPerm('can_view_revenue');
   let barsHtml = '';
   if (!monthlyData || monthlyData.length === 0) {
     const maxVal = Math.max(totalRev, 1);
-    const revHeight = Math.round((totalRev / maxVal) * 160);
-    const costHeight = Math.round((totalCost / maxVal) * 160);
-    const profitHeight = Math.round((netProfit / maxVal) * 160);
+    const revHeight = Math.max(Math.round((totalRev / maxVal) * 160), 6);
+    const costHeight = Math.max(Math.round((totalCost / maxVal) * 160), 4);
+    const profitHeight = Math.max(Math.round((netProfit / maxVal) * 160), 4);
 
     barsHtml = `
       <div class="flex-1 flex flex-col items-center justify-end h-full">
         <div class="w-full flex items-end justify-center gap-3 h-44">
           <div class="w-12 bg-blue-600 rounded-t-md hover:bg-blue-500 transition-all cursor-pointer relative group" style="height: ${revHeight}px">
-            <span class="absolute -top-7 left-1/2 -translate-x-1/2 text-[10px] font-mono bg-slate-800 text-white px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">${formatMoney(totalRev)}</span>
+            ${canViewRev ? `<span class="absolute -top-7 left-1/2 -translate-x-1/2 text-[10px] font-mono bg-slate-800 text-white px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">${formatMoney(totalRev)}</span>` : `<span class="absolute -top-7 left-1/2 -translate-x-1/2 text-[10px] font-sans bg-slate-800 text-white px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">Выручка</span>`}
           </div>
           <div class="w-12 bg-amber-500 rounded-t-md hover:bg-amber-400 transition-all cursor-pointer relative group" style="height: ${costHeight}px">
-            <span class="absolute -top-7 left-1/2 -translate-x-1/2 text-[10px] font-mono bg-slate-800 text-white px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">${formatMoney(totalCost)}</span>
+            ${canViewRev ? `<span class="absolute -top-7 left-1/2 -translate-x-1/2 text-[10px] font-mono bg-slate-800 text-white px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">${formatMoney(totalCost)}</span>` : `<span class="absolute -top-7 left-1/2 -translate-x-1/2 text-[10px] font-sans bg-slate-800 text-white px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">Себестоимость</span>`}
           </div>
           <div class="w-12 bg-emerald-500 rounded-t-md hover:bg-emerald-400 transition-all cursor-pointer relative group" style="height: ${profitHeight}px">
-            <span class="absolute -top-7 left-1/2 -translate-x-1/2 text-[10px] font-mono bg-slate-800 text-white px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">${formatMoney(netProfit)}</span>
+            ${canViewRev ? `<span class="absolute -top-7 left-1/2 -translate-x-1/2 text-[10px] font-mono bg-slate-800 text-white px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">${formatMoney(netProfit)}</span>` : `<span class="absolute -top-7 left-1/2 -translate-x-1/2 text-[10px] font-sans bg-slate-800 text-white px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">Прибыль</span>`}
           </div>
         </div>
         <div class="text-xs text-slate-500 font-semibold mt-2">Текущий финансовый период</div>
@@ -1907,20 +1938,67 @@ function renderRevenueChart(monthlyData, totalRev, totalCost, netProfit) {
   } else {
     const maxVal = Math.max(...monthlyData.map(m => m.revenue), 1);
     barsHtml = monthlyData.map(m => {
-      const revHeight = Math.round((m.revenue / maxVal) * 150);
-      const costHeight = Math.round((m.cost / maxVal) * 150);
-      const profitHeight = Math.round(((m.revenue - m.cost) / maxVal) * 150);
+      const revHeight = m.revenue > 0 ? Math.max(Math.round((m.revenue / maxVal) * 150), 6) : 3;
+      const costHeight = m.cost > 0 ? Math.max(Math.round((m.cost / maxVal) * 150), 4) : 3;
+      const profitVal = Math.max(m.revenue - m.cost, 0);
+      const profitHeight = profitVal > 0 ? Math.max(Math.round((profitVal / maxVal) * 150), 4) : 3;
+      const dealsCount = m.deals_count || 0;
       return `
         <div class="flex-1 flex flex-col items-center justify-end h-full">
           <div class="w-full flex items-end justify-center gap-1.5 h-44">
             <div class="w-7 bg-blue-600 rounded-t hover:bg-blue-500 transition-all cursor-pointer relative group" style="height: ${revHeight}px">
-              <span class="absolute -top-7 left-1/2 -translate-x-1/2 text-[10px] font-mono bg-slate-800 text-white px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">${formatMoney(m.revenue)}</span>
+              <span class="absolute -top-7 left-1/2 -translate-x-1/2 text-[10px] font-mono bg-slate-800 text-white px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">${canViewRev ? formatMoney(m.revenue) : `Нарядов: ${dealsCount}`}</span>
             </div>
             <div class="w-7 bg-amber-500 rounded-t hover:bg-amber-400 transition-all cursor-pointer relative group" style="height: ${costHeight}px">
-              <span class="absolute -top-7 left-1/2 -translate-x-1/2 text-[10px] font-mono bg-slate-800 text-white px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">${formatMoney(m.cost)}</span>
+              <span class="absolute -top-7 left-1/2 -translate-x-1/2 text-[10px] font-mono bg-slate-800 text-white px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">${canViewRev ? formatMoney(m.cost) : 'Себестоимость'}</span>
             </div>
             <div class="w-7 bg-emerald-500 rounded-t hover:bg-emerald-400 transition-all cursor-pointer relative group" style="height: ${profitHeight}px">
-              <span class="absolute -top-7 left-1/2 -translate-x-1/2 text-[10px] font-mono bg-slate-800 text-white px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">${formatMoney(m.revenue - m.cost)}</span>
+              <span class="absolute -top-7 left-1/2 -translate-x-1/2 text-[10px] font-mono bg-slate-800 text-white px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">${canViewRev ? formatMoney(m.revenue - m.cost) : 'Прибыль'}</span>
+            </div>
+          </div>
+          <div class="text-[11px] text-slate-500 font-mono mt-2">${m.month}</div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  container.innerHTML = barsHtml;
+}
+
+function renderSalesRevenueChart(salesMonthlyData, salesTotalRev, salesCompletedCount) {
+  const container = document.getElementById('sales-revenue-bars-container');
+  if (!container) return;
+
+  const canViewRev = hasUserPerm('can_view_revenue');
+  let barsHtml = '';
+  if (!salesMonthlyData || salesMonthlyData.length === 0) {
+    const maxVal = Math.max(salesTotalRev || 0, 1);
+    const revHeight = (salesTotalRev || 0) > 0 ? Math.max(Math.round(((salesTotalRev || 0) / maxVal) * 150), 10) : 6;
+    barsHtml = `
+      <div class="flex-1 flex flex-col items-center justify-end h-full">
+        <div class="w-full flex items-end justify-center gap-3 h-44">
+          <div class="w-14 bg-indigo-600 rounded-t-md hover:bg-indigo-500 transition-all cursor-pointer relative group" style="height: ${revHeight}px">
+            <span class="absolute -top-7 left-1/2 -translate-x-1/2 text-[10px] font-mono bg-slate-800 text-white px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">${canViewRev ? formatMoney(salesTotalRev || 0) : `Сделок: ${salesCompletedCount || 0}`}</span>
+          </div>
+        </div>
+        <div class="text-xs text-slate-500 font-semibold mt-2">Текущий период</div>
+      </div>
+    `;
+  } else {
+    const maxVal = Math.max(...salesMonthlyData.map(m => Math.max(m.revenue || 0, (m.deals_count || 0) * 1000)), 1);
+    barsHtml = salesMonthlyData.map(m => {
+      const metricVal = (m.revenue || 0) > 0 ? m.revenue : ((m.deals_count || 0) * 1000);
+      const revHeight = metricVal > 0 ? Math.max(Math.round((metricVal / maxVal) * 150), 8) : 3;
+      const dealsCount = m.deals_count || 0;
+      const unitsSold = m.units_sold || 0;
+      const tooltipText = canViewRev
+        ? `${formatMultiCurrencyBreakdown(m.by_currency)} (${dealsCount} сд.)`
+        : `Сделок: ${dealsCount} • ${unitsSold} ед.`;
+      return `
+        <div class="flex-1 flex flex-col items-center justify-end h-full">
+          <div class="w-full flex items-end justify-center gap-1.5 h-44">
+            <div class="w-10 bg-indigo-600 rounded-t hover:bg-indigo-500 transition-all cursor-pointer relative group" style="height: ${revHeight}px">
+              <span class="absolute -top-7 left-1/2 -translate-x-1/2 text-[10px] font-mono bg-slate-800 text-white px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-10">${tooltipText}</span>
             </div>
           </div>
           <div class="text-[11px] text-slate-500 font-mono mt-2">${m.month}</div>
@@ -1936,32 +2014,63 @@ function renderTopClients(topClients) {
   const container = document.getElementById('top-clients-list');
   if (!container) return;
   if (!topClients || topClients.length === 0) {
-    container.innerHTML = '<div class="text-xs text-slate-400 text-center py-4">Нет данных о выполненных сделках</div>';
+    container.innerHTML = '<div class="text-xs text-slate-400 text-center py-4">Нет данных о выполненных нарядах СТО</div>';
     return;
   }
 
+  const canViewRev = hasUserPerm('can_view_revenue');
   container.innerHTML = topClients.map((c, idx) => `
     <div class="flex items-center justify-between p-2.5 rounded-lg hover:bg-slate-50 transition-colors border border-slate-100">
-      <div class="flex items-center gap-3">
-        <span class="w-6 h-6 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center text-xs font-bold font-mono">${idx + 1}</span>
-        <div>
-          <div class="text-xs font-bold text-slate-800">${c.name}</div>
-          <div class="text-[11px] text-slate-400">${c.company || 'Частный заказчик'} • ${c.completed_deals} нарядов</div>
+      <div class="flex items-center gap-3 min-w-0">
+        <span class="w-6 h-6 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center text-xs font-bold font-mono shrink-0">${idx + 1}</span>
+        <div class="min-w-0">
+          <div class="text-xs font-bold text-slate-800 truncate">${escapeHtml(c.name)}</div>
+          <div class="text-[11px] text-slate-400 truncate">${escapeHtml(c.company || 'Частный заказчик')} • ${c.completed_deals} нарядов</div>
         </div>
       </div>
-      <div class="text-xs font-bold text-emerald-600 font-mono">${formatMoney(c.total_spent)}</div>
+      ${canViewRev
+        ? `<div class="text-xs font-bold text-emerald-600 font-mono shrink-0">${formatMoney(c.total_spent)}</div>`
+        : `<span class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100 shrink-0">${c.completed_deals} нарядов</span>`}
     </div>
   `).join('');
+}
+
+function renderSalesTopClients(salesTopClients) {
+  const container = document.getElementById('sales-top-clients-list');
+  if (!container) return;
+  if (!salesTopClients || salesTopClients.length === 0) {
+    container.innerHTML = '<div class="text-xs text-slate-400 text-center py-4">Нет данных о сделках отдела продаж спецтехники</div>';
+    return;
+  }
+
+  const canViewRev = hasUserPerm('can_view_revenue');
+  container.innerHTML = salesTopClients.map((c, idx) => {
+    const dealsLabel = (c.completed_deals || 0) > 0 ? `${c.completed_deals} сделок` : `${c.deals_count || 0} сделок`;
+    return `
+      <div class="flex items-center justify-between p-2.5 rounded-lg hover:bg-slate-50 transition-colors border border-slate-100 gap-2">
+        <div class="flex items-center gap-3 min-w-0">
+          <span class="w-6 h-6 rounded-full bg-indigo-50 text-indigo-700 flex items-center justify-center text-xs font-bold font-mono shrink-0">${idx + 1}</span>
+          <div class="min-w-0">
+            <div class="text-xs font-bold text-slate-800 truncate">${escapeHtml(c.name)}</div>
+            <div class="text-[11px] text-slate-400 truncate">${escapeHtml(c.company || 'Частный заказчик')} • ${dealsLabel}</div>
+          </div>
+        </div>
+        ${canViewRev
+          ? `<div class="text-xs font-bold text-indigo-600 font-mono shrink-0 text-right">${formatMultiCurrencyBreakdown(c.by_currency)}</div>`
+          : `<span class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100 shrink-0">${dealsLabel}</span>`}
+      </div>
+    `;
+  }).join('');
 }
 
 function renderCriticalParts(parts, targetRows = 6) {
   const container = document.getElementById('critical-parts-table');
   if (!container) return;
   const rowsLimit = Math.max(1, targetRows || 6);
-  const items = (parts || []).slice(0, rowsLimit);
+  const items = parts || [];
 
   const renderedRows = items.map(p => `
-    <div class="h-[58px] px-3 py-2 rounded-lg border border-rose-100 bg-rose-50/40 flex items-center justify-between text-xs gap-2">
+    <div class="h-[58px] px-3 py-2 rounded-lg border border-rose-100 bg-rose-50/40 flex items-center justify-between text-xs gap-2 shrink-0">
       <div class="min-w-0 flex-1">
         <div class="font-bold text-slate-800 flex items-center gap-2 truncate">
           <span class="truncate">${escapeHtml(p.name)}</span>
@@ -2002,11 +2111,13 @@ function renderCriticalParts(parts, targetRows = 6) {
 function renderMechanicsRevenue(mechanics) {
   const tbody = document.getElementById('dash-mechanics-revenue-body');
   if (!tbody) return;
+  const canViewRev = hasUserPerm('can_view_revenue');
   if (!mechanics || mechanics.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7" class="p-6 text-center text-xs text-slate-400">Данные по выполненным нарядам механиков отсутствуют</td></tr>';
+    tbody.innerHTML = `<tr><td colspan="${canViewRev ? 7 : 3}" class="p-6 text-center text-xs text-slate-400">Данные по выполненным сделкам и нарядам сотрудников отсутствуют</td></tr>`;
     return;
   }
 
+  const revColClass = canViewRev ? 'col-emp-revenue' : 'col-emp-revenue hidden';
   tbody.innerHTML = mechanics.map(m => {
     const margin = m.total_revenue > 0 ? Math.round((m.net_profit / m.total_revenue) * 100) : 0;
     return `
@@ -2014,9 +2125,9 @@ function renderMechanicsRevenue(mechanics) {
         <td class="p-3 text-xs font-sans">
           <div class="font-bold text-slate-800 flex items-center gap-2">
             <span class="w-2 h-2 rounded-full bg-purple-500"></span>
-            <span>${m.name}</span>
+            <span>${escapeHtml(m.name)}</span>
           </div>
-          ${m.username && m.username !== m.name ? `<div class="text-[10px] text-slate-400 font-mono">@${m.username}</div>` : ''}
+          ${m.username && m.username !== m.name ? `<div class="text-[10px] text-slate-400 font-mono">@${escapeHtml(m.username)}</div>` : ''}
         </td>
         <td class="p-3 text-center text-xs font-sans">
           <span class="px-2 py-0.5 rounded-full font-bold ${m.completed_deals_count > 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'}">
@@ -2028,17 +2139,17 @@ function renderMechanicsRevenue(mechanics) {
             ${m.active_deals_count}
           </span>
         </td>
-        <td class="p-3 text-right text-xs font-bold text-blue-700">
+        <td class="p-3 text-right text-xs font-bold text-blue-700 ${revColClass}">
           ${formatMoney(m.total_revenue)}
         </td>
-        <td class="p-3 text-right text-xs text-slate-500">
+        <td class="p-3 text-right text-xs text-slate-500 ${revColClass}">
           ${formatMoney(m.total_cost)}
         </td>
-        <td class="p-3 text-right text-xs font-bold text-emerald-600">
+        <td class="p-3 text-right text-xs font-bold text-emerald-600 ${revColClass}">
           ${formatMoney(m.net_profit)}
           <span class="text-[10px] text-emerald-500 font-normal">(${margin}%)</span>
         </td>
-        <td class="p-3 text-right text-xs font-medium text-slate-700">
+        <td class="p-3 text-right text-xs font-medium text-slate-700 ${revColClass}">
           ${formatMoney(m.avg_deal)}
         </td>
       </tr>
@@ -2051,6 +2162,7 @@ function renderRecentDeals(deals, targetRows = 6) {
   if (!container) return;
   const rowsLimit = Math.max(1, targetRows || 6);
   const items = (deals || []).slice(0, rowsLimit);
+  const canViewRev = hasUserPerm('can_view_revenue');
 
   const renderedRows = items.map(d => {
     const isParts = d.deal_type === 'parts_sale';
@@ -2075,7 +2187,7 @@ function renderRecentDeals(deals, targetRows = 6) {
           </div>
         </div>
         <div class="text-right shrink-0">
-          <div class="font-bold text-blue-600 font-mono whitespace-nowrap">${formatMoney(d.amount)}</div>
+          ${canViewRev ? `<div class="font-bold text-blue-600 font-mono whitespace-nowrap revenue-amount-only">${formatMoney(d.amount, d.currency || 'AMD')}</div>` : ''}
           <span class="inline-block text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-medium whitespace-nowrap">${escapeHtml(stageObj.label)}</span>
         </div>
       </div>

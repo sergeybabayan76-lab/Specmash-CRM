@@ -11,7 +11,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Lucide Icons CDN -->
   <script src="https://unpkg.com/lucide@latest"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=1.2.5.4">
+  <link rel="stylesheet" href="/static/styles.css?v=1.2.5.5">
   <script>
     tailwind.config = {
       theme: {
@@ -457,7 +457,7 @@
           </div>
 
           <!-- Card 4: Active Deals Pipeline -->
-          <div class="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm relative overflow-hidden flex flex-col justify-between">
+          <div id="dash-card-active-deals" class="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm relative overflow-hidden flex flex-col justify-between">
             <div>
               <div class="flex items-center justify-between mb-2">
                 <span class="text-xs font-bold uppercase tracking-wider text-slate-500">Сделки и наряды в работе</span>
@@ -465,14 +465,18 @@
               </div>
               <div id="stat-active-deals" class="text-2xl font-black text-slate-900 font-mono">0</div>
             </div>
-            <div class="mt-3 pt-2.5 border-t border-slate-100 text-xs flex items-center justify-between">
+            <div id="stat-active-volume-row" class="mt-3 pt-2.5 border-t border-slate-100 text-xs flex items-center justify-between revenue-amount-only">
               <span class="text-slate-500">Сумма в работе:</span>
               <span id="stat-active-volume" class="font-bold text-blue-600 font-mono">0 AMD</span>
+            </div>
+            <div id="stat-active-counts-row" class="mt-3 pt-2.5 border-t border-slate-100 text-xs flex items-center justify-between text-slate-500">
+              <span>Выполнено сделок / нарядов:</span>
+              <strong id="stat-completed-deals-count" class="font-mono text-emerald-700 font-bold">0</strong>
             </div>
           </div>
 
           <!-- Card 5: Warehouse & Inventory -->
-          <div class="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm relative overflow-hidden flex flex-col justify-between">
+          <div id="dash-card-warehouse-eval" class="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm relative overflow-hidden flex flex-col justify-between">
             <div>
               <div class="flex items-center justify-between mb-2">
                 <span class="text-xs font-bold uppercase tracking-wider text-slate-500">Оценка склада запчастей</span>
@@ -487,7 +491,7 @@
           </div>
 
           <!-- Card 6: Clients & Fleet -->
-          <div class="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm relative overflow-hidden flex flex-col justify-between">
+          <div id="dash-card-clients-fleet" class="bg-white p-5 rounded-xl border border-slate-200/80 shadow-sm relative overflow-hidden flex flex-col justify-between">
             <div>
               <div class="flex items-center justify-between mb-2">
                 <span class="text-xs font-bold uppercase tracking-wider text-slate-500">Клиенты и Парк СТО</span>
@@ -584,14 +588,14 @@
           </div>
         </div>
 
-        <!-- Revenue Timeline & Stage Breakdown -->
+        <!-- Revenue Timeline & Stage Breakdown (STO) -->
         <div id="dash-charts-row" class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <!-- Monthly Chart -->
+          <!-- Monthly Chart: STO -->
           <div class="lg:col-span-2 bg-white p-6 rounded-xl border border-slate-200/80 shadow-sm flex flex-col">
             <div class="flex items-center justify-between mb-4">
               <div>
-                <h3 class="font-bold text-slate-900 text-base">Динамика выручки и расходов СТО Спецмаш (AMD)</h3>
-                <p class="text-xs text-slate-400">Финансовый отчет выполненных заказ-нарядов</p>
+                <h3 class="font-bold text-slate-900 text-base">Динамика выручки и расходов СТО Спецмаш</h3>
+                <p class="text-xs text-slate-400">Финансовый отчет выполненных заказ-нарядов СТО</p>
               </div>
               <span class="text-xs bg-slate-100 text-slate-600 px-2.5 py-1 rounded-md font-medium">Закрытые наряды</span>
             </div>
@@ -601,7 +605,7 @@
             <div class="flex items-center justify-center gap-6 mt-4 text-xs">
               <div class="flex items-center gap-2">
                 <span class="w-3 h-3 rounded bg-blue-600"></span>
-                <span class="text-slate-600">Выручка (AMD)</span>
+                <span class="text-slate-600">Выручка</span>
               </div>
               <div class="flex items-center gap-2">
                 <span class="w-3 h-3 rounded bg-amber-500"></span>
@@ -614,13 +618,51 @@
             </div>
           </div>
 
-          <!-- Top Clients -->
+          <!-- Top Clients: STO -->
           <div class="bg-white p-6 rounded-xl border border-slate-200/80 shadow-sm flex flex-col">
             <div class="flex items-center justify-between mb-4">
               <h3 class="font-bold text-slate-900 text-base">Топ заказчиков СТО</h3>
               <i data-lucide="award" class="w-5 h-5 text-amber-500"></i>
             </div>
-            <div id="top-clients-list" class="space-y-3 flex-1 overflow-y-auto">
+            <div id="top-clients-list" class="space-y-3 flex-1 overflow-y-auto max-h-72">
+              <!-- Dynamically populated -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Sales Department Revenue Timeline & Top Clients (Отдел продаж спецтехники) -->
+        <div id="dash-sales-charts-row" class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <!-- Monthly Chart: Sales Department -->
+          <div class="lg:col-span-2 bg-white p-6 rounded-xl border border-indigo-200/80 shadow-sm flex flex-col">
+            <div class="flex items-center justify-between mb-4">
+              <div>
+                <h3 class="font-bold text-slate-900 text-base">Динамика выручки отдела продаж спецтехники Спецмаш</h3>
+                <p class="text-xs text-slate-400">Динамика успешно завершенных сделок по продаже спецтехники</p>
+              </div>
+              <span class="text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 px-2.5 py-1 rounded-md font-medium">Отдел продаж</span>
+            </div>
+            <div id="sales-revenue-bars-container" class="flex-1 min-h-[220px] flex items-end gap-6 pt-6 pb-2 px-4 border-b border-slate-100">
+              <!-- Dynamically populated -->
+            </div>
+            <div class="flex items-center justify-center gap-6 mt-4 text-xs">
+              <div class="flex items-center gap-2">
+                <span class="w-3 h-3 rounded bg-indigo-600"></span>
+                <span class="text-slate-600">Выручка отдела продаж</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="w-3 h-3 rounded bg-emerald-500"></span>
+                <span class="text-slate-600">Количество проданной техники</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Top Clients: Sales Department -->
+          <div class="bg-white p-6 rounded-xl border border-indigo-200/80 shadow-sm flex flex-col">
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="font-bold text-slate-900 text-base">Топ заказчиков отдела продаж спецтехники</h3>
+              <i data-lucide="tractor" class="w-5 h-5 text-indigo-600"></i>
+            </div>
+            <div id="sales-top-clients-list" class="space-y-3 flex-1 overflow-y-auto max-h-72">
               <!-- Dynamically populated -->
             </div>
           </div>
@@ -632,11 +674,11 @@
             <div class="flex items-center justify-between mb-4 min-h-[28px]">
               <div class="flex items-center gap-2">
                 <span class="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping"></span>
-                <h3 class="font-bold text-slate-900 text-base">Критические остатки на складе</h3>
+                <h3 class="font-bold text-slate-900 text-base">Критические остатки на складе запчастей</h3>
               </div>
               <button onclick="switchTab('warehouse')" class="text-xs text-blue-600 hover:underline font-medium shrink-0">Перейти на склад &rarr;</button>
             </div>
-            <div id="critical-parts-table" class="space-y-2.5 flex-1 flex flex-col justify-start">
+            <div id="critical-parts-table" class="space-y-2.5 flex-1 flex flex-col justify-start max-h-80 overflow-y-auto pr-1.5">
               <!-- Populated via JS -->
             </div>
           </div>
@@ -649,25 +691,24 @@
               </div>
               <button onclick="switchTab('kanban')" class="text-xs text-blue-600 hover:underline font-medium shrink-0">Открыть Канбан &rarr;</button>
             </div>
-            <div id="recent-deals-list" class="space-y-2.5 flex-1 flex flex-col justify-start">
+            <div id="recent-deals-list" class="space-y-2.5 flex-1 flex flex-col justify-start max-h-80 overflow-y-auto pr-1.5">
               <!-- Populated via JS -->
             </div>
           </div>
         </div>
 
-        <!-- Requirement #8: Mechanics Revenue Section (Strictly for Administrators) -->
-        <div id="dash-mechanics-revenue-section" class="hidden bg-white rounded-2xl border border-purple-200 p-6 shadow-sm space-y-4">
+        <!-- Requirement #8: Employees Revenue & Efficiency Section -->
+        <div id="dash-mechanics-revenue-section" class="bg-white rounded-2xl border border-purple-200 p-6 shadow-sm space-y-4">
           <div class="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-purple-100">
             <div class="flex items-center gap-3">
               <div class="w-9 h-9 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center font-bold shadow-inner">
-                <i data-lucide="wrench" class="w-5 h-5"></i>
+                <i data-lucide="users" class="w-5 h-5"></i>
               </div>
               <div>
                 <div class="flex items-center gap-2">
-                  <h3 class="font-bold text-slate-900 text-base">Выручка и эффективность механиков СТО</h3>
-                  <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 border border-purple-300 font-mono">👑 Только Администратор</span>
+                  <h3 class="font-bold text-slate-900 text-base">Выручка и эффективность сотрудников</h3>
                 </div>
-                <p class="text-xs text-slate-500">Показатели выполненных нарядов, общей выручки, себестоимости и чистой прибыли по каждому мастеру</p>
+                <p class="text-xs text-slate-500">Показатели выполненных и активных сделок / заказ-нарядов по каждому сотруднику</p>
               </div>
             </div>
           </div>
@@ -676,13 +717,13 @@
             <table class="w-full text-left border-collapse text-xs">
               <thead>
                 <tr class="bg-purple-50/60 border-b border-purple-200 text-slate-600 font-bold uppercase tracking-wider text-[11px]">
-                  <th class="p-3.5">Мастер / Механик</th>
-                  <th class="p-3.5 text-center">Закрыто нарядов</th>
+                  <th class="p-3.5">Сотрудник / Мастер</th>
+                  <th class="p-3.5 text-center">Закрыто сделок / нарядов</th>
                   <th class="p-3.5 text-center">В работе</th>
-                  <th class="p-3.5 text-right">Выручка (AMD)</th>
-                  <th class="p-3.5 text-right">Себестоимость (AMD)</th>
-                  <th class="p-3.5 text-right text-emerald-800">Чистая прибыль (AMD)</th>
-                  <th class="p-3.5 text-right">Средний чек</th>
+                  <th class="p-3.5 text-right col-emp-revenue">Выручка (AMD)</th>
+                  <th class="p-3.5 text-right col-emp-revenue">Себестоимость (AMD)</th>
+                  <th class="p-3.5 text-right text-emerald-800 col-emp-revenue">Чистая прибыль (AMD)</th>
+                  <th class="p-3.5 text-right col-emp-revenue">Средний чек</th>
                 </tr>
               </thead>
               <tbody id="dash-mechanics-revenue-body" class="divide-y divide-slate-100 font-mono">
@@ -3220,9 +3261,9 @@
 
   <!-- Scripts -->
   <script src="/static/app/core/state.js?v=1.0.0"></script>
-  <script src="/static/app/core/router.js?v=1.2.5.4"></script>
+  <script src="/static/app/core/router.js?v=1.2.5.5"></script>
   <script src="/static/app/core/api.js?v=1.0.0"></script>
   <script src="/static/app/pages/index.js?v=1.0.0"></script>
-  <script src="/static/app.js?v=1.2.5.4"></script>
+  <script src="/static/app.js?v=1.2.5.5"></script>
 </body>
 </html>
