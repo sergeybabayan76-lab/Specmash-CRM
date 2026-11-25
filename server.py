@@ -234,6 +234,7 @@ class SalesEquipmentCreate(BaseModel):
     category: Optional[str] = "Спецтехника"
     sku_code: Optional[str] = ""
     selling_price: Optional[Any] = 0.0
+    currency: Optional[str] = "AMD"
     vat_rate: Optional[int] = 20
     vat_mode: Optional[str] = "included"
     notes: Optional[str] = ""

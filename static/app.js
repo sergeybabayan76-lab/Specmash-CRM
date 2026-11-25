@@ -3208,7 +3208,32 @@ async function openClientCardFromDeal(clientId, event = null) {
     showToast('Клиент не привязан к этому наряду', 'info');
     return;
   }
-  await viewClientDetails(id);
+  if (!state.clients || state.clients.length === 0 || !state.clients.some(c => Number(c.id) === id)) {
+    try {
+      const res = await fetch('/api/clients');
+      if (res.ok) {
+        const data = await res.json();
+        state.clients = crmStore.mergeWithServer('clients', data);
+      }
+    } catch (e) {}
+  }
+  openClientModal(id);
+}
+
+async function editClientFromViewModal() {
+  const id = state.viewingClientId;
+  if (!id) return;
+  closeModal('modal-client-view');
+  if (!state.clients || state.clients.length === 0 || !state.clients.some(c => Number(c.id) === Number(id))) {
+    try {
+      const res = await fetch('/api/clients');
+      if (res.ok) {
+        const data = await res.json();
+        state.clients = crmStore.mergeWithServer('clients', data);
+      }
+    } catch (e) {}
+  }
+  openClientModal(id);
 }
 
 async function openEquipmentCardFromDeal(eqId, event = null) {
@@ -3259,8 +3284,10 @@ function updateDealEquipmentViewBtn(eqId, fallbackPlate = '') {
 
 async function viewClientDetails(clientId) {
   try {
+    state.viewingClientId = parseInt(clientId, 10) || clientId;
     const res = await fetch(`/api/clients/${clientId}`);
     const client = await res.json();
+    if (client && client.id) state.viewingClientId = client.id;
 
     document.getElementById('view-client-name').textContent = client.name + (client.position ? ` (${client.position})` : '');
     document.getElementById('view-client-company').textContent = client.company || 'Частный заказчик';
@@ -6152,6 +6179,8 @@ async function saveClient(e) {
     showToast(clientId ? 'Клиент обновлен' : 'Клиент добавлен');
     closeModal('modal-client');
     await loadClients();
+    await loadClientsListOptions();
+    await loadDeals();
     loadDashboard();
   } catch (err) {
     showToast(err.message, 'error');
@@ -7297,6 +7326,7 @@ function renderSalesEquipmentTable() {
   }
 
   tbody.innerHTML = list.map(item => {
+    const itemCurr = normalizeDealCurrency(item.currency || 'AMD');
     const calc = computeSalesEqPriceWithVat(item.selling_price, item.vat_rate, item.vat_mode);
     const hasPrice = calc.basePrice > 0;
     const isAgri = item.category === 'Сельскохозяйственная техника';
@@ -7316,13 +7346,13 @@ function renderSalesEquipmentTable() {
         <td class="p-3.5 text-xs">${catBadge}</td>
         <td class="p-3.5 text-xs font-mono text-slate-600">${escapeHtml(item.sku_code || '—')}</td>
         <td class="p-3.5 text-xs font-mono text-right ${hasPrice ? 'font-bold text-slate-800' : 'text-slate-400 italic'}">
-          ${hasPrice ? formatMoney(calc.basePrice) : 'Не указана'}
+          ${hasPrice ? formatMoney(calc.basePrice, itemCurr) : `Не указана (${itemCurr})`}
         </td>
         <td class="p-3.5 text-xs">
           ${formatSalesEqVatBadge(item)}
         </td>
         <td class="p-3.5 text-xs font-mono text-right ${hasPrice ? 'font-bold text-indigo-700' : 'text-slate-400'}">
-          ${hasPrice ? formatMoney(calc.finalPrice) : 'По запросу'}
+          ${hasPrice ? formatMoney(calc.finalPrice, itemCurr) : 'По запросу'}
         </td>
         <td class="p-3.5 text-right space-x-1 whitespace-nowrap">
           <button onclick="openSalesEquipmentModal(${item.id})" class="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-slate-100 rounded" title="Редактировать модель">
@@ -7341,6 +7371,9 @@ function renderSalesEquipmentTable() {
 
 function updateSalesEqVatPreview() {
   const priceVal = document.getElementById('sales-eq-price')?.value || '';
+  const cur = normalizeDealCurrency(document.getElementById('sales-eq-currency')?.value || 'AMD');
+  const priceLabel = document.getElementById('sales-eq-price-label');
+  if (priceLabel) priceLabel.textContent = `Цена продажи (${cur}) — необязательно`;
   const vatRate = document.getElementById('sales-eq-vat-rate')?.value || '20';
   const vatMode = document.getElementById('sales-eq-vat-mode')?.value || 'included';
   const previewEl = document.getElementById('sales-eq-vat-preview');
@@ -7354,16 +7387,16 @@ function updateSalesEqVatPreview() {
 
   const calc = computeSalesEqPriceWithVat(priceVal, vatRate, vatMode);
   if (calc.basePrice <= 0) {
-    previewEl.innerHTML = 'Цена продажи не указана (будет определяться индивидуально в сделке) • Ставка НДС: <b>' + calc.rate + '%</b>';
+    previewEl.innerHTML = `Цена продажи не указана (будет определяться индивидуально в сделке) • Валюта: <b>${cur}</b> • Ставка НДС: <b>${calc.rate}%</b>`;
     return;
   }
 
   if (calc.rate === 0) {
-    previewEl.innerHTML = `Итоговая цена продажи: <b class="font-mono text-indigo-700">${formatMoney(calc.finalPrice)}</b> (НДС 0% — без НДС)`;
+    previewEl.innerHTML = `Итоговая цена продажи: <b class="font-mono text-indigo-700">${formatMoney(calc.finalPrice, cur)}</b> (НДС 0% — без НДС)`;
   } else if (calc.mode === 'added') {
-    previewEl.innerHTML = `Цена без НДС: <b class="font-mono">${formatMoney(calc.basePrice)}</b> + НДС 20% (<b class="font-mono">${formatMoney(calc.vatAmount)}</b>) = Итого с НДС: <b class="font-mono text-indigo-700">${formatMoney(calc.finalPrice)}</b>`;
+    previewEl.innerHTML = `Цена без НДС: <b class="font-mono">${formatMoney(calc.basePrice, cur)}</b> + НДС 20% (<b class="font-mono">${formatMoney(calc.vatAmount, cur)}</b>) = Итого с НДС: <b class="font-mono text-indigo-700">${formatMoney(calc.finalPrice, cur)}</b>`;
   } else {
-    previewEl.innerHTML = `Итоговая цена (НДС 20% включен): <b class="font-mono text-indigo-700">${formatMoney(calc.finalPrice)}</b> (в т.ч. НДС 20%: <b class="font-mono">${formatMoney(calc.vatAmount)}</b>)`;
+    previewEl.innerHTML = `Итоговая цена (НДС 20% включен): <b class="font-mono text-indigo-700">${formatMoney(calc.finalPrice, cur)}</b> (в т.ч. НДС 20%: <b class="font-mono">${formatMoney(calc.vatAmount, cur)}</b>)`;
   }
 }
 
@@ -7373,6 +7406,7 @@ function openSalesEquipmentModal(itemId = null) {
   document.getElementById('sales-eq-id').value = '';
   const delBtn = document.getElementById('btn-delete-sales-eq');
   if (delBtn) delBtn.classList.add('hidden');
+  const currEl = document.getElementById('sales-eq-currency');
 
   if (itemId) {
     document.getElementById('modal-sales-eq-title').textContent = 'Редактировать модель техники для продажи';
@@ -7384,6 +7418,7 @@ function openSalesEquipmentModal(itemId = null) {
       document.getElementById('sales-eq-category').value = normalizeSalesEqCategoryJS(item.category);
       document.getElementById('sales-eq-sku').value = item.sku_code || '';
       document.getElementById('sales-eq-price').value = Number(item.selling_price || 0) > 0 ? item.selling_price : '';
+      if (currEl) currEl.value = normalizeDealCurrency(item.currency || 'AMD');
       document.getElementById('sales-eq-vat-rate').value = String(item.vat_rate ?? 20);
       document.getElementById('sales-eq-vat-mode').value = item.vat_mode || 'included';
       document.getElementById('sales-eq-notes').value = item.notes || '';
@@ -7396,6 +7431,11 @@ function openSalesEquipmentModal(itemId = null) {
     } else {
       document.getElementById('sales-eq-category').value = 'Строительная и коммунальная техника';
     }
+    const dealModal = document.getElementById('modal-deal');
+    const dealCurr = (dealModal && !dealModal.classList.contains('hidden'))
+      ? normalizeDealCurrency(document.getElementById('deal-currency')?.value || 'AMD')
+      : 'AMD';
+    if (currEl) currEl.value = dealCurr;
     document.getElementById('sales-eq-vat-rate').value = '20';
     document.getElementById('sales-eq-vat-mode').value = 'included';
   }
@@ -7413,6 +7453,7 @@ async function saveSalesEquipment(e) {
     category: normalizeSalesEqCategoryJS(document.getElementById('sales-eq-category').value),
     sku_code: document.getElementById('sales-eq-sku').value.trim(),
     selling_price: parsePartNumberInput(document.getElementById('sales-eq-price').value, 0),
+    currency: normalizeDealCurrency(document.getElementById('sales-eq-currency')?.value || 'AMD'),
     vat_rate: parseInt(document.getElementById('sales-eq-vat-rate').value, 10) === 0 ? 0 : 20,
     vat_mode: document.getElementById('sales-eq-vat-mode').value || 'included',
     notes: document.getElementById('sales-eq-notes').value.trim(),
@@ -7496,10 +7537,11 @@ async function loadSalesEquipmentOptions() {
   const agriList = list.filter(i => i.category === 'Сельскохозяйственная техника');
 
   const renderOpts = (arr) => arr.map(item => {
+    const itemCurr = normalizeDealCurrency(item.currency || 'AMD');
     const calc = computeSalesEqPriceWithVat(item.selling_price, item.vat_rate, item.vat_mode);
     const priceText = calc.basePrice > 0
-      ? ` • ${formatMoney(calc.finalPrice)} (${calc.rate === 0 ? 'НДС 0%' : (calc.mode === 'added' ? '+НДС 20%' : 'НДС 20% вкл.')})`
-      : ' • Цена по запросу';
+      ? ` • ${formatMoney(calc.finalPrice, itemCurr)} (${calc.rate === 0 ? 'НДС 0%' : (calc.mode === 'added' ? '+НДС 20%' : 'НДС 20% вкл.')})`
+      : ` • Цена по запросу (${itemCurr})`;
     return `<option value="${item.id}">${escapeHtml(item.name)}${priceText}</option>`;
   }).join('');
 
@@ -7609,6 +7651,9 @@ function renderDealSalesItemsList() {
     const lineTotal = Math.round(qty * price * 100) / 100;
     const isAgri = normalizeSalesEqCategoryJS(it.category) === 'Сельскохозяйственная техника';
     const catPill = isAgri ? '🌾 Сельхоз' : '🏗️ Строит./комм.';
+    const vatRate = Number(it.vat_rate ?? 20) === 0 ? 0 : 20;
+    const vatMode = it.vat_mode === 'added' ? 'added' : 'included';
+    const vatSelectVal = vatRate === 0 ? '0_included' : (vatMode === 'added' ? '20_added' : '20_included');
 
     return `
       <div class="p-2.5 rounded-lg bg-slate-50/90 border border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs">
@@ -7617,8 +7662,13 @@ function renderDealSalesItemsList() {
             <span>${idx + 1}. ${escapeHtml(it.name)}</span>
             <span class="px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-800 border border-indigo-200 text-[10px] font-semibold">${catPill}</span>
           </div>
-          <div class="text-[11px] text-slate-500 mt-0.5">
-            Ставка НДС: ${Number(it.vat_rate ?? 20) === 0 ? '0% (Без НДС)' : (it.vat_mode === 'added' ? '20% (+ к цене)' : '20% (включен)')}
+          <div class="text-[11px] text-slate-600 mt-1 flex items-center gap-1.5 flex-wrap">
+            <span class="text-[10px] text-slate-500 font-semibold uppercase">Ставка НДС:</span>
+            <select ${isLocked ? 'disabled' : ''} onchange="updateDealSalesItemVat(${idx}, this.value)" class="border border-indigo-200 rounded-md px-2 py-0.5 text-[11px] font-semibold text-indigo-900 bg-white outline-none focus:border-indigo-500 cursor-pointer">
+              <option value="20_included" ${vatSelectVal === '20_included' ? 'selected' : ''}>НДС 20% (включен в цену)</option>
+              <option value="20_added" ${vatSelectVal === '20_added' ? 'selected' : ''}>НДС 20% (+ добавить к цене)</option>
+              <option value="0_included" ${vatSelectVal === '0_included' ? 'selected' : ''}>НДС 0% (Без НДС)</option>
+            </select>
           </div>
         </div>
 
@@ -7656,9 +7706,75 @@ function renderDealSalesItemsList() {
   if (window.lucide) lucide.createIcons();
 }
 
+async function updateDealSalesItemVat(idx, vatSpec) {
+  if (!Array.isArray(state.currentDealSalesItems) || !state.currentDealSalesItems[idx]) return;
+  const item = state.currentDealSalesItems[idx];
+  const oldRate = Number(item.vat_rate ?? 20) === 0 ? 0 : 20;
+  const oldMode = item.vat_mode === 'added' ? 'added' : 'included';
+  const curPrice = Math.max(0, parsePartNumberInput(item.price, 0));
+
+  // Derive net base price before '+ 20% VAT' if old state was '20_added'
+  let basePrice = item.base_price !== undefined ? Number(item.base_price) : (oldRate === 20 && oldMode === 'added' ? Math.round((curPrice / 1.2) * 100) / 100 : curPrice);
+
+  let newRate = 20;
+  let newMode = 'included';
+  if (vatSpec === '0_included' || vatSpec === '0') {
+    newRate = 0;
+    newMode = 'included';
+  } else if (vatSpec === '20_added') {
+    newRate = 20;
+    newMode = 'added';
+  }
+
+  item.vat_rate = newRate;
+  item.vat_mode = newMode;
+  item.base_price = basePrice;
+
+  if (basePrice > 0) {
+    if (newRate === 20 && newMode === 'added') {
+      item.price = Math.round(basePrice * 1.2 * 100) / 100;
+    } else {
+      item.price = basePrice;
+    }
+  }
+
+  // Also persist the updated VAT rate/mode on the registered catalog model if linked
+  if (item.sales_equipment_id) {
+    const catItem = (state.salesEquipment || []).find(x => Number(x.id) === Number(item.sales_equipment_id));
+    if (catItem) {
+      catItem.vat_rate = newRate;
+      catItem.vat_mode = newMode;
+      crmStore.saveItem('sales_equipment', catItem);
+      try {
+        fetch(`/api/sales-equipment/${catItem.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: catItem.name,
+            category: normalizeSalesEqCategoryJS(catItem.category),
+            sku_code: catItem.sku_code || '',
+            selling_price: Number(catItem.selling_price || 0),
+            currency: normalizeDealCurrency(catItem.currency || 'AMD'),
+            vat_rate: newRate,
+            vat_mode: newMode,
+            notes: catItem.notes || ''
+          })
+        }).then(() => loadSalesEquipmentOptions()).catch(() => {});
+      } catch (e) {}
+    }
+  }
+
+  renderDealSalesItemsList();
+  recalcSalesDealTotals();
+}
+
 function addDealSalesItemFromCatalog(item, quantity = 1) {
   if (!item) return;
   if (!Array.isArray(state.currentDealSalesItems)) state.currentDealSalesItems = [];
+  const wasEmpty = state.currentDealSalesItems.length === 0;
+  if (wasEmpty && item.currency) {
+    handleDealCurrencyChange(normalizeDealCurrency(item.currency), false);
+  }
   const calc = computeSalesEqPriceWithVat(item.selling_price, item.vat_rate, item.vat_mode);
   const existingIdx = state.currentDealSalesItems.findIndex(x => Number(x.sales_equipment_id) === Number(item.id));
   if (existingIdx >= 0) {
@@ -7669,6 +7785,7 @@ function addDealSalesItemFromCatalog(item, quantity = 1) {
       name: item.name,
       category: normalizeSalesEqCategoryJS(item.category),
       quantity: Number(quantity || 1),
+      base_price: calc.basePrice > 0 ? Math.round(calc.basePrice * 100) / 100 : 0,
       price: calc.finalPrice > 0 ? Math.round(calc.finalPrice * 100) / 100 : 0,
       vat_rate: Number(item.vat_rate ?? 20) === 0 ? 0 : 20,
       vat_mode: item.vat_mode || 'included',
@@ -7723,8 +7840,12 @@ function updateDealSalesItemQty(idx, val) {
 function updateDealSalesItemPrice(idx, val) {
   if (!Array.isArray(state.currentDealSalesItems) || !state.currentDealSalesItems[idx]) return;
   const price = Math.max(0, parsePartNumberInput(val, 0));
-  state.currentDealSalesItems[idx].price = price;
-  const qty = Math.max(0.01, parsePartNumberInput(state.currentDealSalesItems[idx].quantity, 1));
+  const item = state.currentDealSalesItems[idx];
+  item.price = price;
+  const rate = Number(item.vat_rate ?? 20) === 0 ? 0 : 20;
+  const mode = item.vat_mode === 'added' ? 'added' : 'included';
+  item.base_price = (rate === 20 && mode === 'added') ? Math.round((price / 1.2) * 100) / 100 : price;
+  const qty = Math.max(0.01, parsePartNumberInput(item.quantity, 1));
   const cur = normalizeDealCurrency(document.getElementById('deal-currency')?.value || 'AMD');
   const lineEl = document.getElementById(`deal-sales-item-line-total-${idx}`);
   if (lineEl) lineEl.textContent = formatMoney(Math.round(qty * price * 100) / 100, cur);
@@ -7839,13 +7960,14 @@ function handleDealSalesEqSearch(query) {
   const exactMatch = rawTrimmed && list.some(item => (item.name || '').trim().toLowerCase() === q);
 
   const matchesHtml = matches.slice(0, 12).map(item => {
+    const itemCurr = normalizeDealCurrency(item.currency || 'AMD');
     const calc = computeSalesEqPriceWithVat(item.selling_price, item.vat_rate, item.vat_mode);
     const normCat = normalizeSalesEqCategoryJS(item.category);
     return `
       <div onclick="selectDealSalesEquipment(${item.id})" class="p-2.5 hover:bg-indigo-50 cursor-pointer transition-colors">
         <div class="flex items-center justify-between text-xs font-bold text-slate-800">
           <span>+ ${escapeHtml(item.name)}</span>
-          <span class="font-mono text-indigo-700">${calc.basePrice > 0 ? formatMoney(calc.finalPrice) : 'Цена по запросу'}</span>
+          <span class="font-mono text-indigo-700">${calc.basePrice > 0 ? formatMoney(calc.finalPrice, itemCurr) : `Цена по запросу (${itemCurr})`}</span>
         </div>
         <div class="text-[11px] text-slate-500 flex items-center justify-between mt-0.5">
           <span>${escapeHtml(normCat)}${item.sku_code ? ' • ' + escapeHtml(item.sku_code) : ''}</span>
@@ -7855,18 +7977,24 @@ function handleDealSalesEqSearch(query) {
     `;
   }).join('');
 
+  const curDealCurrency = normalizeDealCurrency(document.getElementById('deal-currency')?.value || 'AMD');
   const createNewProductHtml = (rawTrimmed && !exactMatch) ? `
     <div class="p-3 bg-indigo-50/90 border-t border-indigo-200 space-y-2" onclick="event.stopPropagation()">
       <div class="text-[11px] text-indigo-950 font-semibold flex items-center gap-1.5">
         <i data-lucide="plus-circle" class="w-3.5 h-3.5 text-indigo-600 shrink-0"></i>
         <span>${matches.length === 0 ? `Модель «<b>${escapeHtml(rawTrimmed)}</b>» не найдена в базе.` : `Нет точного совпадения для «<b>${escapeHtml(rawTrimmed)}</b>».`} Добавить новый товар автоматически?</span>
       </div>
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
         <select id="quick-new-sales-eq-category" class="border border-indigo-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none font-semibold">
           <option value="Строительная и коммунальная техника">🏗️ Строительная и коммунальная</option>
           <option value="Сельскохозяйственная техника">🌾 Сельскохозяйственная</option>
         </select>
-        <input type="text" inputmode="decimal" id="quick-new-sales-eq-price" placeholder="Цена (необязательно)" class="border border-indigo-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none font-mono">
+        <input type="text" inputmode="decimal" id="quick-new-sales-eq-price" placeholder="Цена (необяз.)" class="border border-indigo-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none font-mono">
+        <select id="quick-new-sales-eq-currency" class="border border-indigo-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none font-bold font-mono">
+          <option value="AMD" ${curDealCurrency === 'AMD' ? 'selected' : ''}>AMD (Драм)</option>
+          <option value="USD" ${curDealCurrency === 'USD' ? 'selected' : ''}>USD ($)</option>
+          <option value="EUR" ${curDealCurrency === 'EUR' ? 'selected' : ''}>EUR (€)</option>
+        </select>
       </div>
       <div class="grid grid-cols-2 gap-1.5">
         <select id="quick-new-sales-eq-vat-rate" class="border border-indigo-300 rounded-lg px-2 py-1.5 text-xs bg-white outline-none font-semibold">
@@ -7903,6 +8031,7 @@ async function createSalesEquipmentAutoFromDeal(event = null, directName = null)
   }
   const categoryVal = normalizeSalesEqCategoryJS(document.getElementById('quick-new-sales-eq-category')?.value || 'Строительная и коммунальная техника');
   const priceVal = parsePartNumberInput(document.getElementById('quick-new-sales-eq-price')?.value, 0);
+  const currencyVal = normalizeDealCurrency(document.getElementById('quick-new-sales-eq-currency')?.value || document.getElementById('deal-currency')?.value || 'AMD');
   const vatRate = parseInt(document.getElementById('quick-new-sales-eq-vat-rate')?.value || '20', 10) === 0 ? 0 : 20;
   const vatMode = document.getElementById('quick-new-sales-eq-vat-mode')?.value || 'included';
 
@@ -7915,6 +8044,7 @@ async function createSalesEquipmentAutoFromDeal(event = null, directName = null)
         category: categoryVal,
         sku_code: '',
         selling_price: priceVal,
+        currency: currencyVal,
         vat_rate: vatRate,
         vat_mode: vatMode,
         notes: 'Добавлено автоматически из карточки сделки Отдела продаж'

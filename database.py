@@ -1203,9 +1203,34 @@ def normalize_sales_equipment_category(cat: Optional[str]) -> str:
         return raw
     return "Строительная и коммунальная техника"
 
+def serialize_sales_equipment_notes(notes: str, currency: str = "AMD") -> str:
+    clean_notes = (notes or "").strip()
+    clean_notes = re.sub(r'\[CURRENCY:.*?\]', '', clean_notes, flags=re.DOTALL).strip()
+    curr = (currency or "AMD").strip().upper()
+    if curr not in ("AMD", "USD", "EUR"):
+        curr = "AMD"
+    tag = f"[CURRENCY:{curr}]"
+    return f"{clean_notes}\n{tag}".strip() if clean_notes else tag
+
+def parse_sales_equipment_notes(raw_notes: str) -> tuple[str, str]:
+    if not raw_notes:
+        return "", "AMD"
+    curr = "AMD"
+    m = re.search(r'\[CURRENCY:(.*?)\]', raw_notes, flags=re.DOTALL)
+    if m:
+        c_val = m.group(1).strip().upper()
+        if c_val in ("AMD", "USD", "EUR"):
+            curr = c_val
+    clean_notes = re.sub(r'\[CURRENCY:.*?\]', '', raw_notes, flags=re.DOTALL).strip()
+    return clean_notes, curr
+
 def _enrich_sales_equipment_vat(item: Dict[str, Any]) -> Dict[str, Any]:
     out = dict(item)
     out["category"] = normalize_sales_equipment_category(out.get("category"))
+    clean_notes, notes_curr = parse_sales_equipment_notes(out.get("notes") or "")
+    out["notes"] = clean_notes
+    explicit_curr = str(out.get("currency") or "").strip().upper()
+    out["currency"] = explicit_curr if explicit_curr in ("AMD", "USD", "EUR") else notes_curr
     price = round(_to_float(out.get("selling_price"), 0.0), 2)
     vat_rate = 0 if int(_to_float(out.get("vat_rate"), 20)) == 0 else 20
     vat_mode = "added" if str(out.get("vat_mode") or "").strip().lower() == "added" else "included"
@@ -1256,6 +1281,11 @@ def create_sales_equipment(data: Dict[str, Any]) -> Dict[str, Any]:
         price = round(_to_float(data.get("selling_price"), 0.0), 2)
         vat_rate = 0 if int(_to_float(data.get("vat_rate"), 20)) == 0 else 20
         vat_mode = "added" if str(data.get("vat_mode") or "").strip().lower() == "added" else "included"
+        curr = str(data.get("currency") or "AMD").strip().upper()
+        if curr not in ("AMD", "USD", "EUR"):
+            curr = "AMD"
+        clean_notes = (data.get("notes") or "").strip()
+        serialized_notes = serialize_sales_equipment_notes(clean_notes, currency=curr)
         payload = {
             "id": next_id,
             "name": (data.get("name") or "").strip(),
@@ -1264,7 +1294,7 @@ def create_sales_equipment(data: Dict[str, Any]) -> Dict[str, Any]:
             "selling_price": price,
             "vat_rate": vat_rate,
             "vat_mode": vat_mode,
-            "notes": (data.get("notes") or "").strip(),
+            "notes": serialized_notes,
             "created_at": now_str
         }
         r = client.post("/sales_equipment", json=payload)
@@ -1272,7 +1302,7 @@ def create_sales_equipment(data: Dict[str, Any]) -> Dict[str, Any]:
             raise RuntimeError(f"Ошибка сохранения техники для продажи: {r.text}")
         res = r.json()
         item = res[0] if isinstance(res, list) and res else payload
-        enriched = _enrich_sales_equipment_vat(item)
+        enriched = _enrich_sales_equipment_vat({**item, "currency": curr})
         enriched["message"] = "Модель добавлена в базу техники для продажи"
         return enriched
 
@@ -1288,6 +1318,16 @@ def get_sales_equipment(item_id: int) -> Dict[str, Any]:
 def update_sales_equipment(item_id: int, data: Dict[str, Any]) -> Dict[str, Any]:
     with get_database_client() as client:
         _ensure_sales_equipment_table(client)
+        existing_r = client.get("/sales_equipment", params={"id": f"eq.{item_id}", "select": "notes"})
+        existing_notes = ""
+        if existing_r.status_code == 200 and existing_r.json():
+            existing_notes = existing_r.json()[0].get("notes") or ""
+        old_clean_notes, old_curr = parse_sales_equipment_notes(existing_notes)
+        curr = str(data.get("currency") or old_curr or "AMD").strip().upper()
+        if curr not in ("AMD", "USD", "EUR"):
+            curr = "AMD"
+        clean_notes = (data.get("notes") or "").strip() if "notes" in data and data["notes"] is not None else old_clean_notes
+        serialized_notes = serialize_sales_equipment_notes(clean_notes, currency=curr)
         price = round(_to_float(data.get("selling_price"), 0.0), 2)
         vat_rate = 0 if int(_to_float(data.get("vat_rate"), 20)) == 0 else 20
         vat_mode = "added" if str(data.get("vat_mode") or "").strip().lower() == "added" else "included"
@@ -1298,14 +1338,14 @@ def update_sales_equipment(item_id: int, data: Dict[str, Any]) -> Dict[str, Any]
             "selling_price": price,
             "vat_rate": vat_rate,
             "vat_mode": vat_mode,
-            "notes": (data.get("notes") or "").strip(),
+            "notes": serialized_notes,
         }
         r = client.patch(f"/sales_equipment?id=eq.{item_id}", json=payload)
         if r.status_code not in (200, 204):
             payload["id"] = item_id
             payload["created_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             client.post("/sales_equipment", json=payload, headers={"Prefer": "resolution=merge-duplicates"})
-        enriched = _enrich_sales_equipment_vat({"id": item_id, **payload})
+        enriched = _enrich_sales_equipment_vat({"id": item_id, **payload, "currency": curr})
         enriched["message"] = "Модель техники для продажи обновлена"
         return enriched
 
