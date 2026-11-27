@@ -11,7 +11,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Lucide Icons CDN -->
   <script src="https://unpkg.com/lucide@latest"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=1.2.5.5">
+  <link rel="stylesheet" href="/static/styles.css?v=1.2.5.6">
   <script>
     tailwind.config = {
       theme: {
@@ -441,9 +441,23 @@
           <!-- Card 3: Service & Repair Revenue -->
           <div id="dash-card-service-revenue" class="bg-white p-5 rounded-xl border border-blue-200/80 bg-gradient-to-br from-white to-blue-50/20 shadow-sm relative overflow-hidden flex flex-col justify-between">
             <div>
-              <div class="flex items-center justify-between mb-2">
+              <div class="flex items-center justify-between mb-2 gap-2">
                 <span class="text-xs font-bold uppercase tracking-wider text-blue-700">Выручка: Заказ-наряды (СТО)</span>
-                <span class="p-2 rounded-lg bg-blue-100/70 text-blue-700"><i data-lucide="wrench" class="w-5 h-5"></i></span>
+                <span class="p-2 rounded-lg bg-blue-100/70 text-blue-700 shrink-0"><i data-lucide="wrench" class="w-5 h-5"></i></span>
+              </div>
+              <div class="flex flex-wrap items-center gap-1 mb-2.5 bg-blue-50/80 p-1 rounded-lg border border-blue-100 text-[11px]">
+                <button type="button" id="dash-service-stage-btn-all" onclick="setDashboardServiceStageFilter('all')" class="px-2 py-1 rounded-md font-bold bg-blue-600 text-white shadow-2xs transition-all">
+                  Все
+                </button>
+                <button type="button" id="dash-service-stage-btn-ready" onclick="setDashboardServiceStageFilter('ready')" class="px-2 py-1 rounded-md font-semibold text-slate-700 hover:bg-white transition-all">
+                  Готово
+                </button>
+                <button type="button" id="dash-service-stage-btn-invoiced" onclick="setDashboardServiceStageFilter('invoiced')" class="px-2 py-1 rounded-md font-semibold text-slate-700 hover:bg-white transition-all">
+                  Фактура выписана
+                </button>
+                <button type="button" id="dash-service-stage-btn-paid" onclick="setDashboardServiceStageFilter('paid')" class="px-2 py-1 rounded-md font-semibold text-slate-700 hover:bg-white transition-all">
+                  Оплачено
+                </button>
               </div>
               <div id="stat-service-revenue" class="text-2xl font-black text-blue-800 font-mono">0 AMD</div>
             </div>
@@ -3261,9 +3275,9 @@
 
   <!-- Scripts -->
   <script src="/static/app/core/state.js?v=1.0.0"></script>
-  <script src="/static/app/core/router.js?v=1.2.5.5"></script>
+  <script src="/static/app/core/router.js?v=1.2.5.6"></script>
   <script src="/static/app/core/api.js?v=1.0.0"></script>
   <script src="/static/app/pages/index.js?v=1.0.0"></script>
-  <script src="/static/app.js?v=1.2.5.5"></script>
+  <script src="/static/app.js?v=1.2.5.6"></script>
 </body>
 </html>

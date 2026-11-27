@@ -2708,13 +2708,33 @@ def get_dashboard_metrics(year: Optional[str] = None, month: Optional[str] = Non
         completed = [d for d in deals if d.get("stage") in closed_stages and d.get("closing_outcome") != "failed"]
         active = [d for d in deals if d.get("stage") not in closed_stages and d.get("stage") != "cancelled" and d.get("closing_outcome") != "failed"]
 
-        # 1. Service metrics
+        # 1. Service metrics (overall & by closing stage: ready, invoiced, completed/paid)
         service_deals = [d for d in deals if d.get("deal_type") not in ("parts_sale", "sales")]
         service_completed = [d for d in completed if d.get("deal_type") not in ("parts_sale", "sales")]
         service_active = [d for d in active if d.get("deal_type") not in ("parts_sale", "sales")]
         service_rev = sum(_to_float(d.get("amount")) for d in service_completed)
         service_cost = sum(_to_float(d.get("cost")) for d in service_completed)
         service_profit = service_rev - service_cost
+
+        def _calc_service_subset(sub_deals: List[Dict[str, Any]]) -> Dict[str, Any]:
+            s_rev = round(sum(_to_float(x.get("amount")) for x in sub_deals), 2)
+            s_cost = round(sum(_to_float(x.get("cost")) for x in sub_deals), 2)
+            s_prof = round(s_rev - s_cost, 2)
+            s_marg = round((s_prof / s_rev * 100), 1) if s_rev > 0 else 0
+            return {
+                "revenue": s_rev,
+                "cost": s_cost,
+                "profit": s_prof,
+                "margin": s_marg,
+                "count": len(sub_deals),
+            }
+
+        service_by_stage = {
+            "all": _calc_service_subset(service_completed),
+            "ready": _calc_service_subset([d for d in service_completed if d.get("stage") == "ready"]),
+            "invoiced": _calc_service_subset([d for d in service_completed if d.get("stage") == "invoiced"]),
+            "paid": _calc_service_subset([d for d in service_completed if d.get("stage") in ("completed", "paid", "issued")]),
+        }
 
         # 2. Parts sale metrics
         parts_deals = [d for d in deals if d.get("deal_type") == "parts_sale"]
@@ -3135,6 +3155,7 @@ def get_dashboard_metrics(year: Optional[str] = None, month: Optional[str] = Non
             "service_completed_count": len(service_completed),
             "service_active_count": len(service_active),
             "service_active_volume": round(sum(_to_float(d.get("amount")) for d in service_active), 2),
+            "service_by_stage": service_by_stage,
 
             # Machinery Sales metrics
             "sales_revenue": round(sales_rev, 2),

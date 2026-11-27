@@ -1739,15 +1739,8 @@ async function loadDashboard() {
     const statPartsCount = document.getElementById('stat-parts-completed-count');
     if (statPartsCount) statPartsCount.textContent = `${data.parts_sales_completed_count || 0} продаж`;
 
-    // Service & Repair Revenue Metrics
-    const statServRev = document.getElementById('stat-service-revenue');
-    if (statServRev) statServRev.textContent = formatMoney(data.service_revenue || 0);
-    const statServProfit = document.getElementById('stat-service-profit');
-    if (statServProfit) statServProfit.textContent = formatMoney(data.service_profit || 0);
-    const statServMargin = document.getElementById('stat-service-margin');
-    if (statServMargin) statServMargin.textContent = `${data.service_margin || 0}% маржа`;
-    const statServCount = document.getElementById('stat-service-completed-count');
-    if (statServCount) statServCount.textContent = `${data.service_completed_count || 0} нарядов`;
+    // Service & Repair Revenue Metrics (with stage filter: Все / Готово / Фактура выписана / Оплачено)
+    renderDashboardServiceRevenueCard(data);
 
     // Sales Department Revenue Metrics by Category (Requirement #4)
     const canViewRev = hasUserPerm('can_view_revenue');
@@ -1827,6 +1820,46 @@ function formatMultiCurrencyBreakdown(byCurr) {
     parts.push(formatMoney(byCurr.EUR || 0, 'EUR'));
   }
   return parts.join(' + ');
+}
+
+function setDashboardServiceStageFilter(stageKey) {
+  state.dashboardServiceStage = stageKey || 'all';
+  const keys = ['all', 'ready', 'invoiced', 'paid'];
+  keys.forEach(k => {
+    const btn = document.getElementById(`dash-service-stage-btn-${k}`);
+    if (!btn) return;
+    if (k === state.dashboardServiceStage) {
+      btn.className = 'px-2 py-1 rounded-md font-bold bg-blue-600 text-white shadow-2xs transition-all';
+    } else {
+      btn.className = 'px-2 py-1 rounded-md font-semibold text-slate-700 hover:bg-white transition-all';
+    }
+  });
+  renderDashboardServiceRevenueCard(state.dashboard || {});
+}
+
+function renderDashboardServiceRevenueCard(data) {
+  const stageKey = state.dashboardServiceStage || 'all';
+  const byStage = (data && data.service_by_stage) ? data.service_by_stage : null;
+  let metric = null;
+  if (byStage && byStage[stageKey]) {
+    metric = byStage[stageKey];
+  } else {
+    metric = {
+      revenue: Number(data?.service_revenue || 0),
+      profit: Number(data?.service_profit || 0),
+      margin: Number(data?.service_margin || 0),
+      count: Number(data?.service_completed_count || 0),
+    };
+  }
+
+  const statServRev = document.getElementById('stat-service-revenue');
+  if (statServRev) statServRev.textContent = formatMoney(metric.revenue || 0);
+  const statServProfit = document.getElementById('stat-service-profit');
+  if (statServProfit) statServProfit.textContent = formatMoney(metric.profit || 0);
+  const statServMargin = document.getElementById('stat-service-margin');
+  if (statServMargin) statServMargin.textContent = `${metric.margin || 0}% маржа`;
+  const statServCount = document.getElementById('stat-service-completed-count');
+  if (statServCount) statServCount.textContent = `${metric.count || 0} нарядов`;
 }
 
 function setDashboardSalesCategory(catKey) {
